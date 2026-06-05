@@ -102,6 +102,7 @@ $panelMenuGuardPatch = [byte[]]@(
     0x90,0x90,0x90,0x90,0x90
 )
 [void]$checks.Add((Test-ExactPatch $bytes 0x00462822 $panelMenuGuardPatch "CPannelMgr menu vtable guard"))
+[void]$checks.Add((Test-Nops $bytes 0x00424416 6 "iCARUS RestoreSurfaces message guard"))
 
 $checks | Format-Table -AutoSize
 

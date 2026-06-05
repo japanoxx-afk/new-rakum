@@ -252,6 +252,15 @@ Room join reply detail:
 
 - `0x10FF` success replies now send the room owner/host account plus the host IP.
 - Earlier builds sent the joining account in that field, which can let both clients enter the room but misalign the local player slot/race when the RTS match starts.
+- Stale rooms are removed when the owner logs in again, creates a new room, or sends a crash report. Old room entries can otherwise leave stale player counts/room metadata visible in the battlefield list.
+
+Firewall setup:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Configure-RhakMuFirewall.ps1
+```
+
+Run this on every PC. If a PC can connect to the lobby but cannot receive countdown/game packets when it hosts, Windows firewall or the selected host IP is the first thing to check.
 
 ## Client Patch Verification
 

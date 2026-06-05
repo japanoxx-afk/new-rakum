@@ -405,17 +405,13 @@ function New-ServerMessagePayload([string]$Message, [string]$Account) {
 
 function Register-RoomFromCreatePacket([byte[]]$Packet) {
     $room = New-RoomFromCreatePacket $Packet
-    $existing = $null
-    foreach ($candidate in $script:Rooms) {
-        if ($candidate.Title -eq $room.Title -and $candidate.Owner -eq $room.Owner) {
-            $existing = $candidate
-            break
-        }
-    }
-
-    if ($null -ne $existing) {
-        [void]$script:Rooms.Remove($existing)
-    }
+    $oldAccount = $script:CurrentAccount
+    $oldHost = $script:CurrentHost
+    $script:CurrentAccount = $room.Owner
+    $script:CurrentHost = $room.Host
+    [void](Remove-RoomsForCurrentClient)
+    $script:CurrentAccount = $oldAccount
+    $script:CurrentHost = $oldHost
 
     $script:NextRoomId++
     Add-RoomMember $room $room.Owner $room.Host
@@ -1159,6 +1155,10 @@ try {
                                 $login = Get-LoginFields $packet
                                 if ((Test-RhakMuLogin $packet) -eq 0) {
                                     $conn.Account = $login.Account
+                                    $oldAccount = $script:CurrentAccount
+                                    $script:CurrentAccount = $conn.Account
+                                    [void](Remove-RoomsForCurrentClient)
+                                    $script:CurrentAccount = $oldAccount
                                     $now = Get-NowStamp
                                     Write-Host "[$now] Login accepted peer=$($conn.Peer) account=$($conn.Account)" -ForegroundColor Green
                                 } else {
@@ -1205,6 +1205,12 @@ try {
 
                             if ($reqType -eq 0x24FF -or $reqType -eq 0x27FF) {
                                 Send-RoomBroadcast $conn $packet "game-cleanup"
+                            }
+
+                            if ($reqType -eq 0xFEFE) {
+                                [void](Remove-RoomsForCurrentClient)
+                                $now = Get-NowStamp
+                                Write-Host "[$now] Crash report received peer=$($conn.Peer) account=$($conn.Account); cleaned stale room state" -ForegroundColor DarkYellow
                             }
 
                             if ($reqType -eq 0x11FF) {
