@@ -254,7 +254,24 @@ Room join reply detail:
 - Earlier builds sent the joining account in that field, which can let both clients enter the room but misalign the local player slot/race when the RTS match starts.
 - Stale rooms are removed when the owner logs in again, creates a new room, or sends a crash report. Old room entries can otherwise leave stale player counts/room metadata visible in the battlefield list.
 
-Firewall setup:
+One-step client setup:
+
+```powershell
+cd "C:\Users\seo\Documents\라크무"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-RhakMuClientPatches.ps1
+```
+
+Or double-click:
+
+```text
+Install-RhakMuClientPatches.bat
+```
+
+Run it from an elevated/admin PowerShell window, or start the `.bat` as
+administrator. It pulls the latest scripts when possible, installs firewall
+rules, applies the required client patches, and runs the final verifier.
+
+Firewall-only setup:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Configure-RhakMuFirewall.ps1
