@@ -317,16 +317,26 @@ GameCtrl.dll, class_form::DeleteAllControls()+0008
 Rhakmu.exe, CScenChannel::~CScenChannel()+0029
 ```
 
-This indicates that the channel or guild scene form may already be partially
-torn down when the menu/base-data cleanup runs. `Patch-RhakMuMenuDeleteGuards.ps1`
-now disables both the scalar `operator delete` path and the inherited
-`class_form` cleanup call inside `CScenChannel` and `CScenGuild` destructors.
+This indicates that a menu scene form may already be partially torn down when
+the menu/base-data cleanup runs. `Patch-RhakMuMenuDeleteGuards.ps1` now disables
+both the scalar `operator delete` path and the inherited `class_form` cleanup
+call inside `CScenChannel`, `CScenGuild`, and `CScenRanking` destructors.
 
 Apply it after replacing or restoring `Rhakmu.exe`:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-RhakMuMenuDeleteGuards.ps1
 ```
+
+To confirm the client patch state on any PC:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Verify-RhakMuClientPatches.ps1
+```
+
+Every row should show `OK`. If the guest PC does not show `OK` for
+`Battle start countdown sync`, it can receive the server start packet but still
+ignore the countdown/start transition.
 
 ## Match Cleanup Packet Notes
 
