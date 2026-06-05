@@ -284,10 +284,10 @@ Room presence/timeout notes:
 - The server now listens on UDP `11223` by default as well as TCP `11223`.
 - Earlier builds skipped UDP `11223`, so room presence or peer-check datagrams
   sent to the server address could disappear without being logged or relayed.
-- `0x1FFF` channel-user-list requests now return the tracked room members
-  when the client is inside a room, instead of always returning an empty list.
-  This is meant to help the room screen learn both account/IP entries before
-  its own peer timeout logic removes a participant.
+- `0x1FFF` channel-user-list requests still return an empty start/end list by
+  default. A brief member-list experiment made the client show the host IP as
+  user text and could block room entry, so it is now gated behind the explicit
+  `-ChannelUserListReplyMode members` option for future protocol work only.
 
 ## Client Patch Verification
 

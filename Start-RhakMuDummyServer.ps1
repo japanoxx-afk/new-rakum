@@ -27,7 +27,7 @@ param(
     [int]$RoomMakeResult = 0,
     [switch]$SendRoomJoinAfterMake,
     [string]$RoomJoinHost = "127.0.0.1",
-    [ValidateSet("ignore", "empty")]
+    [ValidateSet("ignore", "empty", "members")]
     [string]$ChannelUserListReplyMode = "empty",
     [int[]]$SkipUdpPorts = @(),
     [string]$TranscriptPath = ".\rhakmu_dummy_server_terminal.log",
@@ -672,6 +672,11 @@ function New-RhakMuProtocolReplies([byte[]]$Packet) {
     # 0x20FF = ChannelUserListStart, 0x1FFF = ChannelUserListItem,
     # 0x21FF = ChannelUserListEnd.
     if ($reqType -eq 0x1FFF -and $script:ChannelUserListReplyMode -eq "empty") {
+        $replies.Add((New-TgPacket 0x20FF ([byte[]]@())))
+        $replies.Add((New-TgPacket 0x21FF ([byte[]]@())))
+    }
+
+    if ($reqType -eq 0x1FFF -and $script:ChannelUserListReplyMode -eq "members") {
         $room = Find-RoomByTitle $script:CurrentRoomTitle
         if ($null -ne $room) {
             Add-ChannelUserListReplies $replies $room
