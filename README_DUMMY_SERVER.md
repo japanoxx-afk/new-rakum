@@ -307,3 +307,23 @@ To avoid guild/rank replies entirely while testing:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-RhakMuDummyServer.ps1 -AutoReply none -GuildReplyMode ignore -RankListReplyMode ignore
 ```
+
+## Client Exit Crash Guards
+
+Observed when pressing the in-game exit button:
+
+```text
+GameCtrl.dll, class_form::DeleteAllControls()+0008
+Rhakmu.exe, CScenChannel::~CScenChannel()+0029
+```
+
+This indicates that the channel or guild scene form may already be partially
+torn down when the menu/base-data cleanup runs. `Patch-RhakMuMenuDeleteGuards.ps1`
+now disables both the scalar `operator delete` path and the inherited
+`class_form` cleanup call inside `CScenChannel` and `CScenGuild` destructors.
+
+Apply it after replacing or restoring `Rhakmu.exe`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-RhakMuMenuDeleteGuards.ps1
+```
