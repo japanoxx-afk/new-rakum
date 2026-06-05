@@ -27,10 +27,12 @@ param(
     [int]$RoomMakeResult = 0,
     [switch]$SendRoomJoinAfterMake,
     [string]$RoomJoinHost = "127.0.0.1",
+    [string[]]$RoomHostOverrides = @(),
     [ValidateSet("ignore", "empty", "members")]
     [string]$ChannelUserListReplyMode = "members",
     [int[]]$SkipUdpPorts = @(11223),
     [string]$TranscriptPath = ".\rhakmu_dummy_server_terminal.log",
+    [string]$EventLogPath = ".\rhakmu_dummy_server_events.log",
     [bool]$EnableUdpRelay = $true,
     [ValidateSet("none", "original", "original-plus-accept", "accept-only", "original-plus-variants")]
     [string]$GameStartSyncMode = "original",
@@ -45,6 +47,22 @@ function Get-NowStamp {
 
 function Get-FileStamp {
     return (Get-Date).ToString("yyyyMMdd_HHmmss_fff")
+}
+
+function Add-ServerEvent([string]$Message) {
+    if (-not [string]::IsNullOrWhiteSpace($script:ResolvedEventLogPath)) {
+        try {
+            Add-Content -LiteralPath $script:ResolvedEventLogPath -Value $Message -Encoding UTF8
+        } catch {}
+    }
+}
+
+function Write-ServerEvent(
+    [string]$Message,
+    [ConsoleColor]$ForegroundColor = [ConsoleColor]::Gray
+) {
+    Write-Host $Message -ForegroundColor $ForegroundColor
+    Add-ServerEvent $Message
 }
 
 function Format-HexDump([byte[]]$Data) {
@@ -271,9 +289,17 @@ function Resolve-RoomHost([string]$PeerHost) {
     return $PeerHost
 }
 
+function Get-RoomHostForAccount([string]$Account, [string]$FallbackHost) {
+    if (-not [string]::IsNullOrWhiteSpace($Account) -and $script:RoomHostOverrideMap.ContainsKey($Account)) {
+        return $script:RoomHostOverrideMap[$Account]
+    }
+    return $FallbackHost
+}
+
 function New-RoomJoinPayload([string]$Account, [string]$HostAddress) {
     if ([string]::IsNullOrWhiteSpace($Account)) { $Account = $script:TestAccount }
     if ([string]::IsNullOrWhiteSpace($HostAddress)) { $HostAddress = $script:RoomJoinHost }
+    $HostAddress = Get-RoomHostForAccount $Account $HostAddress
     $result = [byte[]]@([byte]0)
     $accountBytes = New-NulStringBytes $Account
     $hostBytes = New-NulStringBytes $HostAddress
@@ -296,7 +322,7 @@ function New-RoomFromCreatePacket([byte[]]$Packet) {
         Title = $title
         Map = $map
         Owner = $owner
-        Host = (Resolve-RoomHost $script:CurrentHost)
+        Host = (Get-RoomHostForAccount $owner (Resolve-RoomHost $script:CurrentHost))
         MaxPlayers = (Get-RoomMaxPlayersFromCreatePayload $payload)
         ItemPayload = $payload
         RoomMembers = (New-Object System.Collections.Generic.List[object])
@@ -315,6 +341,7 @@ function Ensure-RoomMembers([object]$Room) {
 function Add-RoomMember([object]$Room, [string]$Account, [string]$HostAddress) {
     if ($null -eq $Room -or [string]::IsNullOrWhiteSpace($Account)) { return }
     if ([string]::IsNullOrWhiteSpace($HostAddress)) { $HostAddress = $script:RoomJoinHost }
+    $HostAddress = Get-RoomHostForAccount $Account $HostAddress
 
     $members = Ensure-RoomMembers $Room
     foreach ($member in @($members.ToArray())) {
@@ -467,6 +494,33 @@ function Find-RoomForJoin([byte[]]$Packet) {
         }
     }
     return $last
+}
+
+function Find-RoomForAccount([string]$Account) {
+    if ([string]::IsNullOrWhiteSpace($Account)) { return $null }
+    foreach ($room in $script:Rooms) {
+        if ($room.Owner -eq $Account) { return $room }
+        $members = Ensure-RoomMembers $room
+        foreach ($member in @($members.ToArray())) {
+            if ($member.Account -eq $Account) { return $room }
+        }
+    }
+    return $null
+}
+
+function Resolve-ConnectionRoomTitle([object]$Conn) {
+    if ($null -eq $Conn) { return "" }
+    if (-not [string]::IsNullOrWhiteSpace($Conn.RoomTitle)) { return $Conn.RoomTitle }
+
+    $room = Find-RoomForAccount $Conn.Account
+    if ($null -ne $room) {
+        $Conn.RoomTitle = $room.Title
+        $now = Get-NowStamp
+        Write-ServerEvent "[$now] Connection room inferred peer=$($Conn.Peer) account=$($Conn.Account) room=$($Conn.RoomTitle)" ([ConsoleColor]::DarkGreen)
+        return $Conn.RoomTitle
+    }
+
+    return ""
 }
 
 function Find-RoomByTitle([string]$Title) {
@@ -844,9 +898,13 @@ function Save-PacketLog(
 
     Write-Host ""
     $upperProto = $Proto.ToUpperInvariant()
-    Write-Host "[$now] $upperProto port=$Port peer=$Peer type=$typeText size=$sizeText raw_len=$($Data.Length)" -ForegroundColor Cyan
+    $summary = "[$now] $upperProto port=$Port peer=$Peer type=$typeText size=$sizeText raw_len=$($Data.Length)"
+    Write-Host $summary -ForegroundColor Cyan
+    Add-ServerEvent $summary
     if ($ascii.Count -gt 0) {
-        Write-Host ("ASCII: " + (($ascii | Select-Object -First 8) -join " | ")) -ForegroundColor DarkCyan
+        $asciiLine = "ASCII: " + (($ascii | Select-Object -First 8) -join " | ")
+        Write-Host $asciiLine -ForegroundColor DarkCyan
+        Add-ServerEvent $asciiLine
     }
     Write-Host (Format-HexDump $Data)
 }
@@ -901,28 +959,50 @@ function Send-RoomBroadcast(
     [byte[]]$Packet,
     [string]$Reason
 ) {
-    if ([string]::IsNullOrWhiteSpace($Sender.RoomTitle)) { return }
+    $roomTitle = Resolve-ConnectionRoomTitle $Sender
+    if ([string]::IsNullOrWhiteSpace($roomTitle)) {
+        $now = Get-NowStamp
+        $reqType = Read-U16LE $Packet 0
+        $typeText = "0x{0:X4}" -f $reqType
+        Write-ServerEvent "[$now] Room broadcast skipped no-room peer=$($Sender.Peer) account=$($Sender.Account) type=$typeText reason=$Reason" ([ConsoleColor]::DarkYellow)
+        return
+    }
 
     $now = Get-NowStamp
     $reqType = Read-U16LE $Packet 0
     $typeText = "0x{0:X4}" -f $reqType
-    Write-Host "[$now] Room broadcast room=$($Sender.RoomTitle) from=$($Sender.Account) type=$typeText reason=$Reason" -ForegroundColor Green
+    Write-ServerEvent "[$now] Room broadcast room=$roomTitle from=$($Sender.Account) type=$typeText reason=$Reason" ([ConsoleColor]::Green)
 
+    $sentCount = 0
     foreach ($target in $script:Clients.ToArray()) {
         if ($target.Port -ne $Sender.Port) { continue }
         if ($target.Peer -eq $Sender.Peer) { continue }
         if (-not $target.Client.Connected) { continue }
-        if ($target.RoomTitle -ne $Sender.RoomTitle) { continue }
+        $targetRoomTitle = Resolve-ConnectionRoomTitle $target
+        if ($targetRoomTitle -ne $roomTitle) { continue }
         try {
             Send-TcpPacket $target $Packet "tcp-room-broadcast"
+            $sentCount++
         } catch {
             $errNow = Get-NowStamp
-            Write-Host "[$errNow] Room broadcast failed peer=$($target.Peer) - $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-ServerEvent "[$errNow] Room broadcast failed peer=$($target.Peer) - $($_.Exception.Message)" ([ConsoleColor]::Yellow)
             try { $target.Stream.Close() } catch {}
             try { $target.Client.Close() } catch {}
             [void]$script:Clients.Remove($target)
         }
     }
+
+    if ($sentCount -eq 0) {
+        $known = @($script:Clients.ToArray() | Where-Object { $_.Port -eq $Sender.Port } | ForEach-Object { "$($_.Account)@$($_.Peer)/room=$($_.RoomTitle)" })
+        $knownText = if ($known.Count -gt 0) { $known -join ", " } else { "(none)" }
+        $now = Get-NowStamp
+        Write-ServerEvent "[$now] Room broadcast no-target room=$roomTitle from=$($Sender.Account) type=$typeText reason=$Reason known=$knownText" ([ConsoleColor]::DarkYellow)
+    } else {
+        $now = Get-NowStamp
+        Write-ServerEvent "[$now] Room broadcast delivered room=$roomTitle type=$typeText reason=$Reason targets=$sentCount" ([ConsoleColor]::DarkGreen)
+    }
+
+    return
 }
 
 function Send-RoomMemberListBroadcast(
@@ -962,9 +1042,13 @@ function Send-GameStartSync(
     [object]$Sender,
     [byte[]]$Packet
 ) {
+    $now = Get-NowStamp
+    $typeText = if ($Packet.Length -ge 2) { "0x{0:X4}" -f (Read-U16LE $Packet 0) } else { "n/a" }
+    $payloadHex = if ($Packet.Length -gt 4) { (($Packet[4..($Packet.Length - 1)] | ForEach-Object { $_.ToString("X2") }) -join " ") } else { "" }
+    Write-ServerEvent "[$now] Game start sync mode=$script:GameStartSyncMode peer=$($Sender.Peer) account=$($Sender.Account) room=$($Sender.RoomTitle) type=$typeText payload=$payloadHex" ([ConsoleColor]::Green)
+
     if ($script:GameStartSyncMode -eq "none") {
-        $now = Get-NowStamp
-        Write-Host "[$now] Game start relay suppressed room=$($Sender.RoomTitle) from=$($Sender.Account)" -ForegroundColor DarkYellow
+        Write-ServerEvent "[$now] Game start relay suppressed room=$($Sender.RoomTitle) from=$($Sender.Account)" ([ConsoleColor]::DarkYellow)
         return
     }
 
@@ -1066,6 +1150,7 @@ function Close-All {
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $script:ResolvedLogDir = (Resolve-Path -LiteralPath $LogDir).Path
 $script:ResolvedTranscriptPath = $null
+$script:ResolvedEventLogPath = $null
 if (-not [string]::IsNullOrWhiteSpace($TranscriptPath)) {
     $transcriptFullPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($TranscriptPath)
     $transcriptDir = Split-Path -Parent $transcriptFullPath
@@ -1078,6 +1163,15 @@ if (-not [string]::IsNullOrWhiteSpace($TranscriptPath)) {
     } catch {
         Write-Host "Transcript start failed: $($_.Exception.Message)" -ForegroundColor Yellow
     }
+}
+if (-not [string]::IsNullOrWhiteSpace($EventLogPath)) {
+    $eventLogFullPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($EventLogPath)
+    $eventLogDir = Split-Path -Parent $eventLogFullPath
+    if (-not [string]::IsNullOrWhiteSpace($eventLogDir)) {
+        New-Item -ItemType Directory -Force -Path $eventLogDir | Out-Null
+    }
+    $script:ResolvedEventLogPath = $eventLogFullPath
+    Add-Content -LiteralPath $script:ResolvedEventLogPath -Value "===== RhakMu dummy server start $(Get-NowStamp) =====" -Encoding UTF8
 }
 $ip = [Net.IPAddress]::Parse($Bind)
 
@@ -1119,6 +1213,16 @@ if ($RoomJoinHost -eq "127.0.0.1" -or $RoomJoinHost -eq "localhost") {
 } else {
     $script:RoomJoinHost = $RoomJoinHost
 }
+$script:RoomHostOverrideMap = @{}
+foreach ($entry in @($RoomHostOverrides)) {
+    if ([string]::IsNullOrWhiteSpace($entry)) { continue }
+    $parts = $entry.Split("=", 2, [StringSplitOptions]::None)
+    if ($parts.Count -ne 2 -or [string]::IsNullOrWhiteSpace($parts[0]) -or [string]::IsNullOrWhiteSpace($parts[1])) {
+        Write-ServerEvent "[$(Get-NowStamp)] Ignoring invalid RoomHostOverrides entry: $entry" ([ConsoleColor]::Yellow)
+        continue
+    }
+    $script:RoomHostOverrideMap[$parts[0].Trim()] = $parts[1].Trim()
+}
 $script:ChannelUserListReplyMode = $ChannelUserListReplyMode
 $script:EnableUdpRelay = $EnableUdpRelay
 $script:GameStartSyncMode = $GameStartSyncMode
@@ -1144,6 +1248,7 @@ Write-Host "RoomListReplyMode: $RoomListReplyMode"
 Write-Host "RoomMakeResult: $RoomMakeResult"
 Write-Host "SendRoomJoinAfterMake: $([bool]$SendRoomJoinAfterMake)"
 Write-Host "RoomJoinHost: $script:RoomJoinHost"
+Write-Host "RoomHostOverrides: $(if ($script:RoomHostOverrideMap.Count -gt 0) { (($script:RoomHostOverrideMap.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ', ') } else { '(none)' })"
 Write-Host "SkipUdpPorts: $($SkipUdpPorts -join ',')"
 Write-Host "EnableUdpRelay: $([bool]$EnableUdpRelay)"
 Write-Host "GameStartSyncMode: $GameStartSyncMode"
@@ -1151,6 +1256,7 @@ Write-Host "ChannelUserListReplyMode: $ChannelUserListReplyMode"
 Write-Host "AcceptLikelyAccountPackets: $([bool]$AcceptLikelyAccountPackets)"
 Write-Host "LogDir: $script:ResolvedLogDir"
 if ($script:ResolvedTranscriptPath) { Write-Host "TranscriptPath: $script:ResolvedTranscriptPath" }
+if ($script:ResolvedEventLogPath) { Write-Host "EventLogPath: $script:ResolvedEventLogPath" }
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
 

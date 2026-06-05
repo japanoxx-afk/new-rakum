@@ -18,6 +18,8 @@ Log files are written to:
 
 ```text
 .\rhakmu_packet_logs
+.\rhakmu_dummy_server_events.log
+.\rhakmu_dummy_server_terminal.log
 ```
 
 By default the dummy server skips UDP `11223`. When the server PC also runs a
@@ -300,6 +302,22 @@ the server with:
 .\Start-RhakMuDummyServer.ps1 -AutoReply none -GameStartSyncMode none
 ```
 
+Start relay diagnostics are now written both to the terminal and to
+`.\rhakmu_dummy_server_events.log`. Look for these lines:
+
+```text
+Game start sync mode=...
+Room broadcast room=... type=0x0FFF reason=game-start-original
+Room broadcast delivered ... targets=1
+Room broadcast skipped no-room ...
+Room broadcast no-target ...
+```
+
+If the `0x0FFF` packet arrives on a TCP connection whose `RoomTitle` is empty,
+the server now infers the room from the logged-in account before broadcasting.
+This covers the case where the client sends the start packet after switching
+connection state.
+
 If one host direction starts both clients but the other direction starts only the host, check the room host IP printed by the server:
 
 ```text
@@ -311,6 +329,18 @@ That `host=` value is what the guest receives in the battlefield list and room j
 ```powershell
 .\Start-RhakMuDummyServer.ps1 -AutoReply none -RoomJoinHost 26.x.x.x
 ```
+
+When UDP capture shows the clients are actually exchanging peer packets on LAN
+addresses instead of Radmin VPN addresses, force per-account room host
+addresses. The 2026-06-06 04:41 capture showed direct UDP on
+`192.168.0.8 <-> 192.168.0.22`, so test with:
+
+```powershell
+.\Start-RhakMuDummyServer.ps1 -AutoReply none -RoomHostOverrides "test1=192.168.0.8","test2=192.168.0.22"
+```
+
+The server prints `RoomHostOverrides:` at startup and applies these addresses
+to room-list, room-join, and room-member payloads for the matching accounts.
 
 The 2026-06-05 21:24-21:26 test showed:
 
