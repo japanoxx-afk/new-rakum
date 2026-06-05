@@ -350,3 +350,29 @@ Rhakmu.exe, TNPacket_ReplyBattleReqReply()
 The dummy server now suppresses replies to `0x27FF`. It also ignores the
 post-game `0x10FF 00 30 00` room reentry probe instead of treating it as a
 normal battlefield room join.
+
+## Remote Start Countdown Sync
+
+Observed when a host starts a two-player room:
+
+```text
+host -> server:       FF 0F 07 00 02 00 00
+server -> participant FF 0F 07 00 02 00 00
+```
+
+The participant receives the packet, but the stock `TNPacket_ReplyBattleReqReply`
+handler switches on `packet[5] - 1`. Because `packet[5]` is `0`, it falls into a
+default debug branch and returns without starting the participant countdown.
+
+`Patch-RhakMuBattleStartSync.ps1` changes that default branch to set the same
+local countdown/game-start state used by `classRoomNetMGR::RMPKRecv_GameStart`:
+
+```text
+byte [0x006DFC74] = 5
+```
+
+Apply this patch to every PC that will join multiplayer games:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-RhakMuBattleStartSync.ps1
+```
