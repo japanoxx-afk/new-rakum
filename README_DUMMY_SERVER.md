@@ -219,6 +219,58 @@ test1234
 
 This mode replies to account-looking packets with several success candidates. Once the exact login packet type is known from the log, replace this heuristic with a precise reply.
 
+## Multiplayer Start Notes
+
+Current default:
+
+```powershell
+.\Start-RhakMuDummyServer.ps1 -AutoReply none -GameStartSyncMode none
+```
+
+`GameStartSyncMode none` is intentional. In the 2026-06-04 23:55 capture, both clients reached countdown/game without the dummy server relaying `0x0FFF`; the start signal was handled by the clients' direct room/game path. Server-side `0x0FFF` broadcast variants were kept only for diagnostics because they did not make the guest start reliably.
+
+If one host direction starts both clients but the other direction starts only the host, check the room host IP printed by the server:
+
+```text
+Room registered id=... owner=test2 host=26.x.x.x
+```
+
+That `host=` value is what the guest receives in the battlefield list and room join reply. The guest PC must be able to connect back to that address for the direct countdown/start path. If the automatic address is wrong, start the server with an explicit host address:
+
+```powershell
+.\Start-RhakMuDummyServer.ps1 -AutoReply none -RoomJoinHost 26.x.x.x
+```
+
+The 2026-06-05 21:24-21:26 test showed:
+
+- `test2` local host -> `test1` remote guest: guest entered the room, but only the host counted down.
+- `test1` remote host -> `test2` local guest: both clients counted down.
+
+That points to a direct connectivity/NAT/firewall difference between the two host directions, not to the dummy server's TCP start reply.
+
+## Client Patch Verification
+
+Run this on each PC after copying the latest scripts:
+
+```powershell
+cd "C:\Users\seo\Documents\라크무"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Verify-RhakMuClientPatches.ps1
+```
+
+All rows should show `OK`. If `CPannelMgr menu vtable guard` is missing, apply:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Patch-RhakMuPanelMenuGuards.ps1
+```
+
+This guard fixes a crash seen during the countdown-to-game transition at:
+
+```text
+CPannelMgr::ProcessMenu()+0095
+```
+
+where the client called through a half-destroyed menu object's vtable.
+
 Observed login packet:
 
 ```text
