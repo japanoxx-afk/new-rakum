@@ -29,6 +29,17 @@ client-to-client UDP. Run `Install-RhakMuClientPatches.ps1` as administrator on
 both PCs after pulling the latest files so the strengthened inbound/outbound
 RhakMu firewall rules are installed.
 
+If members are still removed after 10-20 seconds, capture UDP `11223` on both
+PCs:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-RhakMuUdpCapture.ps1
+# reproduce the room join timeout
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Stop-RhakMuUdpCapture.ps1
+```
+
+Send both `.pcapng` and `.txt` outputs from `.\rhakmu_packet_captures`.
+
 ## Room Join Network Watch
 
 When two PCs can see a room but cannot enter it, run this on both PCs before
