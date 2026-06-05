@@ -884,39 +884,6 @@ function Send-RoomBroadcast(
     }
 }
 
-function Send-RoomJoinNotify(
-    [object]$Joiner,
-    [object]$Room
-) {
-    if ($null -eq $Joiner -or $null -eq $Room) { return }
-    if ([string]::IsNullOrWhiteSpace($Joiner.RoomTitle)) { return }
-
-    $joinAccount = $Joiner.Account
-    if ([string]::IsNullOrWhiteSpace($joinAccount)) { return }
-
-    $joinHost = Resolve-RoomHost (Get-PeerHost $Joiner.Peer)
-    $packet = New-TgPacket 0x10FF (New-RoomJoinPayload $joinAccount $joinHost)
-
-    $now = Get-NowStamp
-    Write-Host "[$now] Room join notify room=$($Room.Title) account=$joinAccount host=$joinHost" -ForegroundColor Green
-
-    foreach ($target in $script:Clients.ToArray()) {
-        if ($target.Port -ne $Joiner.Port) { continue }
-        if ($target.Peer -eq $Joiner.Peer) { continue }
-        if (-not $target.Client.Connected) { continue }
-        if ($target.RoomTitle -ne $Joiner.RoomTitle) { continue }
-        try {
-            Send-TcpPacket $target $packet "tcp-room-join-notify"
-        } catch {
-            $errNow = Get-NowStamp
-            Write-Host "[$errNow] Room join notify failed peer=$($target.Peer) - $($_.Exception.Message)" -ForegroundColor Yellow
-            try { $target.Stream.Close() } catch {}
-            try { $target.Client.Close() } catch {}
-            [void]$script:Clients.Remove($target)
-        }
-    }
-}
-
 function Send-GameStartSync(
     [object]$Sender,
     [byte[]]$Packet
@@ -1190,13 +1157,6 @@ try {
 
                             foreach ($reply in $replySet) {
                                 Send-TcpPacket $conn $reply "tcp-reply"
-                            }
-
-                            if ($reqType -eq 0x10FF -and -not (Test-PostGameRoomReentryPacket $packet)) {
-                                $room = Find-RoomByTitle $conn.RoomTitle
-                                if ($null -ne $room) {
-                                    Send-RoomJoinNotify $conn $room
-                                }
                             }
 
                             if ($reqType -eq 0x12FF) {

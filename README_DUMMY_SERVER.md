@@ -384,7 +384,7 @@ Room/game synchronization often appears on UDP port `7000` as raw one-byte
 datagrams, so relaying them helps when direct peer-to-peer room traffic is not
 passing between clients.
 
-## Room Member Join Notification
+## Room Member Tracking
 
 Observed in the two-PC start-sync failure:
 
@@ -395,20 +395,18 @@ host starts:      FF 0F 07 00 02 00 00
 server -> test1:  FF 0F 07 00 02 00 00
 ```
 
-The server was acknowledging the join only to the joining client. The host did
-not receive a room-member notification, so the host could continue to behave as
-if the room was a one-player room and start countdown alone.
+The server acknowledges the join to the joining client. A direct experiment that
+also sent `0x10FF` to the room host was rejected by the host client: it
+immediately sent `0x11FF` room leave and both clients returned to the lobby.
+That means `0x10FF` is not a safe host-side member notification packet.
 
-When a client joins an existing room, the server now:
+When a client joins an existing room, the server now only:
 
 1. Tracks the room member in memory.
 2. Reports the updated current-player count in battlefield room-list items.
-3. Sends the existing room members a `0x10FF` room-join notification containing
-   the joining account and the joining peer host.
 
-During the next multiplayer test, confirm the server log contains:
+During multiplayer tests, the log must not contain:
 
 ```text
-Room join notify room=<room> account=<joining account> host=<joining host>
 TCP-ROOM-JOIN-NOTIFY ... type=0x10FF
 ```
