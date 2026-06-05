@@ -48,10 +48,11 @@ $bytes = [IO.File]::ReadAllBytes($ExePath)
 #   mov edx, [menu]
 #   mov ecx, menu
 #   call dword ptr [edx+30h]
-# If the object is half-destroyed, edx is null and the client crashes at
-# CPannelMgr::ProcessMenu()+0095. Rebuild the small block with object and
-# vtable guards; if either is null, keep the existing -1 menu id and fall into
-# the function's normal out-of-range/default path.
+# CPannelMgr::ProcessMenu()+0095. Later crashes showed another half-destroyed
+# state where the object pointer is valid but its vtable pointer is 0x00000001.
+# Rebuild the small block with object and vtable guards; if either looks like a
+# low invalid pointer, keep the existing menu id and fall into the function's
+# normal out-of-range/default path.
 $va = [uint32]0x00462822
 $offset = Convert-VaToFileOffset $bytes $va
 $expected = [byte[]]@(
@@ -87,12 +88,29 @@ $badPatch = [byte[]]@(
     0x90,0x90,0x90,0x90,0x90,0x90,0x90,
     0xDC,0x4F
 )
-$patch = [byte[]]@(
+$previousPatch = [byte[]]@(
     0x8B,0x10,
     0x85,0xD2,
     0x74,0x0E,
     0x8B,0x02,
     0x85,0xC0,
+    0x74,0x08,
+    0x8B,0xCA,
+    0xFF,0x50,0x30,
+    0x8B,0x00,
+    0x89,0x45,0xF8,
+    0x0F,0xBF,0x4D,0xF8,
+    0x83,0xE9,0x3C,
+    0x89,0x4D,0xDC,
+    0x83,0x7D,0xDC,0x4F,
+    0x90,0x90,0x90,0x90,0x90
+)
+$patch = [byte[]]@(
+    0x8B,0x10,
+    0x84,0xF6,
+    0x74,0x0E,
+    0x8B,0x02,
+    0x84,0xE4,
     0x74,0x08,
     0x8B,0xCA,
     0xFF,0x50,0x30,
@@ -113,7 +131,9 @@ if (Test-BytesEqual $current $patch) {
     return
 }
 
-if (-not (Test-BytesEqual $current $expected) -and -not (Test-BytesEqual $current $badPatch)) {
+if (-not (Test-BytesEqual $current $expected) -and
+    -not (Test-BytesEqual $current $badPatch) -and
+    -not (Test-BytesEqual $current $previousPatch)) {
     $hex = ($current | ForEach-Object { "{0:X2}" -f $_ }) -join " "
     throw "Unexpected bytes at VA 0x$('{0:X8}' -f $va), file offset 0x$('{0:X}' -f $offset): $hex"
 }
