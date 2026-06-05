@@ -925,6 +925,39 @@ function Send-RoomBroadcast(
     }
 }
 
+function Send-RoomMemberListBroadcast(
+    [object]$Sender,
+    [object]$Room,
+    [string]$Reason
+) {
+    if ($null -eq $Room) { return }
+    if ([string]::IsNullOrWhiteSpace($Sender.RoomTitle)) { return }
+
+    $packets = New-Object System.Collections.Generic.List[byte[]]
+    Add-ChannelUserListReplies $packets $Room
+
+    $now = Get-NowStamp
+    Write-Host "[$now] Room member-list broadcast room=$($Sender.RoomTitle) from=$($Sender.Account) reason=$Reason count=$($packets.Count)" -ForegroundColor Green
+
+    foreach ($target in $script:Clients.ToArray()) {
+        if ($target.Port -ne $Sender.Port) { continue }
+        if ($target.Peer -eq $Sender.Peer) { continue }
+        if (-not $target.Client.Connected) { continue }
+        if ($target.RoomTitle -ne $Sender.RoomTitle) { continue }
+        try {
+            foreach ($packet in $packets) {
+                Send-TcpPacket $target $packet "tcp-room-members"
+            }
+        } catch {
+            $errNow = Get-NowStamp
+            Write-Host "[$errNow] Room member-list broadcast failed peer=$($target.Peer) - $($_.Exception.Message)" -ForegroundColor Yellow
+            try { $target.Stream.Close() } catch {}
+            try { $target.Client.Close() } catch {}
+            [void]$script:Clients.Remove($target)
+        }
+    }
+}
+
 function Send-GameStartSync(
     [object]$Sender,
     [byte[]]$Packet
@@ -1246,6 +1279,7 @@ try {
                                         Add-RoomMember $room $conn.Account (Resolve-RoomHost (Get-PeerHost $conn.Peer))
                                         $now = Get-NowStamp
                                         Write-Host "[$now] Client room joined peer=$($conn.Peer) account=$($conn.Account) room=$($conn.RoomTitle) hostAccount=$($room.Owner) host=$($room.Host)" -ForegroundColor Green
+                                        Send-RoomMemberListBroadcast $conn $room "room-join"
                                     }
                                 }
                             }
