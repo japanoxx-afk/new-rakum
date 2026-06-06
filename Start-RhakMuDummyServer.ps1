@@ -30,6 +30,7 @@ param(
     [string[]]$RoomHostOverrides = @(),
     [ValidateSet("ignore", "empty", "members")]
     [string]$ChannelUserListReplyMode = "members",
+    [switch]$BroadcastRoomMemberListOnJoin,
     [int[]]$SkipUdpPorts = @(11223),
     [string]$TranscriptPath = ".\rhakmu_dummy_server_terminal.log",
     [string]$EventLogPath = ".\rhakmu_dummy_server_events.log",
@@ -1038,6 +1039,11 @@ function Send-RoomMemberListBroadcast(
     [object]$Room,
     [string]$Reason
 ) {
+    if (-not $script:BroadcastRoomMemberListOnJoin) {
+        $now = Get-NowStamp
+        Write-ServerEvent "[$now] Room member-list broadcast suppressed room=$($Sender.RoomTitle) from=$($Sender.Account) reason=$Reason" ([ConsoleColor]::DarkYellow)
+        return
+    }
     if ($null -eq $Room) { return }
     if ([string]::IsNullOrWhiteSpace($Sender.RoomTitle)) { return }
 
@@ -1262,6 +1268,7 @@ foreach ($entryGroup in @($RoomHostOverrides)) {
     }
 }
 $script:ChannelUserListReplyMode = $ChannelUserListReplyMode
+$script:BroadcastRoomMemberListOnJoin = [bool]$BroadcastRoomMemberListOnJoin
 $script:EnableUdpRelay = $EnableUdpRelay
 $script:GameStartSyncMode = $GameStartSyncMode
 $script:AcceptLikelyAccountPackets = [bool]$AcceptLikelyAccountPackets
@@ -1291,6 +1298,7 @@ Write-Host "SkipUdpPorts: $($SkipUdpPorts -join ',')"
 Write-Host "EnableUdpRelay: $([bool]$EnableUdpRelay)"
 Write-Host "GameStartSyncMode: $GameStartSyncMode"
 Write-Host "ChannelUserListReplyMode: $ChannelUserListReplyMode"
+Write-Host "BroadcastRoomMemberListOnJoin: $([bool]$BroadcastRoomMemberListOnJoin)"
 Write-Host "AcceptLikelyAccountPackets: $([bool]$AcceptLikelyAccountPackets)"
 Write-Host "LogDir: $script:ResolvedLogDir"
 if ($script:ResolvedTranscriptPath) { Write-Host "TranscriptPath: $script:ResolvedTranscriptPath" }
