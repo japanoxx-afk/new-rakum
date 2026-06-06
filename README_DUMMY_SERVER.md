@@ -448,6 +448,10 @@ Room presence/timeout notes:
 
 - The server skips UDP `11223` by default. When the server PC also runs a
   RhakMu client, that client must own UDP `11223` for direct room peer checks.
+- If the same account reconnects, the dummy server closes the older TCP session
+  and removes that stale session from room-member tracking. Stale sessions can
+  otherwise receive room-member broadcasts and leave dead peers mixed into the
+  room state.
 - `0x1FFF` channel-user-list requests return the current lobby/member list by
   default. Room-specific member-list broadcasts are also sent when a user joins
   a room, but they do not replace the client's direct UDP peer check.

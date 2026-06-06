@@ -366,6 +366,34 @@ function Remove-RoomMember([object]$Room, [string]$Account) {
     }
 }
 
+function Remove-StaleConnectionsForAccount(
+    [string]$Account,
+    [object]$CurrentConn
+) {
+    if ([string]::IsNullOrWhiteSpace($Account)) { return }
+
+    foreach ($target in @($script:Clients.ToArray())) {
+        if ($null -eq $target) { continue }
+        if ($null -ne $CurrentConn -and $target.Peer -eq $CurrentConn.Peer -and $target.Port -eq $CurrentConn.Port) { continue }
+        if ($target.Account -ne $Account) { continue }
+
+        $roomTitle = $target.RoomTitle
+        if (-not [string]::IsNullOrWhiteSpace($roomTitle)) {
+            $room = Find-RoomByTitle $roomTitle
+            if ($null -ne $room) {
+                Remove-RoomMember $room $Account
+            }
+        }
+
+        try { $target.Stream.Close() } catch {}
+        try { $target.Client.Close() } catch {}
+        [void]$script:Clients.Remove($target)
+
+        $now = Get-NowStamp
+        Write-ServerEvent "[$now] Stale client connection removed account=$Account peer=$($target.Peer) room=$roomTitle" ([ConsoleColor]::DarkYellow)
+    }
+}
+
 function Get-RoomMemberCount([object]$Room) {
     if ($null -eq $Room) { return 1 }
     $members = Ensure-RoomMembers $Room
@@ -1363,6 +1391,7 @@ try {
                                 $login = Get-LoginFields $packet
                                 if ((Test-RhakMuLogin $packet) -eq 0) {
                                     $conn.Account = $login.Account
+                                    Remove-StaleConnectionsForAccount $conn.Account $conn
                                     $oldAccount = $script:CurrentAccount
                                     $script:CurrentAccount = $conn.Account
                                     [void](Remove-RoomsForCurrentClient)
