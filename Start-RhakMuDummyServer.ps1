@@ -1581,6 +1581,7 @@ try {
                                 }
                             }
 
+                            $joinedRoom = $null
                             if ($reqType -eq 0x10FF) {
                                 if (Test-PostGameRoomReentryPacket $packet) {
                                     $now = Get-NowStamp
@@ -1593,12 +1594,25 @@ try {
                                         $now = Get-NowStamp
                                         Write-Host "[$now] Client room joined peer=$($conn.Peer) account=$($conn.Account) room=$($conn.RoomTitle) hostAccount=$($room.Owner) host=$($room.Host)" -ForegroundColor Green
                                         Send-RoomMemberListBroadcast $conn $room "room-join"
+                                        $joinedRoom = $room
                                     }
                                 }
                             }
 
                             foreach ($reply in $replySet) {
                                 Send-TcpPacket $conn $reply "tcp-reply"
+                            }
+
+                            # Send member list to the joiner after the join reply so the
+                            # client transitions from "joining" to "joined" lobby state.
+                            if ($null -ne $joinedRoom) {
+                                $joinerPackets = New-Object System.Collections.Generic.List[byte[]]
+                                Add-ChannelUserListReplies $joinerPackets $joinedRoom
+                                $now = Get-NowStamp
+                                Write-Host "[$now] Room member-list sent to joiner peer=$($conn.Peer) account=$($conn.Account) room=$($conn.RoomTitle) count=$($joinerPackets.Count)" -ForegroundColor Cyan
+                                foreach ($mp in $joinerPackets) {
+                                    Send-TcpPacket $conn $mp "tcp-room-members-joiner"
+                                }
                             }
 
                             if ($reqType -eq 0x12FF) {
