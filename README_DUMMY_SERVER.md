@@ -580,6 +580,7 @@ Expected startup lines:
 ```text
 RoomJoinIdentityMode: host
 GameStartSyncMode: original-plus-sync-ok
+StartTraceWindowSec: 20
 ChannelUserListReplyMode: members
 ```
 
@@ -589,6 +590,26 @@ Expected start-button lines:
 Game start sync mode=original-plus-sync-ok ...
 Room broadcast delivered ... reason=game-start-original
 Room broadcast delivered ... reason=game-start-sync-ok
+```
+
+If Claude-style A/B testing is needed, start the same profile with original-only
+start relay:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-RhakMuStableServer.ps1 -GameStartSyncMode original
+```
+
+or run:
+
+```powershell
+.\Run-RhakMuStableServerOriginal.bat
+```
+
+When a client leaves the room shortly after receiving a start relay, the server
+now emits a trace line like:
+
+```text
+Start trace target-left elapsedSec=... reason=game-start-original ...
 ```
 
 When experimenting, `-GameStartSyncMode original-plus-variants` makes the host

@@ -7,7 +7,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$PatchBundleVersion = "2026-06-07.0200"
+$PatchBundleVersion = "2026-06-07.0215"
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()

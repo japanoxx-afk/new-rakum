@@ -30,6 +30,7 @@ Game start relay suppressed ...
 ```text
 RoomJoinIdentityMode: host
 GameStartSyncMode: original-plus-sync-ok
+StartTraceWindowSec: 20
 ChannelUserListReplyMode: members
 ```
 
@@ -54,7 +55,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-RhakMuClientPatche
 마지막 줄이 아래처럼 나와야 합니다.
 
 ```text
-RhakMu patch bundle version: 2026-06-07.0200
+RhakMu patch bundle version: 2026-06-07.0215
 ```
 
 ## 2. 양쪽 PC에서 캡처 시작
@@ -87,6 +88,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-RhakMuStableServer.p
 ```text
 RoomJoinIdentityMode: host
 GameStartSyncMode: original-plus-sync-ok
+StartTraceWindowSec: 20
 ChannelUserListReplyMode: members
 ```
 
@@ -102,6 +104,24 @@ Start 버튼을 누를 때 더미서버에는 아래처럼 나와야 정상입�
 Game start sync mode=original-plus-sync-ok ...
 Room broadcast delivered ... reason=game-start-original
 Room broadcast delivered ... reason=game-start-sync-ok
+```
+
+`original` 단독 비교가 필요하면 서버 PC에서 아래처럼 실행합니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-RhakMuStableServer.ps1 -GameStartSyncMode original
+```
+
+또는:
+
+```powershell
+.\Run-RhakMuStableServerOriginal.bat
+```
+
+Start 패킷을 받은 클라이언트가 곧바로 방을 나가면 아래 줄이 추가로 찍힙니다.
+
+```text
+Start trace target-left elapsedSec=... reason=game-start-original ...
 ```
 
 `game-start-accept-variant` 또는 `game-start-stage8-variant`가 보이면 실험용

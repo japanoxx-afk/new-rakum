@@ -41,6 +41,7 @@ param(
     [ValidateSet("none", "original", "original-plus-sync-ok", "original-plus-accept", "accept-only", "original-plus-stage8", "original-plus-delayed-stage8", "original-plus-variants")]
     [string]$GameStartSyncMode = "none",
     [int]$DelayedStartStage8Ms = 12000,
+    [int]$StartTraceWindowSec = 20,
     [switch]$AcceptLikelyAccountPackets
 )
 
@@ -1032,6 +1033,7 @@ function Send-RoomBroadcast(
     Write-ServerEvent "[$now] Room broadcast room=$roomTitle from=$($Sender.Account) type=$typeText reason=$Reason" ([ConsoleColor]::Green)
 
     $sentCount = 0
+    $targetDetails = New-Object System.Collections.Generic.List[string]
     foreach ($target in $script:Clients.ToArray()) {
         if ($target.Port -ne $Sender.Port) { continue }
         if ($target.Peer -eq $Sender.Peer) { continue }
@@ -1041,6 +1043,10 @@ function Send-RoomBroadcast(
         try {
             Send-TcpPacket $target $Packet "tcp-room-broadcast"
             $sentCount++
+            [void]$targetDetails.Add("$($target.Account)@$($target.Peer)/room=$targetRoomTitle")
+            if ($reqType -eq 0x0FFF -and $Reason -like "game-start*") {
+                Add-StartBroadcastTrace $Sender $target $Reason $Packet
+            }
         } catch {
             $errNow = Get-NowStamp
             Write-ServerEvent "[$errNow] Room broadcast failed peer=$($target.Peer) - $($_.Exception.Message)" ([ConsoleColor]::Yellow)
@@ -1057,10 +1063,60 @@ function Send-RoomBroadcast(
         Write-ServerEvent "[$now] Room broadcast no-target room=$roomTitle from=$($Sender.Account) type=$typeText reason=$Reason known=$knownText" ([ConsoleColor]::DarkYellow)
     } else {
         $now = Get-NowStamp
-        Write-ServerEvent "[$now] Room broadcast delivered room=$roomTitle type=$typeText reason=$Reason targets=$sentCount" ([ConsoleColor]::DarkGreen)
+        $detailText = $targetDetails -join ", "
+        Write-ServerEvent "[$now] Room broadcast delivered room=$roomTitle type=$typeText reason=$Reason targets=$sentCount detail=$detailText" ([ConsoleColor]::DarkGreen)
     }
 
     return
+}
+
+function Add-StartBroadcastTrace(
+    [object]$Sender,
+    [object]$Target,
+    [string]$Reason,
+    [byte[]]$Packet
+) {
+    $payloadHex = if ($Packet.Length -gt 4) { (($Packet[4..($Packet.Length - 1)] | ForEach-Object { $_.ToString("X2") }) -join " ") } else { "" }
+    $trace = [pscustomobject]@{
+        Time = Get-Date
+        Room = Resolve-ConnectionRoomTitle $Sender
+        Reason = $Reason
+        SenderAccount = $Sender.Account
+        SenderPeer = $Sender.Peer
+        TargetAccount = $Target.Account
+        TargetPeer = $Target.Peer
+        Payload = $payloadHex
+    }
+    $script:RecentStartBroadcasts.Add($trace)
+    Remove-OldStartBroadcastTraces
+
+    $now = Get-NowStamp
+    Write-ServerEvent "[$now] Start trace delivered reason=$Reason room=$($trace.Room) payload=$payloadHex from=$($trace.SenderAccount)@$($trace.SenderPeer) to=$($trace.TargetAccount)@$($trace.TargetPeer)" ([ConsoleColor]::Cyan)
+}
+
+function Remove-OldStartBroadcastTraces {
+    if ($script:RecentStartBroadcasts.Count -eq 0) { return }
+    $cutoff = (Get-Date).AddSeconds(-1 * [Math]::Max(1, $script:StartTraceWindowSec))
+    $old = @($script:RecentStartBroadcasts.ToArray() | Where-Object { $_.Time -lt $cutoff })
+    foreach ($item in $old) {
+        [void]$script:RecentStartBroadcasts.Remove($item)
+    }
+}
+
+function Write-StartLeaveTrace([object]$Conn) {
+    Remove-OldStartBroadcastTraces
+    $matches = @($script:RecentStartBroadcasts.ToArray() | Where-Object {
+        $_.TargetPeer -eq $Conn.Peer -and
+        $_.TargetAccount -eq $Conn.Account
+    })
+    if ($matches.Count -eq 0) { return }
+
+    $nowDate = Get-Date
+    foreach ($match in $matches) {
+        $elapsed = [Math]::Round(($nowDate - $match.Time).TotalSeconds, 3)
+        $now = Get-NowStamp
+        Write-ServerEvent "[$now] Start trace target-left elapsedSec=$elapsed reason=$($match.Reason) room=$($match.Room) payload=$($match.Payload) target=$($match.TargetAccount)@$($match.TargetPeer) sender=$($match.SenderAccount)@$($match.SenderPeer)" ([ConsoleColor]::Yellow)
+    }
 }
 
 function Add-DelayedRoomBroadcast(
@@ -1366,8 +1422,10 @@ $script:BroadcastRoomMemberListOnJoin = (-not [bool]$SuppressRoomMemberListOnJoi
 $script:EnableUdpRelay = $EnableUdpRelay
 $script:GameStartSyncMode = $GameStartSyncMode
 $script:DelayedStartStage8Ms = $DelayedStartStage8Ms
+$script:StartTraceWindowSec = $StartTraceWindowSec
 $script:AcceptLikelyAccountPackets = [bool]$AcceptLikelyAccountPackets
 $script:ScheduledRoomBroadcasts = New-Object System.Collections.Generic.List[object]
+$script:RecentStartBroadcasts = New-Object System.Collections.Generic.List[object]
 
 Write-Host "RhakMu dummy server" -ForegroundColor Green
 Write-Host "Bind: $Bind"
@@ -1395,6 +1453,7 @@ Write-Host "SkipUdpPorts: $($SkipUdpPorts -join ',')"
 Write-Host "EnableUdpRelay: $([bool]$EnableUdpRelay)"
 Write-Host "GameStartSyncMode: $GameStartSyncMode"
 Write-Host "DelayedStartStage8Ms: $DelayedStartStage8Ms"
+Write-Host "StartTraceWindowSec: $StartTraceWindowSec"
 Write-Host "ChannelUserListReplyMode: $ChannelUserListReplyMode"
 Write-Host "BroadcastRoomMemberListOnJoin: $script:BroadcastRoomMemberListOnJoin"
 Write-Host "SuppressRoomMemberListOnJoin: $([bool]$SuppressRoomMemberListOnJoin)"
@@ -1561,6 +1620,7 @@ try {
                             }
 
                             if ($reqType -eq 0x11FF) {
+                                Write-StartLeaveTrace $conn
                                 $room = Find-RoomByTitle $conn.RoomTitle
                                 if ($null -ne $room) {
                                     Remove-RoomMember $room $conn.Account
