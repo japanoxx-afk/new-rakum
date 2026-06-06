@@ -90,6 +90,14 @@ capture files plus dummy-server logs into:
 
 If the folder is a git repository, the stop script also commits and pushes that
 session folder to GitHub. Use `-NoGitUpload` to save locally only.
+If GitHub rejects the push with `fetch first`, the stop script now runs
+`git pull --rebase origin main` before pushing. For an older script that already
+created a local log commit but failed to push, run this once in that PC's repo:
+
+```powershell
+git pull --rebase origin main
+git push origin main
+```
 
 To download all uploaded analysis logs from GitHub into a local helper folder,
 run:

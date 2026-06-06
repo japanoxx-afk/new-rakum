@@ -44,6 +44,19 @@ function Copy-IfExists([string]$Source, [string]$Destination) {
     return $false
 }
 
+function Invoke-GitChecked(
+    [string]$GitExe,
+    [string[]]$Arguments,
+    [switch]$AllowFailure
+) {
+    & $GitExe @Arguments
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0 -and -not $AllowFailure) {
+        throw "git $($Arguments -join ' ') failed with exit code $exitCode"
+    }
+    return $exitCode
+}
+
 if (-not (Test-IsAdministrator)) {
     throw "Run this script from an elevated PowerShell window. pktmon packet capture requires administrator rights."
 }
@@ -143,15 +156,33 @@ if (-not $NoGitUpload) {
     } elseif (-not (Test-Path -LiteralPath $gitDir)) {
         Write-Host "This folder is not a git repository. Files were saved locally only: $sessionDir" -ForegroundColor Yellow
     } else {
-        & $gitExe add -- $sessionDir | Out-Null
+        try {
+            [void](Invoke-GitChecked $gitExe @("add", "--", $sessionDir))
+        } catch {
+            Write-Host "Git add failed. Files were saved locally only: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+
         $status = & $gitExe status --short -- $sessionDir
         if (-not [string]::IsNullOrWhiteSpace(($status -join ""))) {
-            $message = "Add RhakMu capture logs for $localIp"
-            & $gitExe commit -m $message | Out-Host
-            & $gitExe push origin main | Out-Host
-            $gitUploaded = $true
+            try {
+                $message = "Add RhakMu capture logs for $localIp"
+                [void](Invoke-GitChecked $gitExe @("commit", "-m", $message))
+                [void](Invoke-GitChecked $gitExe @("pull", "--rebase", "origin", "main"))
+                [void](Invoke-GitChecked $gitExe @("push", "origin", "main"))
+                $gitUploaded = $true
+            } catch {
+                Write-Host "Git upload failed after saving files locally: $($_.Exception.Message)" -ForegroundColor Yellow
+                Write-Host "Manual recovery command:" -ForegroundColor Yellow
+                Write-Host "  git pull --rebase origin main; git push origin main" -ForegroundColor Yellow
+            }
         } else {
-            Write-Host "No new capture log changes to upload." -ForegroundColor DarkYellow
+            try {
+                [void](Invoke-GitChecked $gitExe @("pull", "--rebase", "origin", "main"))
+                [void](Invoke-GitChecked $gitExe @("push", "origin", "main"))
+                $gitUploaded = $true
+            } catch {
+                Write-Host "No new capture log changes to commit, and push/pull recovery did not complete: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
         }
     }
 }
