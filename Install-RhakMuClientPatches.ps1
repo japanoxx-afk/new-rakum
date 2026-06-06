@@ -3,11 +3,13 @@ param(
     [switch]$SkipFirewall,
     [switch]$SkipGitPull,
     [switch]$SkipNetworkPreference,
-    [switch]$DisableVirtualAdapters
+    [switch]$DisableVirtualAdapters,
+    [switch]$SkipBattleStartSyncPatch,
+    [switch]$RestoreBattleStartSyncPatch
 )
 
 $ErrorActionPreference = "Stop"
-$PatchBundleVersion = "2026-06-07.0215"
+$PatchBundleVersion = "2026-06-07.0230"
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -67,8 +69,22 @@ if (-not $SkipNetworkPreference) {
     }
 }
 
-Invoke-Step "Battle start sync client patch" {
-    & (Join-Path $root "Patch-RhakMuBattleStartSync.ps1") -ExePath (Join-Path $GameDir "Rhakmu.exe")
+if ($RestoreBattleStartSyncPatch -and $SkipBattleStartSyncPatch) {
+    throw "Use only one of -RestoreBattleStartSyncPatch or -SkipBattleStartSyncPatch."
+}
+
+if ($RestoreBattleStartSyncPatch) {
+    Invoke-Step "Restore battle start sync client patch" {
+        & (Join-Path $root "Restore-RhakMuBattleStartSync.ps1") -ExePath (Join-Path $GameDir "Rhakmu.exe")
+    }
+} elseif ($SkipBattleStartSyncPatch) {
+    Invoke-Step "Battle start sync client patch skipped" {
+        Write-Host "Battle start sync patch was not changed on this PC." -ForegroundColor Yellow
+    }
+} else {
+    Invoke-Step "Battle start sync client patch" {
+        & (Join-Path $root "Patch-RhakMuBattleStartSync.ps1") -ExePath (Join-Path $GameDir "Rhakmu.exe")
+    }
 }
 
 Invoke-Step "Menu delete guards" {
@@ -84,10 +100,15 @@ Invoke-Step "DirectDraw restore guard" {
 }
 
 Invoke-Step "Final patch verification" {
-    & (Join-Path $root "Verify-RhakMuClientPatches.ps1") -ExePath (Join-Path $GameDir "Rhakmu.exe")
+    $verifyArgs = @()
+    if ($RestoreBattleStartSyncPatch -or $SkipBattleStartSyncPatch) {
+        $verifyArgs += "-AllowOriginalBattleStartSync"
+    }
+    & (Join-Path $root "Verify-RhakMuClientPatches.ps1") -ExePath (Join-Path $GameDir "Rhakmu.exe") @verifyArgs
 }
 
 Write-Host ""
 Write-Host "RhakMu client setup completed. Run this same script on every PC before testing multiplayer." -ForegroundColor Green
 Write-Host "If room members are still removed after 10-20 seconds, rerun with -DisableVirtualAdapters on both PCs." -ForegroundColor Yellow
+Write-Host "For start-sync A/B testing, run with -RestoreBattleStartSyncPatch on both PCs, then compare with the normal install." -ForegroundColor Yellow
 Write-Host "RhakMu patch bundle version: $PatchBundleVersion" -ForegroundColor Cyan

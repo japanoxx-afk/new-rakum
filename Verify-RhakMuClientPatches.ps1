@@ -1,5 +1,6 @@
 param(
-    [string]$ExePath = "C:\Program Files (x86)\TriggerSoft\RhakMu\Rhakmu.exe"
+    [string]$ExePath = "C:\Program Files (x86)\TriggerSoft\RhakMu\Rhakmu.exe",
+    [switch]$AllowOriginalBattleStartSync
 )
 
 $ErrorActionPreference = "Stop"
@@ -62,6 +63,18 @@ function Test-ExactPatch([byte[]]$Bytes, [uint32]$Va, [byte[]]$Expected, [string
     }
 }
 
+function Test-BattleStartPatch([byte[]]$Bytes, [uint32]$Va, [byte[]]$ExpectedPatch, [byte[]]$OriginalBytes, [string]$Name) {
+    $off = Convert-VaToFileOffset $Bytes $Va
+    $patched = Test-BytesEqual $Bytes $off $ExpectedPatch
+    $original = Test-BytesEqual $Bytes $off $OriginalBytes
+    $ok = $patched -or ($AllowOriginalBattleStartSync -and $original)
+    [pscustomobject]@{
+        Name = $Name
+        Status = if ($patched) { "OK" } elseif ($AllowOriginalBattleStartSync -and $original) { "ORIGINAL" } else { "MISSING" }
+        VA = ("0x{0:X8}" -f $Va)
+    }
+}
+
 if (-not (Test-Path -LiteralPath $ExePath)) {
     throw "File not found: $ExePath"
 }
@@ -75,8 +88,15 @@ $battleStartPatch = [byte[]]@(
     0x5F,0x5E,0x5B,0x8B,0xE5,0x5D,0xC3,
     0x90,0x90
 )
+$battleStartOriginal = [byte[]]@(
+    0x68,0x30,0xEC,0x4E,0x00,
+    0x6A,0x04,
+    0xFF,0x15,0xD0,0xB3,0x4E,0x00,
+    0x83,0xC4,0x08,
+    0x5F,0x5E,0x5B,0x8B,0xE5,0x5D,0xC3
+)
 
-[void]$checks.Add((Test-ExactPatch $bytes 0x0044D2E2 $battleStartPatch "Battle start countdown sync"))
+[void]$checks.Add((Test-BattleStartPatch $bytes 0x0044D2E2 $battleStartPatch $battleStartOriginal "Battle start countdown sync"))
 [void]$checks.Add((Test-Nops $bytes 0x0041E2AE 12 "CScenChannel scalar delete guard"))
 [void]$checks.Add((Test-Nops $bytes 0x0041EF0E 12 "CScenGuild scalar delete guard"))
 [void]$checks.Add((Test-Nops $bytes 0x00421B7E 12 "CScenRanking scalar delete guard"))

@@ -112,6 +112,37 @@ Room broadcast delivered ... reason=game-start-sync-ok
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-RhakMuStableServer.ps1 -GameStartSyncMode original
 ```
 
+## Start Sync A/B Check
+
+The current logs show that the dummy server writes `0x0FFF` start packets to the
+other room member and that the target client later sends `0x11FF` leave-room.
+That means the next useful split is client-side: confirm whether the battle
+start client patch is forcing the host into the game while the peer rejects the
+start packet.
+
+Run this diagnostic mode on both PCs before launching RhakMu:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-RhakMuClientPatches.ps1 -RestoreBattleStartSyncPatch
+```
+
+Then start the server PC with the original relay mode:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-RhakMuStableServer.ps1 -GameStartSyncMode original
+```
+
+Test both directions:
+
+1. Remote PC creates room, server PC joins, remote PC presses Start.
+2. Server PC creates room, remote PC joins, server PC presses Start.
+
+After that, restore the normal patched mode on both PCs:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-RhakMuClientPatches.ps1
+```
+
 또는:
 
 ```powershell
