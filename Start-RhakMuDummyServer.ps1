@@ -38,8 +38,9 @@ param(
     [string]$TranscriptPath = ".\rhakmu_dummy_server_terminal.log",
     [string]$EventLogPath = ".\rhakmu_dummy_server_events.log",
     [bool]$EnableUdpRelay = $true,
-    [ValidateSet("none", "original", "original-plus-accept", "accept-only", "original-plus-stage8", "original-plus-variants")]
+    [ValidateSet("none", "original", "original-plus-accept", "accept-only", "original-plus-stage8", "original-plus-delayed-stage8", "original-plus-variants")]
     [string]$GameStartSyncMode = "none",
+    [int]$DelayedStartStage8Ms = 12000,
     [switch]$AcceptLikelyAccountPackets
 )
 
@@ -1062,6 +1063,39 @@ function Send-RoomBroadcast(
     return
 }
 
+function Add-DelayedRoomBroadcast(
+    [object]$Sender,
+    [byte[]]$Packet,
+    [string]$Reason,
+    [int]$DelayMs
+) {
+    if ($DelayMs -lt 1) { $DelayMs = 1 }
+    $packetCopy = New-Object byte[] $Packet.Length
+    [Array]::Copy($Packet, 0, $packetCopy, 0, $Packet.Length)
+
+    $due = (Get-Date).AddMilliseconds($DelayMs)
+    $script:ScheduledRoomBroadcasts.Add([pscustomobject]@{
+        Due = $due
+        Sender = $Sender
+        Packet = $packetCopy
+        Reason = $Reason
+    })
+
+    $now = Get-NowStamp
+    Write-ServerEvent "[$now] Room broadcast scheduled room=$($Sender.RoomTitle) from=$($Sender.Account) reason=$Reason delayMs=$DelayMs due=$($due.ToString('yyyy-MM-dd HH:mm:ss.fff'))" ([ConsoleColor]::DarkGreen)
+}
+
+function Process-DelayedRoomBroadcasts {
+    if ($script:ScheduledRoomBroadcasts.Count -eq 0) { return }
+
+    $nowDate = Get-Date
+    $dueItems = @($script:ScheduledRoomBroadcasts.ToArray() | Where-Object { $_.Due -le $nowDate })
+    foreach ($item in $dueItems) {
+        [void]$script:ScheduledRoomBroadcasts.Remove($item)
+        Send-RoomBroadcast $item.Sender $item.Packet $item.Reason
+    }
+}
+
 function Send-RoomMemberListBroadcast(
     [object]$Sender,
     [object]$Room,
@@ -1114,7 +1148,7 @@ function Send-GameStartSync(
         return
     }
 
-    if ($script:GameStartSyncMode -eq "original" -or $script:GameStartSyncMode -eq "original-plus-accept" -or $script:GameStartSyncMode -eq "original-plus-stage8" -or $script:GameStartSyncMode -eq "original-plus-variants") {
+    if ($script:GameStartSyncMode -eq "original" -or $script:GameStartSyncMode -eq "original-plus-accept" -or $script:GameStartSyncMode -eq "original-plus-stage8" -or $script:GameStartSyncMode -eq "original-plus-delayed-stage8" -or $script:GameStartSyncMode -eq "original-plus-variants") {
         Send-RoomBroadcast $Sender $Packet "game-start-original"
     }
 
@@ -1139,6 +1173,17 @@ function Send-GameStartSync(
         $stage8Packet[5] = 8
         $stage8Packet[6] = 0
         Send-RoomBroadcast $Sender $stage8Packet "game-start-stage8-variant"
+    }
+
+    if ($script:GameStartSyncMode -eq "original-plus-delayed-stage8" -and $Packet.Length -ge 7) {
+        if ($Packet[4] -eq 2 -and $Packet[5] -eq 0 -and $Packet[6] -eq 0) {
+            $stage8Packet = New-Object byte[] $Packet.Length
+            [Array]::Copy($Packet, 0, $stage8Packet, 0, $Packet.Length)
+            $stage8Packet[4] = 2
+            $stage8Packet[5] = 8
+            $stage8Packet[6] = 0
+            Add-DelayedRoomBroadcast $Sender $stage8Packet "game-start-stage8-delayed" $script:DelayedStartStage8Ms
+        }
     }
 
     if ($script:GameStartSyncMode -eq "original-plus-variants" -and $Packet.Length -ge 7) {
@@ -1316,7 +1361,9 @@ $script:ChannelUserListReplyMode = $ChannelUserListReplyMode
 $script:BroadcastRoomMemberListOnJoin = (-not [bool]$SuppressRoomMemberListOnJoin) -or [bool]$BroadcastRoomMemberListOnJoin
 $script:EnableUdpRelay = $EnableUdpRelay
 $script:GameStartSyncMode = $GameStartSyncMode
+$script:DelayedStartStage8Ms = $DelayedStartStage8Ms
 $script:AcceptLikelyAccountPackets = [bool]$AcceptLikelyAccountPackets
+$script:ScheduledRoomBroadcasts = New-Object System.Collections.Generic.List[object]
 
 Write-Host "RhakMu dummy server" -ForegroundColor Green
 Write-Host "Bind: $Bind"
@@ -1343,6 +1390,7 @@ Write-Host "RoomJoinIdentityMode: $RoomJoinIdentityMode"
 Write-Host "SkipUdpPorts: $($SkipUdpPorts -join ',')"
 Write-Host "EnableUdpRelay: $([bool]$EnableUdpRelay)"
 Write-Host "GameStartSyncMode: $GameStartSyncMode"
+Write-Host "DelayedStartStage8Ms: $DelayedStartStage8Ms"
 Write-Host "ChannelUserListReplyMode: $ChannelUserListReplyMode"
 Write-Host "BroadcastRoomMemberListOnJoin: $script:BroadcastRoomMemberListOnJoin"
 Write-Host "SuppressRoomMemberListOnJoin: $([bool]$SuppressRoomMemberListOnJoin)"
@@ -1382,6 +1430,8 @@ foreach ($port in ($Ports | Sort-Object -Unique)) {
 try {
     $buffer = New-Object byte[] 8192
     while ($true) {
+        Process-DelayedRoomBroadcasts
+
         foreach ($entry in $script:TcpListeners.ToArray()) {
             while ($entry.Listener.Pending()) {
                 $client = $entry.Listener.AcceptTcpClient()

@@ -290,15 +290,17 @@ Current default:
 The stable multiplayer profile is:
 
 ```powershell
-.\Start-RhakMuDummyServer.ps1 -AutoReply none -RoomJoinIdentityMode host -GameStartSyncMode original -ChannelUserListReplyMode members
+.\Start-RhakMuDummyServer.ps1 -AutoReply none -RoomJoinIdentityMode host -GameStartSyncMode original-plus-delayed-stage8 -DelayedStartStage8Ms 12000 -ChannelUserListReplyMode members
 ```
 
-This intentionally matches the 34e85ea start behavior: room-join replies use the
-room owner's identity. The 2026-06-07 01:24 trace then showed that with
-`GameStartSyncMode none`, the server-hosted room only started on the host. The
-stable profile therefore keeps host identity and relays only the original
-`0x0FFF 02 00 00` start packet to the other room member. It does not send the
-experimental accept/stage variants.
+This intentionally keeps the 34e85ea room identity behavior: room-join replies
+use the room owner's identity. The 2026-06-07 01:33 trace showed that the server
+did deliver the original `0x0FFF 02 00 00` start packet to the guest, but the
+guest still did not enter countdown. Older traces showed a later
+`0x0FFF 02 08 00` transition after the host countdown, so the stable profile now
+relays the original start packet immediately and schedules that stage-8 packet
+12 seconds later. It still avoids the broader experimental accept/action
+variants.
 
 If one host direction starts both clients but the other direction starts only the host, check the room host IP printed by the server:
 
@@ -579,15 +581,18 @@ Expected startup lines:
 
 ```text
 RoomJoinIdentityMode: host
-GameStartSyncMode: original
+GameStartSyncMode: original-plus-delayed-stage8
+DelayedStartStage8Ms: 12000
 ChannelUserListReplyMode: members
 ```
 
 Expected start-button lines:
 
 ```text
-Game start sync mode=original ...
+Game start sync mode=original-plus-delayed-stage8 ...
 Room broadcast delivered ... reason=game-start-original
+Room broadcast scheduled ... reason=game-start-stage8-delayed delayMs=12000
+Room broadcast delivered ... reason=game-start-stage8-delayed
 ```
 
 When experimenting, `-GameStartSyncMode original-plus-variants` makes the host
