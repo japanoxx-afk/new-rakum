@@ -1,0 +1,26 @@
+﻿Stopped: 2026-06-07 01:53:44.616
+Computer: DESKTOP-NO0N2QB
+LocalIp: 26.157.67.215
+Port: 11223
+ETL: C:\Users\seo\Documents\라크무\rhakmu_packet_captures\rhakmu_udp_11223_26.157.67.215_20260607_015220.etl
+PCAP: C:\Users\seo\Documents\라크무\rhakmu_packet_captures\rhakmu_udp_11223_26.157.67.215_20260607_015220.pcapng
+TEXT: C:\Users\seo\Documents\라크무\rhakmu_packet_captures\rhakmu_udp_11223_26.157.67.215_20260607_015220.txt
+SessionDir: C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260607_015220
+CopiedFiles:
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260607_015220\rhakmu_udp_11223_26.157.67.215_20260607_015220.etl
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260607_015220\rhakmu_udp_11223_26.157.67.215_20260607_015220.pcapng
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260607_015220\rhakmu_udp_11223_26.157.67.215_20260607_015220.txt
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260607_015220\rhakmu_udp_11223_26.157.67.215_20260607_015220.meta.txt
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260607_015220\rhakmu_udp_11223_26.157.67.215_20260607_015220_dummy_server_events.txt
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260607_015220\rhakmu_udp_11223_26.157.67.215_20260607_015220_dummy_server_terminal.txt
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260607_015220\rhakmu_udp_11223_26.157.67.215_20260607_015220_dummy_server_stdout.txt
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260607_015220\rhakmu_udp_11223_26.157.67.215_20260607_015220_dummy_server_stderr.txt
+
+UDP direction counts:
+  26.157.67.215:11223 -> 26.240.153.112:11223 = 1236
+  26.240.153.112:11223 -> 26.157.67.215:11223 = 33
+  Nprotect/TKFW capture entries = 5
+  Radmin capture entries = 1
+
+NetworkStateFiles:
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260607_015220\rhakmu_network_state_26.157.67.215_20260607_015344.txt
