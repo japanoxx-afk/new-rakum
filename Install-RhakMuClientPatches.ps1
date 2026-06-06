@@ -3,13 +3,10 @@ param(
     [switch]$SkipFirewall,
     [switch]$SkipGitPull,
     [switch]$SkipNetworkPreference,
-    [switch]$DisableVirtualAdapters,
-    [switch]$RadminOnly,
-    [switch]$EnableFirewallProfiles
+    [switch]$DisableVirtualAdapters
 )
 
 $ErrorActionPreference = "Stop"
-$PatchBundleVersion = "2026-06-06.1645"
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -55,16 +52,7 @@ if (-not $SkipGitPull -and (Test-Path -LiteralPath (Join-Path $root ".git"))) {
 
 if (-not $SkipFirewall) {
     Invoke-Step "Firewall rules" {
-        $firewallArgs = @{
-            GameDir = $GameDir
-        }
-        if ($RadminOnly) {
-            $firewallArgs.RadminOnly = $true
-        }
-        if ($EnableFirewallProfiles) {
-            $firewallArgs.EnableFirewallProfiles = $true
-        }
-        & (Join-Path $root "Configure-RhakMuFirewall.ps1") @firewallArgs
+        & (Join-Path $root "Configure-RhakMuFirewall.ps1") -GameDir $GameDir
     }
 }
 
@@ -73,9 +61,6 @@ if (-not $SkipNetworkPreference) {
         $networkArgs = @()
         if ($DisableVirtualAdapters) {
             $networkArgs += "-DisableVirtualAdapters"
-        }
-        if ($RadminOnly) {
-            $networkArgs += "-PreferRadminSource"
         }
         & (Join-Path $root "Set-RhakMuNetworkPreference.ps1") @networkArgs
     }
@@ -103,6 +88,4 @@ Invoke-Step "Final patch verification" {
 
 Write-Host ""
 Write-Host "RhakMu client setup completed. Run this same script on every PC before testing multiplayer." -ForegroundColor Green
-Write-Host "For Radmin-only multiplayer tests, run with -RadminOnly -EnableFirewallProfiles on every PC." -ForegroundColor Yellow
 Write-Host "If room members are still removed after 10-20 seconds, rerun with -DisableVirtualAdapters on both PCs." -ForegroundColor Yellow
-Write-Host "RhakMu patch bundle version: $PatchBundleVersion" -ForegroundColor Cyan

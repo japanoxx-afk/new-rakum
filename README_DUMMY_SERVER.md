@@ -18,8 +18,6 @@ Log files are written to:
 
 ```text
 .\rhakmu_packet_logs
-.\rhakmu_dummy_server_events.log
-.\rhakmu_dummy_server_terminal.log
 ```
 
 By default the dummy server skips UDP `11223`. When the server PC also runs a
@@ -44,20 +42,6 @@ Run this on both PCs before multiplayer tests:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-RhakMuClientPatches.ps1
 ```
 
-For restoration tests that must behave like remote PCs, force RhakMu peer UDP to
-use Radmin VPN instead of the local LAN:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-RhakMuClientPatches.ps1 -RadminOnly -EnableFirewallProfiles
-```
-
-`-RadminOnly` allows RhakMu UDP `11223` to Radmin's `26.0.0.0/8` range and
-blocks RhakMu UDP `11223` to private LAN ranges (`192.168.*`, `10.*`,
-`172.16-31.*`). Run it on every PC before testing. This is the preferred
-multiplayer test mode because distant PCs will not share a `192.168.*` LAN.
-The block rules only work when Windows Firewall is enabled; use
-`-EnableFirewallProfiles` or enable the firewall manually.
-
 If the same timeout continues, temporarily disable VMware/VirtualBox/Hyper-V
 host-only adapters for the RhakMu test:
 
@@ -80,37 +64,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-RhakMuUdpCapture.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Stop-RhakMuUdpCapture.ps1
 ```
 
-Capture file names now include the detected local IP address, preferring the
-Radmin `26.*` address. When `Stop-RhakMuUdpCapture.ps1` runs, it copies the
-capture files plus dummy-server logs into:
-
-```text
-.\logs\<ip>\<capture-session>
-```
-
-If the folder is a git repository, the stop script also commits and pushes that
-session folder to GitHub. Use `-NoGitUpload` to save locally only.
-If GitHub rejects the push with `fetch first`, the stop script now runs
-`git pull --rebase origin main` before pushing. For an older script that already
-created a local log commit but failed to push, run this once in that PC's repo:
-
-```powershell
-git pull --rebase origin main
-git push origin main
-```
-
-To download all uploaded analysis logs from GitHub into a local helper folder,
-run:
-
-```text
-Download-RhakMuAnalysisLogs.bat
-```
-
-The downloaded files are copied to:
-
-```text
-.\downloaded_analysis_logs\logs
-```
+Send both `.pcapng` and `.txt` outputs from `.\rhakmu_packet_captures`.
 
 ## Room Join Network Watch
 
@@ -330,37 +284,10 @@ This mode replies to account-looking packets with several success candidates. On
 Current default:
 
 ```powershell
-.\Start-RhakMuDummyServer.ps1 -AutoReply none -GameStartSyncMode original
-```
-
-`GameStartSyncMode original` relays the host's exact `0x0FFF` start packet to
-the other clients in the same room. The 2026-06-06 04:29 test proved the
-direct room UDP path can keep both members present, but the guest still did not
-start because the dummy server logged `Game start relay suppressed` for the
-host's `0x0FFF` packet.
-
-If a future test shows duplicate countdowns or a regression, temporarily start
-the server with:
-
-```powershell
 .\Start-RhakMuDummyServer.ps1 -AutoReply none -GameStartSyncMode none
 ```
 
-Start relay diagnostics are now written both to the terminal and to
-`.\rhakmu_dummy_server_events.log`. Look for these lines:
-
-```text
-Game start sync mode=...
-Room broadcast room=... type=0x0FFF reason=game-start-original
-Room broadcast delivered ... targets=1
-Room broadcast skipped no-room ...
-Room broadcast no-target ...
-```
-
-If the `0x0FFF` packet arrives on a TCP connection whose `RoomTitle` is empty,
-the server now infers the room from the logged-in account before broadcasting.
-This covers the case where the client sends the start packet after switching
-connection state.
+`GameStartSyncMode none` is intentional. In the 2026-06-04 23:55 capture, both clients reached countdown/game without the dummy server relaying `0x0FFF`; the start signal was handled by the clients' direct room/game path. Server-side `0x0FFF` broadcast variants were kept only for diagnostics because they did not make the guest start reliably.
 
 If one host direction starts both clients but the other direction starts only the host, check the room host IP printed by the server:
 
@@ -374,32 +301,6 @@ That `host=` value is what the guest receives in the battlefield list and room j
 .\Start-RhakMuDummyServer.ps1 -AutoReply none -RoomJoinHost 26.x.x.x
 ```
 
-When UDP capture shows the clients are actually exchanging peer packets on LAN
-addresses instead of Radmin VPN addresses, first run the client setup with
-`-RadminOnly` on both PCs. Then start the server with Radmin per-account room
-host addresses:
-
-```powershell
-.\Start-RhakMuDummyServer.ps1 -AutoReply none -RoomHostOverrides "test1=26.240.153.112","test2=26.157.67.215"
-```
-
-The server prints `RoomHostOverrides:` at startup and applies these addresses
-to room-list, room-join, and room-member payloads for the matching accounts.
-Comma-separated override text is also accepted, which is useful when copying a
-single command line:
-
-```powershell
-.\Start-RhakMuDummyServer.ps1 -AutoReply none -RoomHostOverrides "test1=26.240.153.112,test2=26.157.67.215"
-```
-
-If the log shows a combined host such as
-`26.240.153.112,test2=26.157.67.215`, pull the latest scripts and restart the
-server. The host field must be only one IP address.
-
-LAN overrides such as `test1=192.168.0.8` are useful only as a short local
-diagnostic. Do not use them for restoration validation because distant PCs will
-not have that route.
-
 The 2026-06-05 21:24-21:26 test showed:
 
 - `test2` local host -> `test1` remote guest: guest entered the room, but only the host counted down.
@@ -409,17 +310,8 @@ That points to a direct connectivity/NAT/firewall difference between the two hos
 
 Room join reply detail:
 
-- `0x10FF` success replies send the room owner/host account plus the room host
-  IP by default. This is controlled by `-RoomJoinIdentityMode host`.
-- If room entry works but the guest leaves after 10-20 seconds, compare with
-  the joining-account identity behavior:
-
-```powershell
-.\Start-RhakMuDummyServer.ps1 -AutoReply none -RoomJoinIdentityMode joiner
-```
-
-- The server logs each join reply as `Room join reply identity mode=...` so the
-  capture bundle shows exactly which variant was tested.
+- `0x10FF` success replies now send the room owner/host account plus the host IP.
+- Earlier builds sent the joining account in that field, which can let both clients enter the room but misalign the local player slot/race when the RTS match starts.
 - Stale rooms are removed when the owner logs in again, creates a new room, or sends a crash report. Old room entries can otherwise leave stale player counts/room metadata visible in the battlefield list.
 
 One-step client setup:
@@ -447,76 +339,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Configure-RhakMuFirewall.p
 
 Run this on every PC. If a PC can connect to the lobby but cannot receive countdown/game packets when it hosts, Windows firewall or the selected host IP is the first thing to check.
 
-Radmin-only firewall setup:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Configure-RhakMuFirewall.ps1 -RadminOnly -EnableFirewallProfiles
-```
-
 Room presence/timeout notes:
 
 - The server skips UDP `11223` by default. When the server PC also runs a
   RhakMu client, that client must own UDP `11223` for direct room peer checks.
-- If the same account reconnects, the dummy server closes the older TCP session
-  and removes that stale session from room-member tracking. Stale sessions can
-  otherwise receive room-member broadcasts and leave dead peers mixed into the
-  room state.
 - `0x1FFF` channel-user-list requests return the current lobby/member list by
-  default. Room-specific member-list broadcasts are sent on join by default.
-  This matches the 2026-06-06 04:55 trace where `TCP-ROOM-MEMBERS` was sent to
-  the host and the later `0x0FFF` game-start packet was relayed to the guest.
-  To disable that experimental behavior for comparison, start the server with
-  `-SuppressRoomMemberListOnJoin`.
+  default. Room-specific member-list broadcasts are also sent when a user joins
+  a room, but they do not replace the client's direct UDP peer check.
 - If a room member disappears after 10-20 seconds, inspect UDP capture output
   first. Any repeated traffic to `192.168.*`, `172.16.*`, `10.*`, VMware,
   VirtualBox, Hyper-V, or host-only adapter addresses means the client picked
   the wrong network interface for peer checks.
-- If one side sends only a few UDP packets and then the peer repeats keepalive
-  packets until timeout, compare `-RoomJoinIdentityMode joiner` and
-  `-RoomJoinIdentityMode host`. The default is now `joiner` so the joining
-  client receives its own account identity while preserving the room host IP.
-- For the 10-20 second room removal test, start UDP capture on both PCs before
-  creating the room and stop capture only after the guest has been removed or
-  returned to the lobby. If one side is stopped before the join timestamp, that
-  capture cannot prove whether the peer UDP arrived at the app.
-- While both clients are inside the room, capture this on both PCs:
-
-```powershell
-Get-NetUDPEndpoint -LocalPort 11223 |
-  Select-Object LocalAddress,LocalPort,OwningProcess,
-    @{Name="Process";Expression={(Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName}}
-```
-
-  The expected owner is `Rhakmu`. If another process owns UDP `11223`, close it
-  before testing.
-- `TKFWFV64.sys` / `Nprotect Firewall Core Driver` in packet monitor output is
-  not the same as Windows Firewall. Windows Firewall can be off while this
-  driver still filters traffic. If UDP is visible at the NIC but the client
-  stops responding, temporarily disabling/uninstalling that filter is a useful
-  isolation test.
-- In the 2026-06-06 15:46 trace, both clients owned UDP `0.0.0.0:11223`
-  through `Rhakmu`, and the dummy server TCP room flow was normal. The server
-  PC capture showed `test2` sent only the first three UDP packets to
-  `test1`, while `test1` kept sending UDP keepalives until `test2` left the
-  room about 20 seconds later. That points away from TCP room-list handling and
-  toward peer UDP filtering, routing, or client-side acceptance of the peer
-  handshake.
-- In the 2026-06-06 16:18 trace, the outer UDP/IP headers used Radmin
-  addresses, but the RhakMu UDP payload from `test1` still advertised
-  `192.168.0.8` (`C0 A8 00 08`). That means Windows routing was correct but the
-  game selected a LAN adapter address for its own peer protocol. Running
-  `Install-RhakMuClientPatches.ps1 -RadminOnly` now also marks non-Radmin IPv4
-  addresses as `SkipAsSource=True` and leaves the Radmin `26.*` address as the
-  preferred source.
-- `Stop-RhakMuUdpCapture.ps1` now adds UDP direction counts and a
-  `rhakmu_network_state_*.txt` file to the same analysis folder. That file
-  records the RhakMu UDP owner, Radmin route, adapter metrics, bindings, and
-  network filter drivers so the next capture can be diagnosed without separate
-  manual commands.
-- `Start-RhakMuUdpCapture.ps1` also records
-  `rhakmu_udp_...endpoint-watch.txt` once per second while capture is active.
-  Use that file to confirm `Rhakmu` owned UDP `11223` during the failure, not
-  only after the client has already returned to lobby or exited.
 
 ## Client Patch Verification
 
