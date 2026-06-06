@@ -475,6 +475,25 @@ Room presence/timeout notes:
   packets until timeout, compare the default mode with
   `-RoomJoinIdentityMode joiner`. The default keeps the older host-account join
   identity that matched the 04:55 room-start relay trace.
+- For the 10-20 second room removal test, start UDP capture on both PCs before
+  creating the room and stop capture only after the guest has been removed or
+  returned to the lobby. If one side is stopped before the join timestamp, that
+  capture cannot prove whether the peer UDP arrived at the app.
+- While both clients are inside the room, capture this on both PCs:
+
+```powershell
+Get-NetUDPEndpoint -LocalPort 11223 |
+  Select-Object LocalAddress,LocalPort,OwningProcess,
+    @{Name="Process";Expression={(Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName}}
+```
+
+  The expected owner is `Rhakmu`. If another process owns UDP `11223`, close it
+  before testing.
+- `TKFWFV64.sys` / `Nprotect Firewall Core Driver` in packet monitor output is
+  not the same as Windows Firewall. Windows Firewall can be off while this
+  driver still filters traffic. If UDP is visible at the NIC but the client
+  stops responding, temporarily disabling/uninstalling that filter is a useful
+  isolation test.
 
 ## Client Patch Verification
 
