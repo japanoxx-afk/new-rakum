@@ -1,0 +1,126 @@
+﻿Collected: 2026-06-06 22:21:24.214
+Computer: DESKTOP-2KHKVG1
+LocalIp: 26.240.153.112
+PeerIp: 26.157.67.215
+Port: 11223
+
+===== UDP endpoint on RhakMu port =====
+(no output)
+
+===== Rhakmu process sockets =====
+Rhakmu process is not running.
+
+===== IPv4 interface priority =====
+
+ifIndex InterfaceAlias              InterfaceMetric      NlMtu ConnectionState     Dhcp
+------- --------------              ---------------      ----- ---------------     ----
+     13 Radmin VPN                                5       1500       Connected Disabled
+     17 이더넷 2                                    25       1500       Connected  Enabled
+      1 Loopback Pseudo-Interface 1              75 4294967295       Connected Disabled
+
+===== IPv4 addresses =====
+
+IPAddress      PrefixLength InterfaceAlias              InterfaceIndex AddressState
+---------      ------------ --------------              -------------- ------------
+127.0.0.1                 8 Loopback Pseudo-Interface 1              1    Preferred
+26.240.153.112            8 Radmin VPN                              13    Preferred
+192.168.0.8              24 이더넷 2                                   17    Preferred
+
+===== Route to peer =====
+
+InterfaceAlias InterfaceIndex NextHop RouteMetric InterfaceMetric DestinationPrefix SourceAddress
+-------------- -------------- ------- ----------- --------------- ----------------- -------------
+Radmin VPN                 13                                                                    
+Radmin VPN                 13 0.0.0.0 256         5               26.0.0.0/8
+
+===== IPv4 route table =====
+===========================================================================
+인터페이스 목록
+ 13...02 50 11 b0 f2 e8 ......Famatech Radmin VPN Ethernet Adapter
+ 17...b4 2e 99 94 7f ba ......Realtek Gaming GbE Family Controller
+  1...........................Software Loopback Interface 1
+ 10...00 00 00 00 00 00 00 e0 Microsoft Teredo Tunneling Adapter
+===========================================================================
+
+IPv4 경로 테이블
+===========================================================================
+활성 경로:
+네트워크 대상      네트워크 마스크     게이트웨이      인터페이스    메트릭
+          0.0.0.0          0.0.0.0      192.168.0.1      192.168.0.8     25
+          0.0.0.0          0.0.0.0         26.0.0.1   26.240.153.112   9261
+         26.0.0.0        255.0.0.0             연결됨    26.240.153.112    261
+   26.240.153.112  255.255.255.255             연결됨    26.240.153.112    261
+   26.255.255.255  255.255.255.255             연결됨    26.240.153.112    261
+        127.0.0.0        255.0.0.0             연결됨         127.0.0.1    331
+        127.0.0.1  255.255.255.255             연결됨         127.0.0.1    331
+  127.255.255.255  255.255.255.255             연결됨         127.0.0.1    331
+      192.168.0.0    255.255.255.0             연결됨       192.168.0.8    281
+      192.168.0.8  255.255.255.255             연결됨       192.168.0.8    281
+    192.168.0.255  255.255.255.255             연결됨       192.168.0.8    281
+        224.0.0.0        240.0.0.0             연결됨         127.0.0.1    331
+        224.0.0.0        240.0.0.0             연결됨       192.168.0.8    281
+        224.0.0.0        240.0.0.0             연결됨    26.240.153.112    261
+  255.255.255.255  255.255.255.255             연결됨         127.0.0.1    331
+  255.255.255.255  255.255.255.255             연결됨       192.168.0.8    281
+  255.255.255.255  255.255.255.255             연결됨    26.240.153.112    261
+===========================================================================
+영구 경로:
+  네트워크 주소   네트워크 마스크 게이트웨이 주소    메트릭
+          0.0.0.0          0.0.0.0         26.0.0.1    9256
+===========================================================================
+
+===== Network adapters =====
+
+ifIndex Name       InterfaceDescription                 Status MacAddress        LinkSpeed
+------- ----       --------------------                 ------ ----------        ---------
+     13 Radmin VPN Famatech Radmin VPN Ethernet Adapter Up     02-50-11-B0-F2-E8 100 Mbps 
+     17 이더넷 2      Realtek Gaming GbE Family Controller Up     B4-2E-99-94-7F-BA 1 Gbps
+
+===== Adapter bindings of interest =====
+
+Name       DisplayName                               ComponentID    Enabled
+----       -----------                               -----------    -------
+Radmin VPN Link-Layer Topology Discovery 매퍼 I/O 드라이버 ms_lltdio         True
+Radmin VPN Link-Layer Topology Discovery 응답기         ms_rspndr         True
+Radmin VPN Microsoft LLDP 프로토콜 드라이버                  ms_lldp           True
+Radmin VPN Microsoft Networks용 클라이언트                 ms_msclient       True
+Radmin VPN Microsoft 네트워크 어댑터 멀티플렉서 프로토콜             ms_implat        False
+Radmin VPN Microsoft 네트워크용 파일 및 프린터 공유               ms_server         True
+Radmin VPN Npcap Packet Driver (NPCAP)               INSECURE_NPCAP    True
+Radmin VPN QoS 패킷 스케줄러                               ms_pacer          True
+Radmin VPN 인터넷 프로토콜 버전 4(TCP/IPv4)                   ms_tcpip          True
+Radmin VPN 인터넷 프로토콜 버전 6(TCP/IPv6)                   ms_tcpip6         True
+이더넷 2      Npcap Packet Driver (NPCAP)               INSECURE_NPCAP    True
+이더넷 2      QoS 패킷 스케줄러                               ms_pacer          True
+
+===== Network filter drivers of interest =====
+
+
+Name        : npcap
+DisplayName : Npcap Packet Driver (NPCAP)
+State       : Running
+StartMode   : System
+PathName    : C:\Windows\system32\DRIVERS\npcap.sys
+
+Name        : RvNetMP60
+DisplayName : Famatech Radmin VPN Miniport
+State       : Running
+StartMode   : Manual
+PathName    : C:\Windows\system32\drivers\RvNetMP60.sys
+
+Name        : TKFWFV
+DisplayName : nProtect Firewall Core Driver 
+State       : Running
+StartMode   : System
+PathName    : C:\Windows\system32\TKFWFV64.sys
+
+===== Radmin and RhakMu related routes =====
+
+DestinationPrefix  NextHop  InterfaceAlias InterfaceIndex RouteMetric Protocol
+-----------------  -------  -------------- -------------- ----------- --------
+224.0.0.0/4        0.0.0.0  Radmin VPN                 13         256    Local
+255.255.255.255/32 0.0.0.0  Radmin VPN                 13         256    Local
+26.0.0.0/8         0.0.0.0  Radmin VPN                 13         256    Local
+26.240.153.112/32  0.0.0.0  Radmin VPN                 13         256    Local
+26.255.255.255/32  0.0.0.0  Radmin VPN                 13         256    Local
+0.0.0.0/0          26.0.0.1 Radmin VPN                 13        9256  NetMgmt
