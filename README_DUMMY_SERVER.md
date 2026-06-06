@@ -501,6 +501,13 @@ Get-NetUDPEndpoint -LocalPort 11223 |
   room about 20 seconds later. That points away from TCP room-list handling and
   toward peer UDP filtering, routing, or client-side acceptance of the peer
   handshake.
+- In the 2026-06-06 16:18 trace, the outer UDP/IP headers used Radmin
+  addresses, but the RhakMu UDP payload from `test1` still advertised
+  `192.168.0.8` (`C0 A8 00 08`). That means Windows routing was correct but the
+  game selected a LAN adapter address for its own peer protocol. Running
+  `Install-RhakMuClientPatches.ps1 -RadminOnly` now also marks non-Radmin IPv4
+  addresses as `SkipAsSource=True` and leaves the Radmin `26.*` address as the
+  preferred source.
 - `Stop-RhakMuUdpCapture.ps1` now adds UDP direction counts and a
   `rhakmu_network_state_*.txt` file to the same analysis folder. That file
   records the RhakMu UDP owner, Radmin route, adapter metrics, bindings, and

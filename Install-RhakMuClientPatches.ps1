@@ -9,7 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$PatchBundleVersion = "2026-06-06.1625"
+$PatchBundleVersion = "2026-06-06.1645"
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -73,6 +73,9 @@ if (-not $SkipNetworkPreference) {
         $networkArgs = @()
         if ($DisableVirtualAdapters) {
             $networkArgs += "-DisableVirtualAdapters"
+        }
+        if ($RadminOnly) {
+            $networkArgs += "-PreferRadminSource"
         }
         & (Join-Path $root "Set-RhakMuNetworkPreference.ps1") @networkArgs
     }
