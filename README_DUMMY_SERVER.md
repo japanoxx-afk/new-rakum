@@ -80,7 +80,29 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-RhakMuUdpCapture.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Stop-RhakMuUdpCapture.ps1
 ```
 
-Send both `.pcapng` and `.txt` outputs from `.\rhakmu_packet_captures`.
+Capture file names now include the detected local IP address, preferring the
+Radmin `26.*` address. When `Stop-RhakMuUdpCapture.ps1` runs, it copies the
+capture files plus dummy-server logs into:
+
+```text
+.\logs\<ip>\<capture-session>
+```
+
+If the folder is a git repository, the stop script also commits and pushes that
+session folder to GitHub. Use `-NoGitUpload` to save locally only.
+
+To download all uploaded analysis logs from GitHub into a local helper folder,
+run:
+
+```text
+Download-RhakMuAnalysisLogs.bat
+```
+
+The downloaded files are copied to:
+
+```text
+.\downloaded_analysis_logs\logs
+```
 
 ## Room Join Network Watch
 

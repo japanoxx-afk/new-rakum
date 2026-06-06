@@ -2,6 +2,7 @@ rhakmu_packet_logs/
 rhakmu_packet_captures/
 analysis/
 third_party/
+downloaded_analysis_logs/
 *.log
 *.ERR
 *.bak*
