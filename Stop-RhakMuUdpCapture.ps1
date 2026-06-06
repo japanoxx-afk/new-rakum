@@ -44,6 +44,58 @@ function Copy-IfExists([string]$Source, [string]$Destination) {
     return $false
 }
 
+function Get-PeerIpFromCaptureText([string]$TextPath, [string]$LocalIp) {
+    if (-not (Test-Path -LiteralPath $TextPath) -or [string]::IsNullOrWhiteSpace($LocalIp)) { return "" }
+
+    $escapedLocal = [regex]::Escape($LocalIp)
+    $matches = Select-String -LiteralPath $TextPath -Pattern "\b(26\.\d+\.\d+\.\d+)\.11223\s*[<>]" -AllMatches -ErrorAction SilentlyContinue
+    $candidates = New-Object System.Collections.Generic.List[string]
+    foreach ($matchLine in $matches) {
+        foreach ($m in $matchLine.Matches) {
+            $ip = $m.Groups[1].Value
+            if ($ip -ne $LocalIp -and -not $candidates.Contains($ip)) {
+                $candidates.Add($ip)
+            }
+        }
+    }
+
+    $matches = Select-String -LiteralPath $TextPath -Pattern ">\s*(26\.\d+\.\d+\.\d+)\.11223" -AllMatches -ErrorAction SilentlyContinue
+    foreach ($matchLine in $matches) {
+        foreach ($m in $matchLine.Matches) {
+            $ip = $m.Groups[1].Value
+            if ($ip -ne $LocalIp -and -not $candidates.Contains($ip)) {
+                $candidates.Add($ip)
+            }
+        }
+    }
+
+    if ($candidates.Count -gt 0) { return $candidates[0] }
+    return ""
+}
+
+function Add-CaptureDirectionSummary([string]$SummaryPath, [string]$TextPath, [string]$LocalIp, [string]$PeerIp) {
+    Add-Content -LiteralPath $SummaryPath -Encoding UTF8 -Value ""
+    Add-Content -LiteralPath $SummaryPath -Encoding UTF8 -Value "UDP direction counts:"
+    if (-not (Test-Path -LiteralPath $TextPath)) {
+        Add-Content -LiteralPath $SummaryPath -Encoding UTF8 -Value "  capture text not found"
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($PeerIp)) {
+        Add-Content -LiteralPath $SummaryPath -Encoding UTF8 -Value "  peer IP not detected from capture text"
+    } else {
+        $localToPeer = (Select-String -LiteralPath $TextPath -Pattern "$([regex]::Escape($LocalIp)).11223 > $([regex]::Escape($PeerIp)).11223" -ErrorAction SilentlyContinue).Count
+        $peerToLocal = (Select-String -LiteralPath $TextPath -Pattern "$([regex]::Escape($PeerIp)).11223 > $([regex]::Escape($LocalIp)).11223" -ErrorAction SilentlyContinue).Count
+        Add-Content -LiteralPath $SummaryPath -Encoding UTF8 -Value "  ${LocalIp}:11223 -> ${PeerIp}:11223 = $localToPeer"
+        Add-Content -LiteralPath $SummaryPath -Encoding UTF8 -Value "  ${PeerIp}:11223 -> ${LocalIp}:11223 = $peerToLocal"
+    }
+
+    $nprotectCount = (Select-String -LiteralPath $TextPath -Pattern "TKFW|Nprotect|nProtect" -ErrorAction SilentlyContinue).Count
+    $radminCount = (Select-String -LiteralPath $TextPath -Pattern "Radmin|RvNet" -ErrorAction SilentlyContinue).Count
+    Add-Content -LiteralPath $SummaryPath -Encoding UTF8 -Value "  Nprotect/TKFW capture entries = $nprotectCount"
+    Add-Content -LiteralPath $SummaryPath -Encoding UTF8 -Value "  Radmin capture entries = $radminCount"
+}
+
 function Invoke-GitChecked(
     [string]$GitExe,
     [string[]]$Arguments,
@@ -146,6 +198,28 @@ $summaryPath = Join-Path $sessionDir "${baseName}_summary.txt"
     ($copied | ForEach-Object { "  $_" })
 ) | Set-Content -LiteralPath $summaryPath -Encoding UTF8
 $copied.Add($summaryPath)
+
+$peerIp = Get-PeerIpFromCaptureText $txtPath $localIp
+Add-CaptureDirectionSummary $summaryPath $txtPath $localIp $peerIp
+
+$collectorPath = Join-Path $root "Collect-RhakMuNetworkState.ps1"
+if (Test-Path -LiteralPath $collectorPath) {
+    try {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $collectorPath -OutputDir $sessionDir -Port $(if ($null -ne $captureState) { $captureState.Port } else { 11223 }) -LocalIp $localIp -PeerIp $peerIp
+        $networkStateFiles = Get-ChildItem -LiteralPath $sessionDir -Filter "rhakmu_network_state_*.txt" -File -ErrorAction SilentlyContinue
+        foreach ($networkStateFile in $networkStateFiles) {
+            $copied.Add($networkStateFile.FullName)
+        }
+        Add-Content -LiteralPath $summaryPath -Encoding UTF8 -Value ""
+        Add-Content -LiteralPath $summaryPath -Encoding UTF8 -Value "NetworkStateFiles:"
+        $networkStateFiles | ForEach-Object {
+            Add-Content -LiteralPath $summaryPath -Encoding UTF8 -Value "  $($_.FullName)"
+        }
+    } catch {
+        Add-Content -LiteralPath $summaryPath -Encoding UTF8 -Value ""
+        Add-Content -LiteralPath $summaryPath -Encoding UTF8 -Value "Network state collection failed: $($_.Exception.Message)"
+    }
+}
 
 $gitUploaded = $false
 if (-not $NoGitUpload) {

@@ -68,7 +68,7 @@ $stateJsonPath = Join-Path $fullOutputDir "active_capture.json"
 try { pktmon stop | Out-Null } catch {}
 pktmon filter remove | Out-Null
 pktmon filter add "RhakMu UDP $Port" -t UDP -p $Port | Out-Null
-pktmon start --capture --comp nics --pkt-size 0 --file-name $etlPath | Out-Null
+pktmon start --capture --comp all --pkt-size 0 --file-name $etlPath | Out-Null
 
 @(
     "Started: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff')",
@@ -76,6 +76,7 @@ pktmon start --capture --comp nics --pkt-size 0 --file-name $etlPath | Out-Null
     "LocalIp: $localIpValue",
     "Label: $Label",
     "Port: $Port",
+    "ComponentScope: all",
     "ETL: $etlPath",
     "LogsRoot: $resolvedLogsRoot",
     "StopCommand: powershell -NoProfile -ExecutionPolicy Bypass -File .\Stop-RhakMuUdpCapture.ps1"

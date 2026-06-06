@@ -494,6 +494,18 @@ Get-NetUDPEndpoint -LocalPort 11223 |
   driver still filters traffic. If UDP is visible at the NIC but the client
   stops responding, temporarily disabling/uninstalling that filter is a useful
   isolation test.
+- In the 2026-06-06 15:46 trace, both clients owned UDP `0.0.0.0:11223`
+  through `Rhakmu`, and the dummy server TCP room flow was normal. The server
+  PC capture showed `test2` sent only the first three UDP packets to
+  `test1`, while `test1` kept sending UDP keepalives until `test2` left the
+  room about 20 seconds later. That points away from TCP room-list handling and
+  toward peer UDP filtering, routing, or client-side acceptance of the peer
+  handshake.
+- `Stop-RhakMuUdpCapture.ps1` now adds UDP direction counts and a
+  `rhakmu_network_state_*.txt` file to the same analysis folder. That file
+  records the RhakMu UDP owner, Radmin route, adapter metrics, bindings, and
+  network filter drivers so the next capture can be diagnosed without separate
+  manual commands.
 
 ## Client Patch Verification
 
