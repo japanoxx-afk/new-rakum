@@ -1,0 +1,17 @@
+﻿Stopped: 2026-06-06 15:32:52.421
+Computer: DESKTOP-NO0N2QB
+LocalIp: 26.157.67.215
+Port: 11223
+ETL: C:\Users\seo\Documents\라크무\rhakmu_packet_captures\rhakmu_udp_11223_26.157.67.215_20260606_153142.etl
+PCAP: C:\Users\seo\Documents\라크무\rhakmu_packet_captures\rhakmu_udp_11223_26.157.67.215_20260606_153142.pcapng
+TEXT: C:\Users\seo\Documents\라크무\rhakmu_packet_captures\rhakmu_udp_11223_26.157.67.215_20260606_153142.txt
+SessionDir: C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260606_153142
+CopiedFiles:
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260606_153142\rhakmu_udp_11223_26.157.67.215_20260606_153142.etl
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260606_153142\rhakmu_udp_11223_26.157.67.215_20260606_153142.pcapng
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260606_153142\rhakmu_udp_11223_26.157.67.215_20260606_153142.txt
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260606_153142\rhakmu_udp_11223_26.157.67.215_20260606_153142.meta.txt
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260606_153142\rhakmu_udp_11223_26.157.67.215_20260606_153142_dummy_server_events.txt
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260606_153142\rhakmu_udp_11223_26.157.67.215_20260606_153142_dummy_server_terminal.txt
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260606_153142\rhakmu_udp_11223_26.157.67.215_20260606_153142_dummy_server_stdout.txt
+  C:\Users\seo\Documents\라크무\logs\26.157.67.215\rhakmu_udp_11223_26.157.67.215_20260606_153142\rhakmu_udp_11223_26.157.67.215_20260606_153142_dummy_server_stderr.txt
