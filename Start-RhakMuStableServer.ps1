@@ -1,7 +1,7 @@
 param(
     [string]$Bind = "0.0.0.0",
     [int[]]$TcpPorts = @(11223),
-    [int[]]$UdpPorts = @(11223),
+    [int[]]$UdpPorts = @(),
     [string]$LogDir = ".\rhakmu_dummy_logs",
     [ValidateSet("original", "original-plus-sync-ok", "none", "original-plus-accept", "accept-only", "original-plus-stage8", "original-plus-delayed-stage8", "original-plus-variants")]
     [string]$GameStartSyncMode = "original-plus-sync-ok",
@@ -26,14 +26,23 @@ Write-Host "RoomJoinIdentityMode: host" -ForegroundColor Cyan
 Write-Host "GameStartSyncMode: $GameStartSyncMode" -ForegroundColor Cyan
 Write-Host "StartTraceWindowSec: $StartTraceWindowSec" -ForegroundColor Cyan
 Write-Host "ChannelUserListReplyMode: members" -ForegroundColor Cyan
+Write-Host "TcpPorts: $($TcpPorts -join ', ')" -ForegroundColor Cyan
+Write-Host "UdpPorts: $(if ($UdpPorts.Count -gt 0) { $UdpPorts -join ', ' } else { '(none - Rhakmu.exe owns UDP 11223)' })" -ForegroundColor Cyan
 
-& (Join-Path $root "Start-RhakMuDummyServer.ps1") `
-    -Bind $Bind `
-    -TcpPorts $TcpPorts `
-    -UdpPorts $UdpPorts `
-    -LogDir $LogDir `
-    -AutoReply none `
-    -RoomJoinIdentityMode host `
-    -GameStartSyncMode $GameStartSyncMode `
-    -StartTraceWindowSec $StartTraceWindowSec `
-    -ChannelUserListReplyMode members
+$serverArgs = @{
+    Bind = $Bind
+    TcpPorts = $TcpPorts
+    LogDir = $LogDir
+    AutoReply = "none"
+    RoomJoinIdentityMode = "host"
+    GameStartSyncMode = $GameStartSyncMode
+    StartTraceWindowSec = $StartTraceWindowSec
+    ChannelUserListReplyMode = "members"
+}
+if ($UdpPorts.Count -gt 0) {
+    $serverArgs.UdpPorts = $UdpPorts
+} else {
+    $serverArgs.TcpOnly = $true
+}
+
+& (Join-Path $root "Start-RhakMuDummyServer.ps1") @serverArgs

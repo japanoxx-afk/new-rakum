@@ -20,9 +20,9 @@ Log files are written to:
 .\rhakmu_packet_logs
 ```
 
-By default the dummy server skips UDP `11223`. When the server PC also runs a
-RhakMu client, that client needs UDP `11223` for room peer checks, so the dummy
-server must not bind it.
+The stable dummy server profile is TCP-only by default. When the server PC also
+runs a RhakMu client, that client needs UDP `11223` for direct room peer checks,
+so the dummy server must not bind UDP `11223`.
 
 Room members can still be removed after 10-20 seconds if Windows blocks direct
 client-to-client UDP. Run `Install-RhakMuClientPatches.ps1` as administrator on
@@ -352,8 +352,9 @@ Run this on every PC. If a PC can connect to the lobby but cannot receive countd
 
 Room presence/timeout notes:
 
-- The server skips UDP `11223` by default. When the server PC also runs a
-  RhakMu client, that client must own UDP `11223` for direct room peer checks.
+- The stable server profile does not bind UDP by default. When the server PC
+  also runs a RhakMu client, that client must own UDP `11223` for direct room
+  peer checks.
 - `0x1FFF` channel-user-list requests return the current lobby/member list by
   default. Room-specific member-list broadcasts are also sent when a user joins
   a room, but they do not replace the client's direct UDP peer check.

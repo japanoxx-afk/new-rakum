@@ -3,5 +3,5 @@ cd /d "%~dp0"
 echo Stopping existing RhakMu dummy server processes...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { ($_.CommandLine -like '*Start-RhakMuDummyServer.ps1*' -or $_.CommandLine -like '*Start-RhakMuStableServer.ps1*') -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
 echo Starting RhakMu dummy server with live terminal logging...
-powershell -NoProfile -ExecutionPolicy Bypass -File ".\Start-RhakMuDummyServer.ps1" -AutoReply none -RoomJoinIdentityMode host -GameStartSyncMode original-plus-sync-ok -ChannelUserListReplyMode members
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\Start-RhakMuDummyServer.ps1" -TcpPorts 11223 -TcpOnly -AutoReply none -RoomJoinIdentityMode host -GameStartSyncMode original-plus-sync-ok -ChannelUserListReplyMode members
 pause

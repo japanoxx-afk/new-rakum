@@ -1,6 +1,9 @@
 param(
     [string]$Bind = "0.0.0.0",
     [int[]]$Ports = @(80, 11223, 2000, 2300, 2301, 2302, 2303, 2304, 2400, 3000, 4000, 47624, 5000, 7000, 7777, 8000, 8080, 9000, 10000, 10001, 10262, 11000, 12000, 20000, 21000, 28000),
+    [int[]]$TcpPorts = $null,
+    [int[]]$UdpPorts = $null,
+    [switch]$TcpOnly,
     [ValidateSet("none", "empty", "guess")]
     [string]$AutoReply = "guess",
     [string]$LogDir = ".\rhakmu_packet_logs",
@@ -1427,9 +1430,27 @@ $script:AcceptLikelyAccountPackets = [bool]$AcceptLikelyAccountPackets
 $script:ScheduledRoomBroadcasts = New-Object System.Collections.Generic.List[object]
 $script:RecentStartBroadcasts = New-Object System.Collections.Generic.List[object]
 
+$effectiveTcpPorts = if ($PSBoundParameters.ContainsKey("TcpPorts")) { @($TcpPorts) } else { @($Ports) }
+if ([bool]$TcpOnly) {
+    $effectiveUdpPorts = @()
+} elseif ($PSBoundParameters.ContainsKey("UdpPorts")) {
+    $effectiveUdpPorts = @($UdpPorts)
+} else {
+    $effectiveUdpPorts = @($Ports)
+}
+$effectiveTcpPorts = @($effectiveTcpPorts | Where-Object { $null -ne $_ } | Sort-Object -Unique)
+$effectiveUdpPorts = @(
+    $effectiveUdpPorts |
+        Where-Object { $null -ne $_ -and ($SkipUdpPorts -notcontains $_) } |
+        Sort-Object -Unique
+)
+
 Write-Host "RhakMu dummy server" -ForegroundColor Green
 Write-Host "Bind: $Bind"
 Write-Host "Ports: $($Ports -join ', ')"
+Write-Host "TcpPorts: $(if ($effectiveTcpPorts.Count -gt 0) { $effectiveTcpPorts -join ', ' } else { '(none)' })"
+Write-Host "UdpPorts: $(if ($effectiveUdpPorts.Count -gt 0) { $effectiveUdpPorts -join ', ' } else { '(none - dummy server will not bind UDP)' })"
+Write-Host "TcpOnly: $([bool]$TcpOnly)"
 Write-Host "AutoReply: $AutoReply"
 Write-Host "CheckClientResult: $CheckClientResult"
 Write-Host "CheckClientReplyType: $CheckClientReplyType"
@@ -1464,7 +1485,7 @@ if ($script:ResolvedEventLogPath) { Write-Host "EventLogPath: $script:ResolvedEv
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
 
-foreach ($port in ($Ports | Sort-Object -Unique)) {
+foreach ($port in $effectiveTcpPorts) {
     try {
         $listener = [Net.Sockets.TcpListener]::new($ip, $port)
         $listener.Server.SetSocketOption([Net.Sockets.SocketOptionLevel]::Socket, [Net.Sockets.SocketOptionName]::ReuseAddress, $true)
@@ -1475,18 +1496,17 @@ foreach ($port in ($Ports | Sort-Object -Unique)) {
         Write-Host "TCP bind failed $Bind`:$port - $($_.Exception.Message)" -ForegroundColor Yellow
     }
 
-    if ($SkipUdpPorts -contains $port) {
-        Write-Host "UDP skipped $Bind`:$port" -ForegroundColor DarkYellow
-    } else {
-        try {
-            $udp = [Net.Sockets.UdpClient]::new()
-            $udp.Client.SetSocketOption([Net.Sockets.SocketOptionLevel]::Socket, [Net.Sockets.SocketOptionName]::ReuseAddress, $true)
-            $udp.Client.Bind([Net.IPEndPoint]::new($ip, $port))
-            $script:UdpClients.Add([pscustomobject]@{ Port = $port; Client = $udp })
-            Write-Host "UDP listening $Bind`:$port" -ForegroundColor DarkGreen
-        } catch {
-            Write-Host "UDP bind failed $Bind`:$port - $($_.Exception.Message)" -ForegroundColor Yellow
-        }
+}
+
+foreach ($port in $effectiveUdpPorts) {
+    try {
+        $udp = [Net.Sockets.UdpClient]::new()
+        $udp.Client.SetSocketOption([Net.Sockets.SocketOptionLevel]::Socket, [Net.Sockets.SocketOptionName]::ReuseAddress, $true)
+        $udp.Client.Bind([Net.IPEndPoint]::new($ip, $port))
+        $script:UdpClients.Add([pscustomobject]@{ Port = $port; Client = $udp })
+        Write-Host "UDP listening $Bind`:$port" -ForegroundColor DarkGreen
+    } catch {
+        Write-Host "UDP bind failed $Bind`:$port - $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
