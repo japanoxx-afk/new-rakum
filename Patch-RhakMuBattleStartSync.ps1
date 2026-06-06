@@ -48,9 +48,9 @@ $bytes = [IO.File]::ReadAllBytes($ExePath)
 # falls into this default branch, prints a debug string, and returns without
 # starting the remote client's countdown. Replace the default debug branch with
 # the same local countdown state used by classRoomNetMGR::RMPKRecv_GameStart.
-# RMPKRecv_GameStart also copies a start seed into 0x006E0970. The TNet packet
-# does not carry that room-net field, so initialize it to 0 instead of leaving a
-# stale value behind.
+# Keep the existing start seed untouched. Earlier patch versions wrote
+# 0x006E0970=0, but that can mask peer/start-state problems and may contribute
+# to in-game desync.
 $va = [uint32]0x0044D2E2
 $offset = Convert-VaToFileOffset $bytes $va
 $expected = [byte[]]@(
@@ -60,7 +60,7 @@ $expected = [byte[]]@(
     0x83,0xC4,0x08,
     0x5F,0x5E,0x5B,0x8B,0xE5,0x5D,0xC3
 )
-$oldPatch = [byte[]]@(
+$safePatch = [byte[]]@(
     # mov byte ptr [0x006DFC74], 5
     0xC6,0x05,0x74,0xFC,0x6D,0x00,0x05,
     # pop edi; pop esi; pop ebx; mov esp, ebp; pop ebp; ret
@@ -68,7 +68,7 @@ $oldPatch = [byte[]]@(
     # pad remaining replaced debug-call bytes
     0x90,0x90,0x90,0x90,0x90,0x90,0x90,0x90,0x90
 )
-$patch = [byte[]]@(
+$seedZeroPatch = [byte[]]@(
     # mov byte ptr [0x006DFC74], 5
     0xC6,0x05,0x74,0xFC,0x6D,0x00,0x05,
     # xor eax, eax; mov [0x006E0970], eax
@@ -82,12 +82,12 @@ $patch = [byte[]]@(
 $current = New-Object byte[] $expected.Length
 [Array]::Copy($bytes, $offset, $current, 0, $current.Length)
 
-if (Test-BytesEqual $current $patch) {
+if (Test-BytesEqual $current $safePatch) {
     Write-Host "Already patched: battle start sync default branch" -ForegroundColor Yellow
     return
 }
 
-if (-not (Test-BytesEqual $current $expected) -and -not (Test-BytesEqual $current $oldPatch)) {
+if (-not (Test-BytesEqual $current $expected) -and -not (Test-BytesEqual $current $seedZeroPatch)) {
     $hex = ($current | ForEach-Object { "{0:X2}" -f $_ }) -join " "
     throw "Unexpected bytes at VA 0x$('{0:X8}' -f $va), file offset 0x$('{0:X}' -f $offset): $hex"
 }
@@ -95,8 +95,8 @@ if (-not (Test-BytesEqual $current $expected) -and -not (Test-BytesEqual $curren
 $backup = "$ExePath.bak_battlestartsync_$(Get-Date -Format yyyyMMdd_HHmmss)"
 [IO.File]::WriteAllBytes($backup, $bytes)
 
-[Array]::Copy($patch, 0, $bytes, $offset, $patch.Length)
+[Array]::Copy($safePatch, 0, $bytes, $offset, $safePatch.Length)
 [IO.File]::WriteAllBytes($ExePath, $bytes)
 
-Write-Host "Patched TNPacket_ReplyBattleReqReply default branch for remote game-start sync." -ForegroundColor Green
+Write-Host "Patched TNPacket_ReplyBattleReqReply default branch for remote game-start sync without changing start seed." -ForegroundColor Green
 Write-Host "Backup: $backup"

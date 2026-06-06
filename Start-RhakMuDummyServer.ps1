@@ -45,6 +45,7 @@ param(
     [string]$GameStartSyncMode = "none",
     [int]$DelayedStartStage8Ms = 12000,
     [int]$StartTraceWindowSec = 20,
+    [int]$UdpOwnerCheckPort = 11223,
     [switch]$AcceptLikelyAccountPackets
 )
 
@@ -72,6 +73,24 @@ function Write-ServerEvent(
 ) {
     Write-Host $Message -ForegroundColor $ForegroundColor
     Add-ServerEvent $Message
+}
+
+function Get-LocalUdpOwnerSummary([int]$Port) {
+    try {
+        $rows = @(
+            Get-NetUDPEndpoint -LocalPort $Port -ErrorAction SilentlyContinue |
+                Select-Object LocalAddress, LocalPort, OwningProcess,
+                    @{Name = "Process"; Expression = { (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName } }
+        )
+        if ($rows.Count -eq 0) {
+            return "none"
+        }
+        return (($rows | ForEach-Object {
+            "$($_.LocalAddress):$($_.LocalPort)/pid=$($_.OwningProcess)/process=$($_.Process)"
+        }) -join "; ")
+    } catch {
+        return "error=$($_.Exception.Message)"
+    }
 }
 
 function Format-HexDump([byte[]]$Data) {
@@ -1201,6 +1220,7 @@ function Send-GameStartSync(
     $typeText = if ($Packet.Length -ge 2) { "0x{0:X4}" -f (Read-U16LE $Packet 0) } else { "n/a" }
     $payloadHex = if ($Packet.Length -gt 4) { (($Packet[4..($Packet.Length - 1)] | ForEach-Object { $_.ToString("X2") }) -join " ") } else { "" }
     Write-ServerEvent "[$now] Game start sync mode=$script:GameStartSyncMode peer=$($Sender.Peer) account=$($Sender.Account) room=$($Sender.RoomTitle) type=$typeText payload=$payloadHex" ([ConsoleColor]::Green)
+    Write-ServerEvent "[$now] Game start local UDP owner port=$script:UdpOwnerCheckPort owners=$(Get-LocalUdpOwnerSummary $script:UdpOwnerCheckPort)" ([ConsoleColor]::Cyan)
 
     if ($script:GameStartSyncMode -eq "none") {
         Write-ServerEvent "[$now] Game start relay suppressed room=$($Sender.RoomTitle) from=$($Sender.Account)" ([ConsoleColor]::DarkYellow)
@@ -1426,6 +1446,7 @@ $script:EnableUdpRelay = $EnableUdpRelay
 $script:GameStartSyncMode = $GameStartSyncMode
 $script:DelayedStartStage8Ms = $DelayedStartStage8Ms
 $script:StartTraceWindowSec = $StartTraceWindowSec
+$script:UdpOwnerCheckPort = $UdpOwnerCheckPort
 $script:AcceptLikelyAccountPackets = [bool]$AcceptLikelyAccountPackets
 $script:ScheduledRoomBroadcasts = New-Object System.Collections.Generic.List[object]
 $script:RecentStartBroadcasts = New-Object System.Collections.Generic.List[object]
@@ -1475,6 +1496,7 @@ Write-Host "EnableUdpRelay: $([bool]$EnableUdpRelay)"
 Write-Host "GameStartSyncMode: $GameStartSyncMode"
 Write-Host "DelayedStartStage8Ms: $DelayedStartStage8Ms"
 Write-Host "StartTraceWindowSec: $StartTraceWindowSec"
+Write-Host "UdpOwnerCheckPort: $UdpOwnerCheckPort"
 Write-Host "ChannelUserListReplyMode: $ChannelUserListReplyMode"
 Write-Host "BroadcastRoomMemberListOnJoin: $script:BroadcastRoomMemberListOnJoin"
 Write-Host "SuppressRoomMemberListOnJoin: $([bool]$SuppressRoomMemberListOnJoin)"
@@ -1482,6 +1504,7 @@ Write-Host "AcceptLikelyAccountPackets: $([bool]$AcceptLikelyAccountPackets)"
 Write-Host "LogDir: $script:ResolvedLogDir"
 if ($script:ResolvedTranscriptPath) { Write-Host "TranscriptPath: $script:ResolvedTranscriptPath" }
 if ($script:ResolvedEventLogPath) { Write-Host "EventLogPath: $script:ResolvedEventLogPath" }
+Write-ServerEvent "[$(Get-NowStamp)] Startup local UDP owner port=$UdpOwnerCheckPort owners=$(Get-LocalUdpOwnerSummary $UdpOwnerCheckPort)" ([ConsoleColor]::Cyan)
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
 

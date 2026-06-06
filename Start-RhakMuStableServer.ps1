@@ -5,7 +5,8 @@ param(
     [string]$LogDir = ".\rhakmu_dummy_logs",
     [ValidateSet("original", "original-plus-sync-ok", "none", "original-plus-accept", "accept-only", "original-plus-stage8", "original-plus-delayed-stage8", "original-plus-variants")]
     [string]$GameStartSyncMode = "original-plus-sync-ok",
-    [int]$StartTraceWindowSec = 20
+    [int]$StartTraceWindowSec = 20,
+    [int]$UdpOwnerCheckPort = 11223
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,6 +26,7 @@ Write-Host "Starting RhakMu stable multiplayer server profile..." -ForegroundCol
 Write-Host "RoomJoinIdentityMode: host" -ForegroundColor Cyan
 Write-Host "GameStartSyncMode: $GameStartSyncMode" -ForegroundColor Cyan
 Write-Host "StartTraceWindowSec: $StartTraceWindowSec" -ForegroundColor Cyan
+Write-Host "UdpOwnerCheckPort: $UdpOwnerCheckPort" -ForegroundColor Cyan
 Write-Host "ChannelUserListReplyMode: members" -ForegroundColor Cyan
 Write-Host "TcpPorts: $($TcpPorts -join ', ')" -ForegroundColor Cyan
 Write-Host "UdpPorts: $(if ($UdpPorts.Count -gt 0) { $UdpPorts -join ', ' } else { '(none - Rhakmu.exe owns UDP 11223)' })" -ForegroundColor Cyan
@@ -37,6 +39,7 @@ $serverArgs = @{
     RoomJoinIdentityMode = "host"
     GameStartSyncMode = $GameStartSyncMode
     StartTraceWindowSec = $StartTraceWindowSec
+    UdpOwnerCheckPort = $UdpOwnerCheckPort
     ChannelUserListReplyMode = "members"
 }
 if ($UdpPorts.Count -gt 0) {
