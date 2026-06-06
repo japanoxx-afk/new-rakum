@@ -22,7 +22,7 @@ Get-CimInstance Win32_Process |
 
 Write-Host "Starting RhakMu stable multiplayer server profile..." -ForegroundColor Green
 Write-Host "Ports: $($Ports -join ', ')" -ForegroundColor Cyan
-Write-Host "RoomJoinIdentityMode: host" -ForegroundColor Cyan
+Write-Host "RoomJoinIdentityMode: joiner" -ForegroundColor Cyan
 Write-Host "GameStartSyncMode: $GameStartSyncMode" -ForegroundColor Cyan
 Write-Host "StartTraceWindowSec: $StartTraceWindowSec" -ForegroundColor Cyan
 Write-Host "ChannelUserListReplyMode: members" -ForegroundColor Cyan
@@ -33,7 +33,7 @@ Write-Host "ChannelUserListReplyMode: members" -ForegroundColor Cyan
     -SkipUdpPorts @() `
     -LogDir $LogDir `
     -AutoReply none `
-    -RoomJoinIdentityMode host `
+    -RoomJoinIdentityMode joiner `
     -GameStartSyncMode $GameStartSyncMode `
     -StartTraceWindowSec $StartTraceWindowSec `
     -ChannelUserListReplyMode members

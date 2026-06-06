@@ -767,9 +767,19 @@ function New-RhakMuProtocolReplies([byte[]]$Packet) {
                 # initializes its own room socket state; keep host mode available
                 # for comparing older slot/race behavior.
                 $replyAccount = Get-RoomJoinReplyAccount $room
+                # In joiner mode the reply carries the joining client's own
+                # account and IP so its room socket initializes as a guest
+                # peer. In host mode (legacy) the reply carries the host's
+                # account and IP, which causes the guest to try a direct
+                # connection to the host instead of using its own identity.
+                $replyHostAddr = if ($script:RoomJoinIdentityMode -eq "joiner") {
+                    Resolve-RoomHost $script:CurrentHost
+                } else {
+                    $room.Host
+                }
                 $now = Get-NowStamp
-                Write-ServerEvent "[$now] Room join reply identity mode=$script:RoomJoinIdentityMode account=$replyAccount host=$($room.Host) room=$($room.Title)" ([ConsoleColor]::DarkCyan)
-                $replies.Add((New-TgPacket 0x10FF (New-RoomJoinPayload $replyAccount $room.Host -PreserveHostAddress)))
+                Write-ServerEvent "[$now] Room join reply identity mode=$script:RoomJoinIdentityMode account=$replyAccount replyIP=$replyHostAddr host=$($room.Host) room=$($room.Title)" ([ConsoleColor]::DarkCyan)
+                $replies.Add((New-TgPacket 0x10FF (New-RoomJoinPayload $replyAccount $replyHostAddr -PreserveHostAddress)))
             }
         }
     }
