@@ -1,0 +1,13 @@
+﻿Stopped: 2026-06-06 14:57:13.931
+Computer: DESKTOP-2KHKVG1
+LocalIp: 26.240.153.112
+Port: 11223
+ETL: C:\Users\seo\Documents\rakmu-git\rhakmu_packet_captures\rhakmu_udp_11223_26.240.153.112_20260606_145545.etl
+PCAP: C:\Users\seo\Documents\rakmu-git\rhakmu_packet_captures\rhakmu_udp_11223_26.240.153.112_20260606_145545.pcapng
+TEXT: C:\Users\seo\Documents\rakmu-git\rhakmu_packet_captures\rhakmu_udp_11223_26.240.153.112_20260606_145545.txt
+SessionDir: C:\Users\seo\Documents\rakmu-git\logs\26.240.153.112\rhakmu_udp_11223_26.240.153.112_20260606_145545
+CopiedFiles:
+  C:\Users\seo\Documents\rakmu-git\logs\26.240.153.112\rhakmu_udp_11223_26.240.153.112_20260606_145545\rhakmu_udp_11223_26.240.153.112_20260606_145545.etl
+  C:\Users\seo\Documents\rakmu-git\logs\26.240.153.112\rhakmu_udp_11223_26.240.153.112_20260606_145545\rhakmu_udp_11223_26.240.153.112_20260606_145545.pcapng
+  C:\Users\seo\Documents\rakmu-git\logs\26.240.153.112\rhakmu_udp_11223_26.240.153.112_20260606_145545\rhakmu_udp_11223_26.240.153.112_20260606_145545.txt
+  C:\Users\seo\Documents\rakmu-git\logs\26.240.153.112\rhakmu_udp_11223_26.240.153.112_20260606_145545\rhakmu_udp_11223_26.240.153.112_20260606_145545.meta.txt
