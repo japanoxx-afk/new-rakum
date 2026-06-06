@@ -1,0 +1,8 @@
+﻿Started: 2026-06-06 15:22:38.148
+Computer: DESKTOP-2KHKVG1
+LocalIp: 26.240.153.112
+Label: 
+Port: 11223
+ETL: C:\Users\seo\Documents\rakmu-git\rhakmu_packet_captures\rhakmu_udp_11223_26.240.153.112_20260606_152238.etl
+LogsRoot: C:\Users\seo\Documents\rakmu-git\logs
+StopCommand: powershell -NoProfile -ExecutionPolicy Bypass -File .\Stop-RhakMuUdpCapture.ps1
