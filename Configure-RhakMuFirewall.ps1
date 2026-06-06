@@ -1,7 +1,8 @@
 param(
     [string]$GameDir = "C:\Program Files (x86)\TriggerSoft\RhakMu",
     [string]$RemoteAddress = "Any",
-    [switch]$RadminOnly
+    [switch]$RadminOnly,
+    [switch]$EnableFirewallProfiles
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,6 +46,21 @@ if (Test-Path -LiteralPath $launcherPath) {
 $rules = New-Object System.Collections.Generic.List[hashtable]
 $privatePeerRanges = @("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 $radminPeerRange = "26.0.0.0/8"
+
+$profiles = Get-NetFirewallProfile
+$disabledProfiles = @($profiles | Where-Object { -not $_.Enabled })
+if ($disabledProfiles.Count -gt 0) {
+    $disabledNames = ($disabledProfiles | ForEach-Object { $_.Name }) -join ", "
+    if ($EnableFirewallProfiles) {
+        Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True
+        Write-Host "Enabled Windows Firewall profiles: Domain, Private, Public" -ForegroundColor Green
+    } else {
+        Write-Host "Windows Firewall disabled profiles: $disabledNames" -ForegroundColor Yellow
+        if ($RadminOnly) {
+            Write-Host "WARNING: -RadminOnly block rules do not work while Windows Firewall is disabled. Re-run with -EnableFirewallProfiles or enable Windows Firewall manually." -ForegroundColor Yellow
+        }
+    }
+}
 
 foreach ($program in $programs) {
     $name = [IO.Path]::GetFileNameWithoutExtension($program)

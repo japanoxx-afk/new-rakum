@@ -4,7 +4,8 @@ param(
     [switch]$SkipGitPull,
     [switch]$SkipNetworkPreference,
     [switch]$DisableVirtualAdapters,
-    [switch]$RadminOnly
+    [switch]$RadminOnly,
+    [switch]$EnableFirewallProfiles
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,6 +60,9 @@ if (-not $SkipFirewall) {
         if ($RadminOnly) {
             $firewallArgs.RadminOnly = $true
         }
+        if ($EnableFirewallProfiles) {
+            $firewallArgs.EnableFirewallProfiles = $true
+        }
         & (Join-Path $root "Configure-RhakMuFirewall.ps1") @firewallArgs
     }
 }
@@ -95,5 +99,5 @@ Invoke-Step "Final patch verification" {
 
 Write-Host ""
 Write-Host "RhakMu client setup completed. Run this same script on every PC before testing multiplayer." -ForegroundColor Green
-Write-Host "For Radmin-only multiplayer tests, run with -RadminOnly on every PC." -ForegroundColor Yellow
+Write-Host "For Radmin-only multiplayer tests, run with -RadminOnly -EnableFirewallProfiles on every PC." -ForegroundColor Yellow
 Write-Host "If room members are still removed after 10-20 seconds, rerun with -DisableVirtualAdapters on both PCs." -ForegroundColor Yellow

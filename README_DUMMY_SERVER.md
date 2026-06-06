@@ -48,13 +48,15 @@ For restoration tests that must behave like remote PCs, force RhakMu peer UDP to
 use Radmin VPN instead of the local LAN:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-RhakMuClientPatches.ps1 -RadminOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-RhakMuClientPatches.ps1 -RadminOnly -EnableFirewallProfiles
 ```
 
 `-RadminOnly` allows RhakMu UDP `11223` to Radmin's `26.0.0.0/8` range and
 blocks RhakMu UDP `11223` to private LAN ranges (`192.168.*`, `10.*`,
 `172.16-31.*`). Run it on every PC before testing. This is the preferred
 multiplayer test mode because distant PCs will not share a `192.168.*` LAN.
+The block rules only work when Windows Firewall is enabled; use
+`-EnableFirewallProfiles` or enable the firewall manually.
 
 If the same timeout continues, temporarily disable VMware/VirtualBox/Hyper-V
 host-only adapters for the RhakMu test:
@@ -399,7 +401,7 @@ Run this on every PC. If a PC can connect to the lobby but cannot receive countd
 Radmin-only firewall setup:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Configure-RhakMuFirewall.ps1 -RadminOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Configure-RhakMuFirewall.ps1 -RadminOnly -EnableFirewallProfiles
 ```
 
 Room presence/timeout notes:
