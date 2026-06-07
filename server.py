@@ -424,6 +424,27 @@ class ClientSession:
             self.send(P_USER_LIST_REQ, nul(self.account) + nul(self.peer_ip))
         self.send(P_USER_LIST_END, b"")
 
+    async def _broadcast_member_list(self, room: "Room", exclude: "ClientSession" = None):
+        """Send updated member list to all room members except the excluded client."""
+        pkts = [pack_pkt(P_USER_LIST_ACK, b"")]
+        # Owner entry
+        owner_conn = next((c for c in STATE.clients if c.account == room.owner), None)
+        owner_ip = owner_conn.peer_ip if owner_conn and owner_conn.peer_ip != "127.0.0.1" else room.host_ip
+        pkts.append(pack_pkt(P_USER_LIST_REQ, nul(room.owner) + nul(owner_ip)))
+        # Member entries
+        for member in room.members:
+            mc = next((c for c in STATE.clients if c.account == member), None)
+            member_ip = mc.peer_ip if mc and mc.peer_ip != "127.0.0.1" else STATE.server_ip
+            pkts.append(pack_pkt(P_USER_LIST_REQ, nul(member) + nul(member_ip)))
+        pkts.append(pack_pkt(P_USER_LIST_END, b""))
+
+        data = b"".join(pkts)
+        for c in STATE.clients_in_room(room.title):
+            if c is exclude:
+                continue
+            c.writer.write(data)
+            await c.flush()
+
     async def _handle_join_room(self, payload: bytes):
         strings = read_cstrings(payload)
         wanted = strings[0] if strings else ""
@@ -444,18 +465,16 @@ class ClientSession:
         if self.account not in room.members and self.account != room.owner:
             room.members.append(self.account)
 
-        # Reply to joiner: [0x00][owner_account\0][owner_ip\0]
         joiner_ip = self.peer_ip if self.peer_ip != "127.0.0.1" else STATE.server_ip
-        self.send(P_JOIN_ROOM, bytes([0]) + nul(self.account) + nul(joiner_ip))
+
+        # Reply to joiner: [0x00][joiner_account\0][host_ip\0]
+        # Client uses host_ip to establish direct P2P connection with room owner.
+        self.send(P_JOIN_ROOM, bytes([0]) + nul(self.account) + nul(room.host_ip))
 
         log.info(f"Room join: {self.peer} account={self.account!r} room={room.title!r} host={room.host_ip}")
 
-        # Notify owner about the new member
-        owner_conn = next((c for c in STATE.clients if c.account == room.owner), None)
-        if owner_conn and owner_conn is not self:
-            member_payload = nul(self.account) + nul(joiner_ip)
-            owner_conn.send(P_JOIN_ROOM, bytes([0]) + member_payload)
-            await owner_conn.flush()
+        # Notify all existing room members (including owner) via member list broadcast
+        await self._broadcast_member_list(room, exclude=self)
 
     def _handle_leave_room(self):
         if self.room_title:
