@@ -508,9 +508,9 @@ class ClientSession:
 
         joiner_ip = self.peer_ip if self.peer_ip not in ("127.0.0.1", "::1") else STATE.server_ip
 
-        # Reply to joiner: [0x00][joiner_account\0][host_ip\0]
-        # Client uses host_ip to establish direct P2P connection with room owner.
-        self.send(P_JOIN_ROOM, bytes([0]) + nul(self.account) + nul(room.host_ip))
+        # Reply to joiner: [0x00][host_account\0][host_ip\0]
+        # Client uses host_account to identify the P2P peer and host_ip to connect.
+        self.send(P_JOIN_ROOM, bytes([0]) + nul(room.owner) + nul(room.host_ip))
 
         log.info(f"Room join: {self.peer} account={self.account!r} room={room.title!r} host={room.host_ip} joiner_ip={joiner_ip}")
 
