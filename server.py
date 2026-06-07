@@ -503,15 +503,23 @@ class ClientSession:
         if self.account not in room.members and self.account != room.owner:
             room.members.append(self.account)
 
-        joiner_ip = self.peer_ip if self.peer_ip != "127.0.0.1" else STATE.server_ip
+        joiner_ip = self.peer_ip if self.peer_ip not in ("127.0.0.1", "::1") else STATE.server_ip
 
         # Reply to joiner: [0x00][joiner_account\0][host_ip\0]
         # Client uses host_ip to establish direct P2P connection with room owner.
         self.send(P_JOIN_ROOM, bytes([0]) + nul(self.account) + nul(room.host_ip))
 
-        log.info(f"Room join: {self.peer} account={self.account!r} room={room.title!r} host={room.host_ip}")
+        log.info(f"Room join: {self.peer} account={self.account!r} room={room.title!r} host={room.host_ip} joiner_ip={joiner_ip}")
 
-        # Notify all existing room members (including owner) via member list broadcast
+        # Notify owner via 0x10FF: [0x00][joiner_account\0][joiner_ip\0]
+        # This registers the joiner as a player in the host's game lobby.
+        owner_conn = next((c for c in STATE.clients if c.account == room.owner), None)
+        if owner_conn and owner_conn is not self:
+            owner_conn.send(P_JOIN_ROOM, bytes([0]) + nul(self.account) + nul(joiner_ip))
+            await owner_conn.flush()
+            log.info(f"Notified owner {room.owner!r} about joiner {self.account!r} at {joiner_ip}")
+
+        # Also broadcast updated member list to all room members except the joiner
         await self._broadcast_member_list(room, exclude=self)
 
     def _handle_leave_room(self):
@@ -532,20 +540,25 @@ class ClientSession:
             log.warning(f"{self.peer}: game start with no room")
             return
 
-        log.info(f"Game start: {self.peer} account={self.account!r} room={self.room_title!r}")
+        log.info(f"Game start: {self.peer} account={self.account!r} room={self.room_title!r} payload={payload.hex()}")
 
-        # Relay original packet to all room members
-        others = [c for c in STATE.clients_in_room(self.room_title) if c is not self]
+        all_in_room = STATE.clients_in_room(self.room_title)
+        others = [c for c in all_in_room if c is not self]
+
+        # 1. Relay original game-start packet to all other room members
         original_pkt = pack_pkt(P_GAME_START, payload)
         for c in others:
             c.writer.write(original_pkt)
             await c.flush()
+            log.info(f"  Relayed game-start to {c.account!r}")
 
-        # Send sync-ok: 0x0FFF with payload [0x00, 0x02]
+        # 2. Send sync-ok [0x00, 0x02] to ALL room members including the sender.
+        #    Both clients must receive this to proceed past the sync barrier.
         sync_pkt = pack_pkt(P_GAME_START, bytes([0x00, 0x02]))
-        for c in others:
+        for c in all_in_room:
             c.writer.write(sync_pkt)
             await c.flush()
+            log.info(f"  Sent sync-ok to {c.account!r}")
 
     async def _handle_chat(self, payload: bytes):
         strings = read_cstrings(payload)
