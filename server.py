@@ -117,7 +117,25 @@ def read_cstrings(data: bytes) -> List[str]:
 
 
 def get_preferred_ip() -> str:
-    """Get the best local IP (VPN > LAN > 127.0.0.1)."""
+    """Get best local IP: Radmin/Hamachi VPN (26.x/25.x) > LAN > default route."""
+    try:
+        all_ips: List[str] = []
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip: str = info[4][0]
+            if not ip.startswith("127.") and not ip.startswith("169.254."):
+                all_ips.append(ip)
+
+        # Prefer VPN ranges: Radmin VPN 26.x, Hamachi 25.x
+        for ip in all_ips:
+            if ip.startswith("26.") or ip.startswith("25."):
+                return ip
+
+        # Fall back to first non-loopback
+        if all_ips:
+            return all_ips[0]
+    except Exception:
+        pass
+
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -126,6 +144,23 @@ def get_preferred_ip() -> str:
         return ip
     except Exception:
         return "127.0.0.1"
+
+
+def extract_ascii_strings(data: bytes, min_len: int = 2) -> List[str]:
+    """Extract printable ASCII strings (min_len chars) separated by non-ASCII bytes.
+    Used for parsing create-room payload where binary fields sit between string fields."""
+    result = []
+    buf = bytearray()
+    for b in data:
+        if 0x20 <= b <= 0x7E:
+            buf.append(b)
+        else:
+            if len(buf) >= min_len:
+                result.append(buf.decode("ascii"))
+            buf.clear()
+    if len(buf) >= min_len:
+        result.append(buf.decode("ascii"))
+    return result
 
 
 @dataclass
@@ -373,8 +408,10 @@ class ClientSession:
         #   [2:4]  mode
         #   [4:6]  max_players
         #   [6:8]  time_limit
-        #   [8..]  title\0 ... map_name\0 owner\0
-        strings = read_cstrings(payload[8:] if len(payload) > 8 else b"")
+        #   [8..]  binary fields interspersed with title, map_name, owner strings
+        # Use ASCII extraction (min 2 chars) to skip binary fields between strings.
+        # Expected order: title, map_name, owner
+        strings = extract_ascii_strings(payload[8:] if len(payload) > 8 else b"")
         title = strings[0] if strings else self.account
         map_name = strings[1] if len(strings) > 1 else ""
         owner = strings[2] if len(strings) > 2 else self.account
@@ -387,7 +424,8 @@ class ClientSession:
             if 1 <= mp <= 8:
                 max_players = mp
 
-        host_ip = self.peer_ip if self.peer_ip != "127.0.0.1" else STATE.server_ip
+        # Use peer IP; for localhost use server_ip (Radmin/Hamachi VPN IP preferred)
+        host_ip = self.peer_ip if self.peer_ip not in ("127.0.0.1", "::1") else STATE.server_ip
 
         # Remove any existing room owned by this client
         STATE.remove_rooms_for(self.account, host_ip)
