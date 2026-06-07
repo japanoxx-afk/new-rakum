@@ -389,7 +389,19 @@ class ClientSession:
             self._handle_crash(payload)
 
         else:
-            log.debug(f"{self.peer}: unhandled 0x{ptype:04X}")
+            if self.room_title:
+                # In-game: relay unknown packets to all other room members.
+                # The game may use the lobby TCP connection to relay in-game data.
+                others = [c for c in STATE.clients_in_room(self.room_title) if c is not self]
+                if others:
+                    raw = pack_pkt(ptype, payload)
+                    for c in others:
+                        c.writer.write(raw)
+                    log.info(f"{self.peer}: relayed in-game 0x{ptype:04X} len={len(payload)} to {[c.account for c in others]}")
+                else:
+                    log.debug(f"{self.peer}: in-game unhandled 0x{ptype:04X} (no peers)")
+            else:
+                log.debug(f"{self.peer}: unhandled 0x{ptype:04X}")
 
         await self.flush()
 
@@ -543,17 +555,18 @@ class ClientSession:
         all_in_room = STATE.clients_in_room(self.room_title)
         others = [c for c in all_in_room if c is not self]
 
-        # 1. Relay original game-start packet to all other room members
+        # 1. Relay original game-start packet to all OTHER room members (not the host).
+        #    The host auto-starts; joiners need the relay to trigger their countdown.
         original_pkt = pack_pkt(P_GAME_START, payload)
         for c in others:
             c.writer.write(original_pkt)
             await c.flush()
             log.info(f"  Relayed game-start to {c.account!r}")
 
-        # 2. Send sync-ok [0x00, 0x02] to ALL room members including the sender.
-        #    Both clients must receive this to proceed past the sync barrier.
+        # 2. Send sync-ok [0x00, 0x02] to OTHERS only (not the host).
+        #    Matches PS1 stable server "original-plus-sync-ok" behavior.
         sync_pkt = pack_pkt(P_GAME_START, bytes([0x00, 0x02]))
-        for c in all_in_room:
+        for c in others:
             c.writer.write(sync_pkt)
             await c.flush()
             log.info(f"  Sent sync-ok to {c.account!r}")
