@@ -472,7 +472,10 @@ class ClientSession:
         # Member entries
         for member in room.members:
             mc = next((c for c in STATE.clients if c.account == member), None)
-            member_ip = mc.peer_ip if mc and mc.peer_ip != "127.0.0.1" else STATE.server_ip
+            if mc:
+                member_ip = mc.peer_ip if mc.peer_ip not in ("127.0.0.1", "::1") else STATE.server_ip
+            else:
+                member_ip = STATE.server_ip
             pkts.append(pack_pkt(P_USER_LIST_REQ, nul(member) + nul(member_ip)))
         pkts.append(pack_pkt(P_USER_LIST_END, b""))
 
@@ -511,16 +514,11 @@ class ClientSession:
 
         log.info(f"Room join: {self.peer} account={self.account!r} room={room.title!r} host={room.host_ip} joiner_ip={joiner_ip}")
 
-        # Notify owner via 0x10FF: [0x00][joiner_account\0][joiner_ip\0]
-        # This registers the joiner as a player in the host's game lobby.
-        owner_conn = next((c for c in STATE.clients if c.account == room.owner), None)
-        if owner_conn and owner_conn is not self:
-            owner_conn.send(P_JOIN_ROOM, bytes([0]) + nul(self.account) + nul(joiner_ip))
-            await owner_conn.flush()
-            log.info(f"Notified owner {room.owner!r} about joiner {self.account!r} at {joiner_ip}")
-
-        # Also broadcast updated member list to all room members except the joiner
-        await self._broadcast_member_list(room, exclude=self)
+        # Broadcast updated member list to ALL room members (owner + joiner).
+        # The owner needs to see the joiner in the lobby player list before game start.
+        # Do NOT send 0x10FF to the owner — the owner's client interprets it as a join
+        # directive for itself and immediately leaves the room.
+        await self._broadcast_member_list(room, exclude=None)
 
     def _handle_leave_room(self):
         if self.room_title:
