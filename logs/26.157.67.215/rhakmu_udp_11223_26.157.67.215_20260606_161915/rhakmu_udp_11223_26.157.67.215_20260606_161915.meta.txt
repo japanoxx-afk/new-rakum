@@ -1,9 +1,0 @@
-﻿Started: 2026-06-06 16:19:16.148
-Computer: DESKTOP-NO0N2QB
-LocalIp: 26.157.67.215
-Label: 
-Port: 11223
-ComponentScope: all
-ETL: C:\Users\seo\Documents\라크무\rhakmu_packet_captures\rhakmu_udp_11223_26.157.67.215_20260606_161915.etl
-LogsRoot: C:\Users\seo\Documents\라크무\logs
-StopCommand: powershell -NoProfile -ExecutionPolicy Bypass -File .\Stop-RhakMuUdpCapture.ps1
