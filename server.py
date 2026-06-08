@@ -561,20 +561,22 @@ class ClientSession:
         log.info(f"Game start: {self.peer} account={self.account!r} room={self.room_title!r} payload={payload.hex()}")
 
         all_in_room = STATE.clients_in_room(self.room_title)
+        room = STATE.find_room_by_title(self.room_title)
+        owner_name = room.owner if room else None
+        owner_conn = next((c for c in all_in_room if c.account == owner_name), None)
+        owner_ip = owner_conn.advertised_ip if owner_conn else (room.host_ip if room else STATE.server_ip)
 
-        # STEP 1: Re-trigger the DirectPlay8 P2P connection on BOTH peers NOW, so
-        # both DP8 endpoints are active at the same moment (the join-time connect
-        # and the host's start-time connect were ~27s apart and never overlapped).
-        # 0x10FF subtype 0 = "connect to <account> at <ip>". Each client gets the
-        # OTHER peer's account+IP so they connect to each other simultaneously.
+        # STEP 1: Re-trigger the DirectPlay8 P2P connection on the GUEST(s) NOW,
+        # synchronized with the host's start-time connect (they were ~27s apart at
+        # join vs start and never overlapped). 0x10FF subtype 0 = "connect to
+        # <account>@<ip>". ONLY send to non-owner guests pointing at the owner --
+        # sending 0x10FF to the owner makes its client leave its own room.
         for c in all_in_room:
-            others = [o for o in all_in_room if o is not c]
-            if not others:
+            if c is owner_conn or c.account == owner_name:
                 continue
-            peer = others[0]
-            c.send(P_JOIN_ROOM, bytes([0]) + nul(peer.account) + nul(peer.advertised_ip))
+            c.send(P_JOIN_ROOM, bytes([0]) + nul(owner_name) + nul(owner_ip))
             await c.flush()
-            log.info(f"  Sent 0x10FF connect to {c.account!r} -> peer {peer.account!r}@{peer.advertised_ip}")
+            log.info(f"  Sent 0x10FF connect to guest {c.account!r} -> owner {owner_name!r}@{owner_ip}")
 
         # STEP 2: Battle-start. The client's lobby dispatcher routes the
         # battle-start handler (ReplyBattleReqReply) from type 0x1EFF, NOT 0x0FFF.
