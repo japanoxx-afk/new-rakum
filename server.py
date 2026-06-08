@@ -252,6 +252,13 @@ class ClientSession:
     def peer(self) -> str:
         return f"{self.peer_ip}:{self.peer_port}"
 
+    @property
+    def advertised_ip(self) -> str:
+        """IP other peers should use to reach this client (Radmin/VPN, not loopback)."""
+        if self.peer_ip in ("127.0.0.1", "::1"):
+            return STATE.server_ip
+        return self.peer_ip
+
     def send(self, ptype: int, payload: bytes = b""):
         self.writer.write(pack_pkt(ptype, payload))
 
@@ -555,12 +562,22 @@ class ClientSession:
 
         all_in_room = STATE.clients_in_room(self.room_title)
 
-        # The client's lobby packet dispatcher routes the battle-start handler
-        # (ReplyBattleReqReply, which sets the local battle/countdown state) from
-        # packet type 0x1EFF -- NOT 0x0FFF. The host sends 0x0FFF as its request;
-        # the server must turn that into 0x1EFF for the clients to actually start.
-        # Send to ALL in room (host + guests) so both run the same start path
-        # (and the battle-start-sync patch sets the same seed=0 on both sides).
+        # STEP 1: Re-trigger the DirectPlay8 P2P connection on BOTH peers NOW, so
+        # both DP8 endpoints are active at the same moment (the join-time connect
+        # and the host's start-time connect were ~27s apart and never overlapped).
+        # 0x10FF subtype 0 = "connect to <account> at <ip>". Each client gets the
+        # OTHER peer's account+IP so they connect to each other simultaneously.
+        for c in all_in_room:
+            others = [o for o in all_in_room if o is not c]
+            if not others:
+                continue
+            peer = others[0]
+            c.send(P_JOIN_ROOM, bytes([0]) + nul(peer.account) + nul(peer.advertised_ip))
+            await c.flush()
+            log.info(f"  Sent 0x10FF connect to {c.account!r} -> peer {peer.account!r}@{peer.advertised_ip}")
+
+        # STEP 2: Battle-start. The client's lobby dispatcher routes the
+        # battle-start handler (ReplyBattleReqReply) from type 0x1EFF, NOT 0x0FFF.
         start_pkt = pack_pkt(P_BATTLE_START, payload if payload else bytes([0x02, 0x00, 0x00]))
         for c in all_in_room:
             c.writer.write(start_pkt)
