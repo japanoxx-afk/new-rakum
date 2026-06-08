@@ -101,6 +101,10 @@ Invoke-Step "DirectDraw restore guard" {
     & (Join-Path $root "Patch-RhakMuIcarusRestoreGuard.ps1") -ExePath (Join-Path $GameDir "Rhakmu.exe")
 }
 
+Invoke-Step "Post-game resolution-change crash guard" {
+    & (Join-Path $root "Patch-RhakMuPostGameResolutionGuard.ps1") -ExePath (Join-Path $GameDir "Rhakmu.exe")
+}
+
 Invoke-Step "Final patch verification" {
     $verifyArgs = @{
         ExePath = (Join-Path $GameDir "Rhakmu.exe")
