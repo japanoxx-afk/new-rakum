@@ -1,5 +1,6 @@
 param(
-    [string]$ExePath = "C:\Program Files (x86)\TriggerSoft\RhakMu\Rhakmu.exe"
+    [string]$ExePath = "C:\Program Files (x86)\TriggerSoft\RhakMu\Rhakmu.exe",
+    [switch]$Revert
 )
 
 # After a match ends, CGameMenu::Menu_GameAfterProcess (CGameMenu.cpp line 190)
@@ -56,6 +57,19 @@ $expected = [byte[]]@(
 
 $current = New-Object byte[] $len
 [Array]::Copy($bytes, $offset, $current, 0, $len)
+
+if ($Revert) {
+    $isExpected = $true
+    for ($i = 0; $i -lt $len; $i++) { if ($current[$i] -ne $expected[$i]) { $isExpected = $false; break } }
+    if ($isExpected) { Write-Host "Already original (not patched). Nothing to revert." -ForegroundColor Yellow; return }
+    $backup = "$ExePath.bak_postgameres_revert_$(Get-Date -Format yyyyMMdd_HHmmss)"
+    [IO.File]::WriteAllBytes($backup, $bytes)
+    [Array]::Copy($expected, 0, $bytes, $offset, $len)
+    [IO.File]::WriteAllBytes($ExePath, $bytes)
+    Write-Host "Reverted: restored original post-game ResolutionChange call." -ForegroundColor Green
+    Write-Host "Backup: $backup"
+    return
+}
 
 $allNop = $true
 for ($i = 0; $i -lt $len; $i++) { if ($current[$i] -ne 0x90) { $allNop = $false; break } }
