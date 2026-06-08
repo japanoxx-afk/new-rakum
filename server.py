@@ -561,25 +561,12 @@ class ClientSession:
         log.info(f"Game start: {self.peer} account={self.account!r} room={self.room_title!r} payload={payload.hex()}")
 
         all_in_room = STATE.clients_in_room(self.room_title)
-        room = STATE.find_room_by_title(self.room_title)
-        owner_name = room.owner if room else None
-        owner_conn = next((c for c in all_in_room if c.account == owner_name), None)
-        owner_ip = owner_conn.advertised_ip if owner_conn else (room.host_ip if room else STATE.server_ip)
 
-        # STEP 1: Re-trigger the DirectPlay8 P2P connection on the GUEST(s) NOW,
-        # synchronized with the host's start-time connect (they were ~27s apart at
-        # join vs start and never overlapped). 0x10FF subtype 0 = "connect to
-        # <account>@<ip>". ONLY send to non-owner guests pointing at the owner --
-        # sending 0x10FF to the owner makes its client leave its own room.
-        for c in all_in_room:
-            if c is owner_conn or c.account == owner_name:
-                continue
-            c.send(P_JOIN_ROOM, bytes([0]) + nul(owner_name) + nul(owner_ip))
-            await c.flush()
-            log.info(f"  Sent 0x10FF connect to guest {c.account!r} -> owner {owner_name!r}@{owner_ip}")
-
-        # STEP 2: Battle-start. The client's lobby dispatcher routes the
-        # battle-start handler (ReplyBattleReqReply) from type 0x1EFF, NOT 0x0FFF.
+        # Battle-start only. Re-sending 0x10FF at game start makes the guest
+        # re-process the join and leave the room, so we must NOT do that here.
+        # The DP8 connect was already triggered for the guest at join time.
+        # The client's lobby dispatcher routes the battle-start handler
+        # (ReplyBattleReqReply) from type 0x1EFF, NOT 0x0FFF.
         start_pkt = pack_pkt(P_BATTLE_START, payload if payload else bytes([0x02, 0x00, 0x00]))
         for c in all_in_room:
             c.writer.write(start_pkt)
