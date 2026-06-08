@@ -97,6 +97,20 @@ def nul(s: str) -> bytes:
     return s.encode("latin-1") + b"\x00"
 
 
+def build_user_entry(account: str, ip: str, index: int = 1) -> bytes:
+    """Build a 0x1FFF channel/room user-list entry.
+
+    The client parser (Rhakmu.exe 0x44CF80) reads each entry as:
+      payload[0]      = flag byte (1 => end-of-list; 0 => normal entry)
+      payload[1..2]   = uint16 value (player index; fed to the connect manager)
+      then            = account\0, ip\0
+    We previously sent only account\0 ip\0, which made the client misparse the
+    account (treating its first char as the flag and the next 2 bytes as the
+    value), so the peer's account/ip never registered correctly.
+    """
+    return bytes([0x00]) + struct.pack("<H", index) + nul(account) + nul(ip)
+
+
 def read_cstrings(data: bytes) -> List[str]:
     """Extract all null-terminated strings from bytes."""
     result = []
@@ -472,31 +486,31 @@ class ClientSession:
             # Send owner
             owner_client = next((c for c in STATE.clients if c.account == room.owner), None)
             owner_ip = owner_client.peer_ip if owner_client else STATE.server_ip
-            self.send(P_USER_LIST_REQ, nul(room.owner) + nul(owner_ip))
+            self.send(P_USER_LIST_REQ, build_user_entry(room.owner, owner_ip, 1))
             # Send members
-            for member in room.members:
+            for i, member in enumerate(room.members):
                 mc = next((c for c in STATE.clients if c.account == member), None)
                 member_ip = mc.peer_ip if mc else self.peer_ip
-                self.send(P_USER_LIST_REQ, nul(member) + nul(member_ip))
+                self.send(P_USER_LIST_REQ, build_user_entry(member, member_ip, 2 + i))
         elif self.account:
-            self.send(P_USER_LIST_REQ, nul(self.account) + nul(self.peer_ip))
+            self.send(P_USER_LIST_REQ, build_user_entry(self.account, self.peer_ip, 1))
         self.send(P_USER_LIST_END, b"")
 
     async def _broadcast_member_list(self, room: "Room", exclude: "ClientSession" = None):
         """Send updated member list to all room members except the excluded client."""
         pkts = [pack_pkt(P_USER_LIST_ACK, b"")]
-        # Owner entry
+        # Owner entry (player index 1)
         owner_conn = next((c for c in STATE.clients if c.account == room.owner), None)
         owner_ip = owner_conn.peer_ip if owner_conn and owner_conn.peer_ip != "127.0.0.1" else room.host_ip
-        pkts.append(pack_pkt(P_USER_LIST_REQ, nul(room.owner) + nul(owner_ip)))
-        # Member entries
-        for member in room.members:
+        pkts.append(pack_pkt(P_USER_LIST_REQ, build_user_entry(room.owner, owner_ip, 1)))
+        # Member entries (player index 2, 3, ...)
+        for i, member in enumerate(room.members):
             mc = next((c for c in STATE.clients if c.account == member), None)
             if mc:
                 member_ip = mc.peer_ip if mc.peer_ip not in ("127.0.0.1", "::1") else STATE.server_ip
             else:
                 member_ip = STATE.server_ip
-            pkts.append(pack_pkt(P_USER_LIST_REQ, nul(member) + nul(member_ip)))
+            pkts.append(pack_pkt(P_USER_LIST_REQ, build_user_entry(member, member_ip, 2 + i)))
         pkts.append(pack_pkt(P_USER_LIST_END, b""))
 
         data = b"".join(pkts)
