@@ -1,5 +1,6 @@
 param(
-    [string]$GameDir = "C:\Program Files (x86)\TriggerSoft\RhakMu"
+    [string]$GameDir = "C:\Program Files (x86)\TriggerSoft\RhakMu",
+    [switch]$Restore   # put DWM8And16BitMitigation back (game needs it to launch)
 )
 
 # RhakMu uses DDrawCompat (ddraw.dll wrapper) for DirectDraw on modern Windows.
@@ -31,6 +32,17 @@ if (Test-IsAdmin) {
     $keys += "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers"
 } else {
     Write-Host "Not elevated: only the HKCU (current user) shim will be cleaned. Re-run as Administrator to also clean HKLM." -ForegroundColor Yellow
+}
+
+if ($Restore) {
+    foreach ($key in $keys) {
+        if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
+        $exe = Join-Path $GameDir "Rhakmu.exe"
+        Set-ItemProperty -Path $key -Name $exe -Value "DWM8And16BitMitigation"
+        Write-Host "Restored shim DWM8And16BitMitigation for $exe  ($key)" -ForegroundColor Green
+    }
+    Write-Host "Restart the game." -ForegroundColor Cyan
+    return
 }
 
 foreach ($key in $keys) {
