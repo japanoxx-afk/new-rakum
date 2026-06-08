@@ -66,6 +66,7 @@ P_ROOM_LIST_ACK = 0x0CFF
 P_ROOM_LIST_END = 0x0DFF
 P_CREATE_ROOM   = 0x0EFF
 P_GAME_START    = 0x0FFF
+P_BATTLE_START  = 0x1EFF   # server->client battle start (ReplyBattleReqReply)
 P_JOIN_ROOM     = 0x10FF
 P_LEAVE_ROOM    = 0x11FF
 P_CHAT          = 0x12FF
@@ -553,23 +554,18 @@ class ClientSession:
         log.info(f"Game start: {self.peer} account={self.account!r} room={self.room_title!r} payload={payload.hex()}")
 
         all_in_room = STATE.clients_in_room(self.room_title)
-        others = [c for c in all_in_room if c is not self]
 
-        # 1. Relay original game-start packet to all OTHER room members (not the host).
-        #    The host auto-starts; joiners need the relay to trigger their countdown.
-        original_pkt = pack_pkt(P_GAME_START, payload)
-        for c in others:
-            c.writer.write(original_pkt)
+        # The client's lobby packet dispatcher routes the battle-start handler
+        # (ReplyBattleReqReply, which sets the local battle/countdown state) from
+        # packet type 0x1EFF -- NOT 0x0FFF. The host sends 0x0FFF as its request;
+        # the server must turn that into 0x1EFF for the clients to actually start.
+        # Send to ALL in room (host + guests) so both run the same start path
+        # (and the battle-start-sync patch sets the same seed=0 on both sides).
+        start_pkt = pack_pkt(P_BATTLE_START, payload if payload else bytes([0x02, 0x00, 0x00]))
+        for c in all_in_room:
+            c.writer.write(start_pkt)
             await c.flush()
-            log.info(f"  Relayed game-start to {c.account!r}")
-
-        # 2. Send sync-ok [0x00, 0x02] to OTHERS only (not the host).
-        #    Matches PS1 stable server "original-plus-sync-ok" behavior.
-        sync_pkt = pack_pkt(P_GAME_START, bytes([0x00, 0x02]))
-        for c in others:
-            c.writer.write(sync_pkt)
-            await c.flush()
-            log.info(f"  Sent sync-ok to {c.account!r}")
+            log.info(f"  Sent 0x1EFF battle-start to {c.account!r}")
 
     async def _handle_chat(self, payload: bytes):
         strings = read_cstrings(payload)
