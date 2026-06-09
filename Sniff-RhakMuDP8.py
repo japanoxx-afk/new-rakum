@@ -32,16 +32,24 @@ def get_local_radmin_ip():
             return ip
     return "0.0.0.0"
 
-def rmpk_name(payload):
-    """If payload looks like a TG_Net/RMPK packet, name it."""
+def pkt_name(payload):
+    """Name the in-game packet by its TG_Net type word (first 2 bytes, LE)."""
     if len(payload) < 4:
-        return None
+        return f"short({len(payload)})"
     t = struct.unpack_from("<H", payload, 0)[0]
+    names = {
+        0x8811: "0x8811 REQ(packet-request)",
+        0x8813: "0x8813 READY/state",
+        0x8814: "0x8814 DATA?",
+        0x8810: "0x8810 GAMEDATA",
+        0x8800: "0x8800 GAMEDATA2",
+        0x8812: "0x8812",
+    }
+    if t in names:
+        return names[t]
     if 0x1002 <= t <= 0x1011:
         return f"RMPK 0x{t:04X}"
-    if (t & 0x00FF) == 0xFF or (t >> 8) == 0xFF:
-        return f"TGNet 0x{t:04X}"
-    return None
+    return f"type 0x{t:04X}"
 
 def main():
     if len(sys.argv) < 2:
@@ -62,10 +70,24 @@ def main():
     s.settimeout(1.0)
 
     end = time.time() + secs
-    flows = Counter()
-    rmpk = Counter()
-    shown = 0
-    SHOW_MAX = 80
+    types_out = Counter()   # type counts, OUT (this PC -> peer)
+    types_in = Counter()    # type counts, IN  (peer -> this PC)
+    first_seen = {}         # type -> first payload hex (per direction)
+    total_out = total_in = 0
+
+    def summary():
+        print("=" * 64)
+        print(f"OUT (this PC {local} -> peer {peer}):  {total_out} pkts")
+        for k, v in types_out.most_common():
+            print(f"   {k:28s} x{v}")
+        print(f"IN  (peer {peer} -> this PC):  {total_in} pkts")
+        for k, v in types_in.most_common():
+            print(f"   {k:28s} x{v}")
+        print("-- first payload sample per (dir,type) --")
+        for key, hx in first_seen.items():
+            print(f"   {key}: {hx}")
+        print("KEY QUESTION: does GAMEDATA (0x8810/0x8800) ever flow, and both ways?")
+
     try:
         while time.time() < end:
             try:
@@ -75,8 +97,7 @@ def main():
             if len(data) < 20:
                 continue
             ihl = (data[0] & 0x0F) * 4
-            proto = data[9]
-            if proto != 17:  # UDP
+            if data[9] != 17:  # UDP
                 continue
             src = socket.inet_ntoa(data[12:16])
             dst = socket.inet_ntoa(data[16:20])
@@ -88,33 +109,25 @@ def main():
             if 11223 not in (sport, dport):
                 continue
             payload = data[ihl + 8: ihl + ulen]
-            direction = "OUT" if src == local else "IN "
-            flows[f"{direction} {src}:{sport}->{dst}:{dport}"] += 1
-            name = rmpk_name(payload)
-            if name:
-                rmpk[f"{direction} {name}"] += 1
-            if shown < SHOW_MAX:
-                hexs = payload[:48].hex(" ")
-                tag = f"  [{name}]" if name else ""
-                print(f"{direction} {src}:{sport}->{dst}:{dport} len={len(payload)}{tag}")
-                print(f"    {hexs}")
-                shown += 1
+            name = pkt_name(payload)
+            out = (src == local)
+            d = "OUT" if out else "IN "
+            if out:
+                types_out[name] += 1; total_out += 1
+            else:
+                types_in[name] += 1; total_in += 1
+            key = f"{d} {name}"
+            if key not in first_seen:
+                first_seen[key] = payload[:32].hex(" ")
+    except KeyboardInterrupt:
+        print("\n(interrupted)")
     finally:
         try:
             s.ioctl(socket.SIO_RCVALL, socket.RCVALL_OFF)
         except Exception:
             pass
         s.close()
-
-    print("=" * 64)
-    print("Flow counts:")
-    for k, v in flows.most_common():
-        print(f"  {k}: {v}")
-    print("RMPK/TGNet packet types seen (this is the key signal):")
-    if not rmpk:
-        print("  (NONE found in payloads - DP8 may encapsulate them, or no game packets)")
-    for k, v in rmpk.most_common():
-        print(f"  {k}: {v}")
+    summary()
 
 if __name__ == "__main__":
     main()
