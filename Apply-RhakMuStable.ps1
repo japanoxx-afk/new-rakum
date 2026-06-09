@@ -34,6 +34,8 @@ $steps = @(
     @{ Name="Menu mouse-cursor crash guard"; Script="Patch-RhakMuMenuMouseGuard.ps1";     Args=@{} }
 )
 
+# handes.dll (anti-cheat) patch -- different target file, handled separately below.
+
 foreach ($s in $steps) {
     Write-Host ""
     Write-Host "==> $($s.Name)" -ForegroundColor Cyan
@@ -42,6 +44,13 @@ foreach ($s in $steps) {
     $a = $s.Args.Clone(); $a["ExePath"] = $exe
     & $path @a
 }
+
+Write-Host ""
+Write-Host "==> HanGame anti-cheat (handes.dll) guard" -ForegroundColor Cyan
+$hd = Join-Path $root "Patch-RhakMuHanDesGuard.ps1"
+$dll = Join-Path $GameDir "handes.dll"
+if ((Test-Path $hd) -and (Test-Path $dll)) { & $hd -DllPath $dll }
+else { Write-Host "  (handes.dll or patch script missing, skipped)" -ForegroundColor Yellow }
 
 Write-Host ""
 Write-Host "Stable patch set applied to $exe" -ForegroundColor Green
