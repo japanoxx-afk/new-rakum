@@ -3,28 +3,27 @@ param(
     [switch]$Revert
 )
 
-# ROOT CAUSE FIX for the in-game "connecting" stall.
+# ROOT CAUSE FIX (v2, surgical) for the in-game "connecting" stall.
 #
-# In-game sync needs the host to send RMPK 0x100A (game start) etc. over
-# classRoomNetMGR. RMPKSend_* skip the send when RoomNetMGR's send buffer
-# (this+4) is null. RoomNetMGR's send buffer is only allocated by
-# RoomNetMGR_Setup (0x423300), which the channel-select handler (0x44C0E0,
-# type 0x07FF) calls ONLY when the flag [0x6DFCD6]==1. That flag is set to 1
-# only by a specific CPannelMgr menu state (0x462AFC), which never happens in
-# our flow -> RoomNetMGR is never initialized -> every room-master send is
-# skipped -> the guest waits on "connecting" forever.
+# In-game sync needs the host to send RMPK 0x100A (game start) over
+# classRoomNetMGR. RMPKSend_* are skipped when RoomNetMGR's send buffer
+# (this+4) is null, and RoomNetMGR is never initialized in our flow (the
+# menu state that would call RoomNetMGR_Setup never happens). The previous
+# team worked around the null with Patch-RhakMuRoomSendGuards (skip the send,
+# dropping the 0x100A write) so coordination never happened.
 #
-# The previous team's Patch-RhakMuRoomSendGuards worked around the resulting
-# null-deref by SKIPPING the sends (which also dropped the 0x100A packet-type
-# write), so the room-master coordination never actually happened.
+# v1 forced RoomNetMGR_Setup at channel-select -> broke the lobby (room-mode
+# transition fired at login). v2 is surgical: it only runs at ROOM CREATE.
 #
-# This patch:
-#  1) Forces RoomNetMGR_Setup to always run: NOPs the "je" gate at 0x0044C1DF
-#     so the channel-select handler allocates the RoomNetMGR send buffer
-#     regardless of [0x6DFCD6].
-#  2) Reverts the 3 RoomSendGuards so RMPKSend_GameStart/GameOption/UserLeft
-#     run their ORIGINAL code (writing the real 0x100A/0x10xx packet type and
-#     actually sending). Safe now because (1) guarantees this+4 is allocated.
+# The create-room reply handler (0x0044CBE0, type 0x0EFF, our reply has
+# packet[4]=0 -> case 0 host-setup path) contains a harmless debug-log call at
+# VA 0x0044CC88 (16 bytes: push 0x4EEB7C; push 4; call [0x4EB3D0]; add esp,8).
+# We overwrite it with:  push 0; mov ecx,0x6DFBD8; call 0x00423300  (+NOPs)
+# i.e. RoomNetMGR_Setup, which allocates the RoomNetMGR send buffer right when
+# the host creates the room. The lobby/login path is untouched.
+#
+# It also reverts the 3 RoomSendGuards so RMPKSend runs its ORIGINAL code and
+# actually emits 0x100A (safe now that this+4 is allocated).
 
 $ErrorActionPreference = "Stop"
 if (-not (Test-Path -LiteralPath $ExePath)) { throw "File not found: $ExePath" }
@@ -33,12 +32,13 @@ $bytes = [IO.File]::ReadAllBytes($ExePath)
 function Eq($a,$o,$e){ for($i=0;$i -lt $e.Length;$i++){ if($a[$o+$i] -ne $e[$i]){ return $false } } return $true }
 function Put($a,$o,$p){ for($i=0;$i -lt $p.Length;$i++){ $a[$o+$i]=$p[$i] } }
 
-# --- site 1: channel-select RoomNetMGR gate (file offset 0x4C1DF) ---
-$gateOff = 0x4C1DF
-$gateOrig = [byte[]]@(0x0F,0x84,0x39,0x01,0x00,0x00)   # je 0x44c31e
-$gateNop  = [byte[]]@(0x90,0x90,0x90,0x90,0x90,0x90)
+# --- site 1: room-create debug-log -> RoomNetMGR_Setup (file offset 0x4CC88) ---
+$rnOff  = 0x4CC88
+$rnOrig = [byte[]]@(0x68,0x7C,0xEB,0x4E,0x00,0x6A,0x04,0xFF,0x15,0xD0,0xB3,0x4E,0x00,0x83,0xC4,0x08)
+# push 0 ; mov ecx,0x6DFBD8 ; call 0x00423300 ; nop nop nop nop
+$rnPatch= [byte[]]@(0x6A,0x00,0xB9,0xD8,0xFB,0x6D,0x00,0xE8,0x6C,0x66,0xFD,0xFF,0x90,0x90,0x90,0x90)
 
-# --- sites 2-4: RoomSendGuards (file offsets), patched <-> original ---
+# --- sites 2-4: RoomSendGuards (patched <-> original) ---
 $guards = @(
     @{ Off=0x45AEC; Name="RMPKSend_GameStart";
        Patched=[byte[]]@(0x8B,0x45,0xFC,0x83,0x78,0x04,0x00,0x0F,0x84,0xB8,0x00,0x00,0x00,0x90);
@@ -52,24 +52,20 @@ $guards = @(
 )
 
 $stamp = Get-Date -Format yyyyMMdd_HHmmss
-[IO.File]::WriteAllBytes("$ExePath.bak_roomnet_$stamp", $bytes)
+[IO.File]::WriteAllBytes("$ExePath.bak_roomnet2_$stamp", $bytes)
 
 if ($Revert) {
-    if (Eq $bytes $gateOff $gateNop) { Put $bytes $gateOff $gateOrig; Write-Host "Reverted: RoomNetMGR gate restored" -ForegroundColor Green }
-    foreach ($g in $guards) {
-        if (Eq $bytes $g.Off $g.Orig) { Put $bytes $g.Off $g.Patched; Write-Host "Reverted: $($g.Name) guard re-applied" -ForegroundColor Green }
-    }
+    if (Eq $bytes $rnOff $rnPatch) { Put $bytes $rnOff $rnOrig; Write-Host "Reverted: room-create debug-log restored" -ForegroundColor Green }
+    foreach ($g in $guards) { if (Eq $bytes $g.Off $g.Orig) { Put $bytes $g.Off $g.Patched; Write-Host "Reverted: $($g.Name) guard re-applied" -ForegroundColor Green } }
     [IO.File]::WriteAllBytes($ExePath, $bytes)
-    Write-Host "Revert complete. Backup: $ExePath.bak_roomnet_$stamp"
+    Write-Host "Revert complete."
     return
 }
 
-# Force RoomNetMGR setup
-if (Eq $bytes $gateOff $gateNop) { Write-Host "Already patched: RoomNetMGR gate" -ForegroundColor Yellow }
-elseif (Eq $bytes $gateOff $gateOrig) { Put $bytes $gateOff $gateNop; Write-Host "Patched: force RoomNetMGR_Setup (NOP gate @0x0044C1DF)" -ForegroundColor Green }
-else { $h=($bytes[$gateOff..($gateOff+5)]|%{ "{0:X2}" -f $_ }) -join " "; throw "Unexpected gate bytes: $h" }
+if (Eq $bytes $rnOff $rnPatch) { Write-Host "Already patched: room-create RoomNetMGR_Setup" -ForegroundColor Yellow }
+elseif (Eq $bytes $rnOff $rnOrig) { Put $bytes $rnOff $rnPatch; Write-Host "Patched: RoomNetMGR_Setup at room create (@0x0044CC88)" -ForegroundColor Green }
+else { $h=($bytes[$rnOff..($rnOff+15)]|%{ "{0:X2}" -f $_ }) -join " "; throw "Unexpected bytes @0x44CC88: $h" }
 
-# Revert RoomSendGuards -> original
 foreach ($g in $guards) {
     if (Eq $bytes $g.Off $g.Orig) { Write-Host "Already original: $($g.Name)" -ForegroundColor Yellow }
     elseif (Eq $bytes $g.Off $g.Patched) { Put $bytes $g.Off $g.Orig; Write-Host "Restored original send: $($g.Name)" -ForegroundColor Green }
@@ -78,6 +74,5 @@ foreach ($g in $guards) {
 
 [IO.File]::WriteAllBytes($ExePath, $bytes)
 Write-Host ""
-Write-Host "Done. RoomNetMGR is now force-initialized and room-master sends are live." -ForegroundColor Green
-Write-Host "Backup: $ExePath.bak_roomnet_$stamp"
-Write-Host "Apply on BOTH PCs, then restart the game." -ForegroundColor Cyan
+Write-Host "Done. RoomNetMGR is initialized at room create; room-master sends are live." -ForegroundColor Green
+Write-Host "Apply on BOTH PCs, restart the game. Lobby/login flow is untouched." -ForegroundColor Cyan
