@@ -30,7 +30,8 @@ $steps = @(
     @{ Name="DirectDraw restore guard"; Script="Patch-RhakMuIcarusRestoreGuard.ps1";      Args=@{} },
     @{ Name="Room send guards";         Script="Patch-RhakMuRoomSendGuards.ps1";          Args=@{} },
     @{ Name="Post-game resolution guard"; Script="Patch-RhakMuPostGameResolutionGuard.ps1"; Args=@{} },
-    @{ Name="Post-game result-form guard"; Script="Patch-RhakMuPostGameFormGuard.ps1";    Args=@{} }
+    @{ Name="Post-game result-form guard"; Script="Patch-RhakMuPostGameFormGuard.ps1";    Args=@{} },
+    @{ Name="Menu mouse-cursor crash guard"; Script="Patch-RhakMuMenuMouseGuard.ps1";     Args=@{} }
 )
 
 foreach ($s in $steps) {
