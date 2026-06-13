@@ -31,7 +31,8 @@ $steps = @(
     @{ Name="Room send guards";         Script="Patch-RhakMuRoomSendGuards.ps1";          Args=@{} },
     @{ Name="Post-game resolution guard"; Script="Patch-RhakMuPostGameResolutionGuard.ps1"; Args=@{} },
     @{ Name="Post-game result-form guard"; Script="Patch-RhakMuPostGameFormGuard.ps1";    Args=@{} },
-    @{ Name="Menu mouse-cursor crash guard"; Script="Patch-RhakMuMenuMouseGuard.ps1";     Args=@{} }
+    @{ Name="Menu mouse-cursor crash guard"; Script="Patch-RhakMuMenuMouseGuard.ps1";     Args=@{} },
+    @{ Name="Guest P2P sync (countdown)";   Script="Patch-RhakMuGuestP2PSync.ps1";        Args=@{} }
 )
 
 # handes.dll (anti-cheat) patch -- different target file, handled separately below.

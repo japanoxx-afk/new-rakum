@@ -52,6 +52,7 @@ function Show-State {
     $mySlot    = Read-U8  $hProc 0x6E5382  # slot (0=host,1=guest)
     $netMode   = Read-U32 $hProc 0x6E0576  # network mode (3=P2P)
     $seed      = Read-U32 $hProc 0x6E0970  # random seed
+    $gameType  = Read-U32 $hProc 0x6DFCC6  # game-type word (6=required for countdown)
 
     # --- RoomNetMGR send buffer (this+4) ---
     $rnSendBuf = 0
@@ -85,6 +86,7 @@ function Show-State {
     Log "  [0x6E5382] my slot                 : $sl"
 
     Log "  [0x6E0576] network mode            : $netMode  (3=P2P expected)"
+    Log "  [0x6DFCC6] game-type word          : $gameType  (6=required for countdown)"
     Log "  [0x6E0970] random seed             : 0x$("{0:X8}" -f $seed)"
     Log "  [0xB401B4] peer slot byte          : $b401b4"
     Log "  [0xB401BC] local slot byte         : $b401bc"
