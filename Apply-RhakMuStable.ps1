@@ -32,8 +32,7 @@ $steps = @(
     @{ Name="Post-game resolution guard"; Script="Patch-RhakMuPostGameResolutionGuard.ps1"; Args=@{} },
     @{ Name="Post-game result-form guard"; Script="Patch-RhakMuPostGameFormGuard.ps1";    Args=@{} },
     @{ Name="Menu mouse-cursor crash guard"; Script="Patch-RhakMuMenuMouseGuard.ps1";     Args=@{} },
-    @{ Name="Guest P2P sync (countdown)";   Script="Patch-RhakMuGuestP2PSync.ps1";        Args=@{} },
-    @{ Name="Battle countdown 20 s (DP8 margin)"; Script="Patch-RhakMuBattleCountdown.ps1"; Args=@{ Seconds=20 } }
+    @{ Name="Guest P2P sync (countdown)";   Script="Patch-RhakMuGuestP2PSync.ps1";        Args=@{} }
 )
 
 # handes.dll (anti-cheat) patch -- different target file, handled separately below.
