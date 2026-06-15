@@ -34,7 +34,8 @@ $steps = @(
     @{ Name="Menu mouse-cursor crash guard"; Script="Patch-RhakMuMenuMouseGuard.ps1";     Args=@{} },
     @{ Name="Guest P2P sync (countdown)";   Script="Patch-RhakMuGuestP2PSync.ps1";        Args=@{} },
     @{ Name="In-game P2P timeout (60s)";   Script="Patch-RhakMuInGameTimeout.ps1";       Args=@{} },
-    @{ Name="DP8 timeout draw fix";        Script="Patch-RhakMuDP8Timeout.ps1";          Args=@{} }
+    @{ Name="DP8 timeout draw fix";        Script="Patch-RhakMuDP8Timeout.ps1";          Args=@{} },
+    @{ Name="DP8 draw triggers (A/B/C)"; Script="Patch-RhakMuDP8DrawTriggers.ps1";     Args=@{} }
 )
 
 # handes.dll (anti-cheat) patch -- different target file, handled separately below.
