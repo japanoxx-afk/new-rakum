@@ -1,6 +1,6 @@
 @echo off
 chcp 437 > nul
-setlocal
+setlocal enabledelayedexpansion
 
 set GAME_HOST=rhakmugame.hangame.naver.com
 set GAME_EXE=C:\Program Files (x86)\TriggerSoft\RhakMu\Launcher.exe
@@ -32,7 +32,7 @@ if not exist "%PATCH_DONE%" (
     if exist "%PATCH_SCRIPT%" (
         echo [Setup] Applying patches, please wait...
         powershell -ExecutionPolicy Bypass -File "%PATCH_SCRIPT%" -GameDir "C:\Program Files (x86)\TriggerSoft\RhakMu"
-        if %errorlevel% equ 0 (
+        if !errorlevel! equ 0 (
             echo. > "%PATCH_DONE%"
             echo [OK] Patches applied
         ) else (
@@ -41,7 +41,7 @@ if not exist "%PATCH_DONE%" (
     )
 )
 
-powershell -Command "(Get-Content '%HOSTS%') | Where-Object { $_ -notmatch '%GAME_HOST%' } | Set-Content '%HOSTS%'"
+powershell -Command "$h = (Get-Content '%HOSTS%') | Where-Object { $_ -notmatch '%GAME_HOST%' }; $h | Set-Content '%HOSTS%'"
 echo %SERVER_IP%  %GAME_HOST%>> "%HOSTS%"
 echo [OK] Hosts updated
 
@@ -62,12 +62,12 @@ if "%SERVER_IP%"=="127.0.0.1" (
     )
 )
 
-if not exist "%GAME_EXE%" (
-    echo [Error] Game not found: %GAME_EXE%
+if not exist "!GAME_EXE!" (
+    echo [Error] Game not found: !GAME_EXE!
     pause
     exit /b 1
 )
 
 echo [OK] Launching game...
-start "" "%GAME_EXE%"
+start "" "!GAME_EXE!"
 exit /b 0
