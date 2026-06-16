@@ -45,6 +45,7 @@ log = logging.getLogger("rhakmu")
 
 HOST = "0.0.0.0"
 PORT = 11223
+UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
 
 # Default accounts (any login accepted if account not in list, just track it)
 # Add real accounts here: "account": "password"
@@ -615,23 +616,88 @@ class ClientSession:
         STATE.remove_rooms_for(self.account)
 
 
+class DP8RelayProtocol(asyncio.DatagramProtocol):
+    """Forward WG_IPX.dll EnumHosts broadcasts (UDP 47584) to known room peers.
+
+    Radmin VPN does not relay broadcast packets between peers, so the
+    guest never receives the host's EnumHosts announcement and DP8 never
+    connects.  This relay runs on the lobby server (which already knows
+    every player's IP from the TCP connection) and unicasts each broadcast
+    to the other members of the same room.
+    """
+
+    def __init__(self, state: ServerState):
+        self._state = state
+        self._transport: Optional[asyncio.DatagramTransport] = None
+
+    def connection_made(self, transport: asyncio.DatagramTransport):
+        self._transport = transport
+        sock = transport.get_extra_info("socket")
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        log.info(f"DP8 broadcast relay listening on UDP 0.0.0.0:{UDP_RELAY_PORT}")
+
+    def datagram_received(self, data: bytes, addr: tuple):
+        src_ip, src_port = addr
+
+        # Find room for this source IP
+        client = next(
+            (c for c in self._state.clients if c.peer_ip == src_ip), None
+        )
+        if client is None or not client.room_title:
+            return
+
+        # Forward to every other room member as unicast
+        others = [
+            c for c in self._state.clients_in_room(client.room_title)
+            if c.peer_ip != src_ip and c.peer_ip not in ("127.0.0.1", "::1")
+        ]
+        for other in others:
+            try:
+                self._transport.sendto(data, (other.peer_ip, UDP_RELAY_PORT))
+                log.debug(
+                    f"DP8 relay: {src_ip} -> {other.peer_ip}:{UDP_RELAY_PORT}"
+                    f" ({len(data)} bytes)"
+                )
+            except Exception as e:
+                log.warning(f"DP8 relay send error -> {other.peer_ip}: {e}")
+
+    def error_received(self, exc):
+        log.warning(f"DP8 relay UDP error: {exc}")
+
+    def connection_lost(self, exc):
+        pass
+
+
 async def main():
     print("=" * 60)
     print("  RhakMu Private Server")
     print(f"  Listening on TCP {HOST}:{PORT}")
+    print(f"  DP8 relay  on UDP {HOST}:{UDP_RELAY_PORT}")
     print(f"  Server IP: {STATE.server_ip}")
     print(f"  Open login: {OPEN_LOGIN}")
     print(f"  Known accounts: {', '.join(ACCOUNTS.keys())}")
     print("=" * 60)
     print()
 
-    server = await asyncio.start_server(
-        lambda r, w: ClientSession(r, w).run(),
-        HOST,
-        PORT,
+    loop = asyncio.get_running_loop()
+
+    # UDP broadcast relay for WG_IPX.dll EnumHosts (port 47584)
+    relay_transport, _ = await loop.create_datagram_endpoint(
+        lambda: DP8RelayProtocol(STATE),
+        local_addr=(HOST, UDP_RELAY_PORT),
+        allow_broadcast=True,
     )
-    async with server:
-        await server.serve_forever()
+
+    try:
+        server = await asyncio.start_server(
+            lambda r, w: ClientSession(r, w).run(),
+            HOST,
+            PORT,
+        )
+        async with server:
+            await server.serve_forever()
+    finally:
+        relay_transport.close()
 
 
 if __name__ == "__main__":
