@@ -9,11 +9,11 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $existing = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
 if ($existing) {
     $pids = $existing | Select-Object -ExpandProperty OwningProcess -Unique
-    foreach ($pid in $pids) {
-        $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+    foreach ($procId in $pids) {
+        $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
         if ($proc) {
-            Write-Host "Stopping existing process: $($proc.Name) (pid=$pid)" -ForegroundColor Yellow
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            Write-Host "Stopping existing process: $($proc.Name) (pid=$procId)" -ForegroundColor Yellow
+            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
             Start-Sleep -Milliseconds 500
         }
     }
@@ -27,11 +27,9 @@ if (-not (Test-Path $serverScript)) {
 
 # Find Python
 $python = $null
-$candidates = @(
-    "C:\Users\seo\AppData\Local\Programs\Python\Python314\python.exe",
-    "C:\Users\seo\AppData\Local\Programs\Python\Python313\python.exe",
-    "C:\Users\seo\AppData\Local\Programs\Python\Python312\python.exe",
-    "python"
+$candidates = @("python", "python3") + @(
+    Get-ChildItem "C:\Users\*\AppData\Local\Programs\Python\Python3*\python.exe" -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending | Select-Object -ExpandProperty FullName
 )
 foreach ($c in $candidates) {
     if (Get-Command $c -ErrorAction SilentlyContinue) {
