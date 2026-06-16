@@ -51,7 +51,7 @@ UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
 # Add real accounts here: "account": "password"
 ACCOUNTS: Dict[str, str] = {
     "test": "test1234",
-    "nayi": "1111",
+    "nyai": "1111",
     "japanox": "1111",
     **{f"test{i}": "1111" for i in range(1, 11)},
 }
