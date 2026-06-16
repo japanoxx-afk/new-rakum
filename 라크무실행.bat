@@ -8,6 +8,8 @@ set GAME_EXE=C:\Program Files (x86)\TriggerSoft\RhakMu\Rhakmu.exe
 set SCRIPT_DIR=%~dp0
 set SERVER_CFG=%SCRIPT_DIR%server.txt
 set SERVER_EXE=%SCRIPT_DIR%RhakMuServer.exe
+set PATCH_SCRIPT=%SCRIPT_DIR%Apply-RhakMuStable.ps1
+set PATCH_DONE=%SCRIPT_DIR%.patched
 set HOSTS=%SystemRoot%\System32\drivers\etc\hosts
 :: ──────────────────────────────────────────────────────
 
@@ -33,10 +35,24 @@ echo  │   서버: %SERVER_IP%
 echo  └─────────────────────────────┘
 echo.
 
-:: hosts 파일 업데이트 (기존 항목 제거 후 추가)
+:: 최초 1회 패치 적용
+if not exist "%PATCH_DONE%" (
+    if exist "%PATCH_SCRIPT%" (
+        echo [최초 설정] 게임 패치를 적용합니다. 잠시 기다려주세요...
+        powershell -ExecutionPolicy Bypass -File "%PATCH_SCRIPT%" -GameDir "C:\Program Files (x86)\TriggerSoft\RhakMu"
+        if %errorlevel% equ 0 (
+            echo. > "%PATCH_DONE%"
+            echo [OK] 패치 완료
+        ) else (
+            echo [경고] 패치 중 오류가 발생했습니다. 계속 진행합니다.
+        )
+    )
+)
+
+:: hosts 파일 업데이트
 powershell -Command "(Get-Content '%HOSTS%') | Where-Object { $_ -notmatch '%GAME_HOST%' } | Set-Content '%HOSTS%'"
 echo %SERVER_IP%  %GAME_HOST% >> "%HOSTS%"
-echo [OK] hosts 파일 설정 완료: %SERVER_IP% → %GAME_HOST%
+echo [OK] 서버 설정 완료: %SERVER_IP%
 
 :: 로컬 서버 실행 (127.0.0.1 일 때만)
 if "%SERVER_IP%"=="127.0.0.1" (
