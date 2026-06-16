@@ -27,10 +27,11 @@ if (-not (Test-Path $serverScript)) {
 
 # Find Python
 $python = $null
-$candidates = @("python", "python3") + @(
+$discovered = @(
     Get-ChildItem "C:\Users\*\AppData\Local\Programs\Python\Python3*\python.exe" -ErrorAction SilentlyContinue |
         Sort-Object Name -Descending | Select-Object -ExpandProperty FullName
 )
+$candidates = $discovered + @("python3", "python")
 foreach ($c in $candidates) {
     if (Get-Command $c -ErrorAction SilentlyContinue) {
         $python = $c; break
