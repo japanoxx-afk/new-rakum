@@ -74,6 +74,33 @@ if ($Revert) {
     Write-Host "종료 크래시 가드: 대상 코드를 못 찾음 (1.000d가 아닐 수 있음). 건너뜀." -ForegroundColor Yellow
 }
 
+# ===== (3) 종료시 메뉴 커서 크래시 가드 (DrawMenuMouse) =====
+# 종료 후 CGameMenu::Draw 가 DrawMenuMouse 를 호출하는데, 커서 이미지 매니저
+# [0x6E1320]/[0x6E1324] 가 이미 해제(NULL)되어 [ecx+0x14] 참조에서 또 튕긴다.
+# 호출부(0x004241C9: call DrawMenuMouse)를 코드케이브로 우회시켜, 매니저가
+# NULL 이면 호출을 건너뛰고 정상 복귀한다. (평소 메뉴에선 커서 정상 표시)
+$mmSiteOff = 0x000241C9
+$mmSiteOrig = [byte[]]@(0xE8,0xC2,0x0C,0x00,0x00)              # call 0x424E90
+$mmSiteNew  = [byte[]]@(0xE8,0x44,0x72,0x0C,0x00)              # call cave 0x4EB412
+$mmCaveOff  = 0x000EB412
+$mmStub = [byte[]]@(0x83,0x3D,0x20,0x13,0x6E,0x00,0x00, 0x74,0x11,
+                    0x83,0x3D,0x24,0x13,0x6E,0x00,0x00, 0x74,0x08,
+                    0x8B,0x4D,0xFC, 0xE8,0x64,0x9A,0xF3,0xFF, 0xC3)
+function ByteEq($arr,$off,$exp){ for($k=0;$k -lt $exp.Length;$k++){ if($arr[$off+$k] -ne $exp[$k]){return $false} } return $true }
+if (-not $Revert) {
+    if (ByteEq $bytes $mmSiteOff $mmSiteNew) {
+        Write-Host "메뉴 커서 크래시 가드: 이미 적용됨." -ForegroundColor Yellow
+    } elseif (ByteEq $bytes $mmSiteOff $mmSiteOrig -and (ByteEq $bytes $mmCaveOff @(0,0,0,0,0,0,0,0))) {
+        Backup-Once
+        for ($k=0;$k -lt $mmStub.Length;$k++){ $bytes[$mmCaveOff+$k]=$mmStub[$k] }
+        for ($k=0;$k -lt $mmSiteNew.Length;$k++){ $bytes[$mmSiteOff+$k]=$mmSiteNew[$k] }
+        $changed = $true
+        Write-Host "메뉴 커서 크래시 가드 적용: DrawMenuMouse NULL 우회." -ForegroundColor Green
+    } else {
+        Write-Host "메뉴 커서 크래시 가드: 대상/케이브 불일치로 건너뜀 (1.000d 아닐 수 있음)." -ForegroundColor Yellow
+    }
+}
+
 # ===== (1) 레이턴시 =====
 # 지연값 초기화 코드 3곳을 찾는다:  mov word [eax+0x48], <N> ; call ...
 #   = 바이트 시그니처  66 C7 40 48 <N> 00 E8
