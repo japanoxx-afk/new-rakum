@@ -15,6 +15,16 @@ import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+# server.py는 런타임 exec로 실행되므로 PyInstaller가 의존성을 자동 감지 못 한다.
+# exe 빌드 시 함께 포함되도록 여기서 명시적으로 import 해 둔다.
+import asyncio        # noqa: F401
+import logging        # noqa: F401
+import socket         # noqa: F401
+import struct         # noqa: F401
+import dataclasses    # noqa: F401
+import pathlib        # noqa: F401
+import typing         # noqa: F401
+
 APP_VERSION = "0.1"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
