@@ -693,12 +693,13 @@ class App(tk.Tk):
         ttk.Label(lat_frame, textvariable=self.lat_status_var).pack(anchor="w", pady=(0, 6))
         lat_btns = ttk.Frame(lat_frame)
         lat_btns.pack(fill="x")
-        ttk.Button(lat_btns, text="빠르게 (1턴)", command=lambda: self._on_latency(1), width=12).pack(side="left", padx=(0, 4))
-        ttk.Button(lat_btns, text="균형 (2턴)", command=lambda: self._on_latency(2), width=12).pack(side="left", padx=(0, 4))
-        ttk.Button(lat_btns, text="원래대로 (4턴)", command=lambda: self._on_latency(4), width=14).pack(side="left")
+        ttk.Button(lat_btns, text="빠르게 (1턴)", command=lambda: self._on_latency(1), width=11).pack(side="left", padx=(0, 4))
+        ttk.Button(lat_btns, text="균형 (2턴)", command=lambda: self._on_latency(2), width=11).pack(side="left", padx=(0, 4))
+        ttk.Button(lat_btns, text="안정 (3턴)", command=lambda: self._on_latency(3), width=11).pack(side="left", padx=(0, 4))
+        ttk.Button(lat_btns, text="원래대로 (4턴)", command=lambda: self._on_latency(4), width=13).pack(side="left")
         ttk.Label(lat_frame,
-                  text="1턴=가장 빠름(근거리/AI)  2턴=인터넷 권장.  멀티는 모두 같은 값!\n"
-                       "※ 게임을 끈 상태에서 적용하세요.",
+                  text="1턴=가장 빠름(근거리/AI)  2턴=인터넷 권장  3턴=핑 높을 때  4턴=원래값\n"
+                       "멀티는 함께하는 모든 PC가 같은 값이어야 합니다.  ※ 게임을 끈 상태에서 적용.",
                   foreground="gray").pack(anchor="w", pady=(6, 0))
 
         # ── 창모드 ──
