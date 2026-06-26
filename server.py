@@ -505,9 +505,9 @@ class ClientSession:
                         c.writer.write(raw)
                     log.info(f"{self.peer}: relayed in-game 0x{ptype:04X} len={len(payload)} to {[c.account for c in others]}")
                 else:
-                    log.debug(f"{self.peer}: in-game unhandled 0x{ptype:04X} (no peers)")
+                    log.info(f"{self.peer}: in-game UNHANDLED 0x{ptype:04X} len={len(payload)} payload={payload.hex()}")
             else:
-                log.debug(f"{self.peer}: unhandled 0x{ptype:04X}")
+                log.info(f"{self.peer}: UNHANDLED 0x{ptype:04X} len={len(payload)} payload={payload.hex()}")
 
         await self.flush()
 
