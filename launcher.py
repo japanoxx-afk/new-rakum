@@ -25,7 +25,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.7"
+APP_VERSION = "0.8"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 DEFAULT_DOMAINS = [
@@ -786,11 +786,47 @@ class App(tk.Tk):
         btnbar = ttk.Frame(frame)
         btnbar.pack(side="left", fill="y", padx=(8, 0))
         ttk.Button(btnbar, text="새로고침", command=self._refresh_history, width=10).pack(pady=(0, 4))
+        ttk.Button(btnbar, text="랭킹 보기", command=self._show_ranking, width=10).pack(pady=(0, 4))
 
         self._refresh_history()
 
-    def _match_log_path(self):
-        return os.path.join(self.base_dir, "matches.json")
+    def _server_ip(self):
+        try:
+            ip = self.ip_var.get().strip()
+        except Exception:
+            ip = ""
+        return ip or HostsManager.read_current_ip(self.domains) or DEFAULT_IP
+
+    def _fetch_json(self, path):
+        """서버 HTTP(11225)에서 전적/랭킹을 받아온다. 실패 시 로컬 파일 폴백."""
+        import urllib.request
+        ip = self._server_ip()
+        try:
+            with urllib.request.urlopen(f"http://{ip}:11225{path}", timeout=3) as r:
+                return json.loads(r.read())
+        except Exception:
+            # 로컬 폴백 (이 PC가 서버인 경우)
+            if path.startswith("/ranking"):
+                return None
+            try:
+                with open(os.path.join(self.base_dir, "matches.json"), "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except (OSError, ValueError):
+                return []
+
+    @staticmethod
+    def _wl_text(results):
+        if not results:
+            return "-"
+        out = []
+        for a, v in results.items():
+            if isinstance(v, dict):
+                wl = v.get("wl")
+                mark = {"win": "승", "lose": "패", "draw": "무"}.get(wl, "?")
+            else:
+                mark = "승" if str(v).startswith("win") else "패"
+            out.append(f"{a}:{mark}")
+        return ", ".join(out)
 
     def _refresh_history(self):
         tree = getattr(self, "history_tree", None)
@@ -798,22 +834,24 @@ class App(tk.Tk):
             return
         for it in tree.get_children():
             tree.delete(it)
-        try:
-            with open(self._match_log_path(), "r", encoding="utf-8") as f:
-                matches = json.load(f)
-        except (OSError, ValueError):
-            matches = []
+        matches = self._fetch_json("/matches.json") or []
         for rec in reversed(matches):  # 최신순
             players = ", ".join(rec.get("players", []))
-            results = rec.get("results", {})
-            if results:
-                rtxt = ", ".join(f"{a}:{'승' if str(v).startswith('win') else '패'}"
-                                 for a, v in results.items())
-            else:
-                rtxt = "-"
-            mp = rec.get("map", "")
-            mp = mp.replace("Data\\Maps\\", "").replace(".rkm", "")
-            tree.insert("", "end", values=(rec.get("time", ""), mp, players, rtxt))
+            mp = rec.get("map", "").replace("Data\\Maps\\", "").replace(".rkm", "")
+            tree.insert("", "end", values=(rec.get("time", ""), mp, players,
+                                           self._wl_text(rec.get("results", {}))))
+
+    def _show_ranking(self):
+        rank = self._fetch_json("/ranking")
+        if rank is None:
+            messagebox.showinfo("랭킹", "서버에 연결할 수 없습니다.\n(서버가 켜져 있고 IP가 맞는지 확인)")
+            return
+        if not rank:
+            messagebox.showinfo("랭킹", "아직 집계된 전적이 없습니다.")
+            return
+        rows = sorted(rank.items(), key=lambda kv: (-kv[1].get("win", 0), kv[1].get("lose", 0)))
+        lines = [f"{a:12} {v.get('win',0)}승 {v.get('lose',0)}패 {v.get('draw',0)}무" for a, v in rows]
+        messagebox.showinfo("랭킹 (승순)", "\n".join(lines))
 
     # ── 설정 탭 ──
     def _build_settings_tab(self, notebook):

@@ -34,7 +34,9 @@ import os
 import socket
 import struct
 import sys
+import threading
 import time as _time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -123,14 +125,45 @@ def record_match_start(map_name: str, players: list, room_title: str) -> None:
     })
     _save_matches(matches)
 
-def record_match_result(account: str, result: str) -> None:
-    """post-game 시 해당 플레이어의 승/패를 가장 최근 매치에 기록."""
+def record_match_result(account: str, code: int, score: int) -> None:
+    """post-game 0x24FF: 해당 플레이어의 결과코드·점수를 가장 최근 매치에 기록.
+    승/패는 같은 매치 내 점수 비교로 판정(높은 쪽 승)."""
     matches = _load_matches()
     for rec in reversed(matches):
         if account in rec.get("players", []) and account not in rec.get("results", {}):
-            rec.setdefault("results", {})[account] = result
+            rec.setdefault("results", {})[account] = {"code": code, "score": score}
+            _recompute_winloss(rec)
             _save_matches(matches)
             return
+
+def _recompute_winloss(rec: dict) -> None:
+    """점수 비교로 win/lose 판정(동점이면 무승부)."""
+    res = rec.get("results", {})
+    if not res:
+        return
+    scores = {a: v["score"] for a, v in res.items() if isinstance(v, dict)}
+    if not scores:
+        return
+    top = max(scores.values())
+    n_top = sum(1 for s in scores.values() if s == top)
+    for a, v in res.items():
+        if isinstance(v, dict):
+            if n_top > 1 and v["score"] == top:
+                v["wl"] = "draw"
+            else:
+                v["wl"] = "win" if v["score"] == top else "lose"
+
+def compute_ranking() -> dict:
+    """matches.json에서 계정별 승/패/무 집계."""
+    tally = {}
+    for rec in _load_matches():
+        for a, v in rec.get("results", {}).items():
+            wl = v.get("wl") if isinstance(v, dict) else None
+            if wl not in ("win", "lose", "draw"):
+                continue
+            t = tally.setdefault(a, {"win": 0, "lose": 0, "draw": 0})
+            t[wl] += 1
+    return tally
 
 
 def pack_pkt(ptype: int, payload: bytes = b"") -> bytes:
@@ -447,12 +480,12 @@ class ClientSession:
             await self._handle_chat(payload)
 
         elif ptype == P_POST_GAME:
-            # post-game 패킷: 승/패 추정값 캡처 (형식 분석용 hex 로깅 포함)
-            log.info(f"  Post-game 0x24FF from {self.account!r}: {payload.hex()}")
+            # 0x24FF = SendGameReport: byte[0]=결과코드, byte[1..4]=점수(uint32)
+            code = payload[0] if len(payload) >= 1 else 0
+            score = struct.unpack_from("<I", payload, 1)[0] if len(payload) >= 5 else 0
+            log.info(f"  Post-game 0x24FF from {self.account!r}: code={code} score={score} raw={payload.hex()}")
             if self.account:
-                # 휴리스틱: payload 첫 바이트가 0이 아니면 승, 0이면 패 (실측으로 보정 예정)
-                result = "win" if (payload and payload[0] != 0) else "lose"
-                record_match_result(self.account, f"{result}({payload.hex()})")
+                record_match_result(self.account, code, score)
             self.send(P_POST_GAME_ACK, bytes([2, 0]))
 
         elif ptype == P_POST_GAME2:
@@ -725,7 +758,40 @@ class DP8RelayProtocol(asyncio.DatagramProtocol):
         pass
 
 
+# ── 전적/랭킹 HTTP 제공 (클라이언트 런처가 조회) ──────────────
+HTTP_PORT = 11225
+
+class _HistoryHandler(BaseHTTPRequestHandler):
+    def _json(self, obj):
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path.startswith("/ranking"):
+            self._json(compute_ranking())
+        else:  # /matches.json, /matches, /
+            self._json(_load_matches())
+
+    def log_message(self, *a):
+        pass  # quiet
+
+def start_history_http():
+    try:
+        httpd = ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), _HistoryHandler)
+    except OSError as e:
+        log.warning(f"전적 HTTP 서버 시작 실패(포트 {HTTP_PORT}): {e}")
+        return
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    log.info(f"전적/랭킹 HTTP on http://0.0.0.0:{HTTP_PORT}/matches.json")
+
+
 async def main():
+    start_history_http()
     print("=" * 60)
     print("  RhakMu Private Server")
     print(f"  Listening on TCP {HOST}:{PORT}")
