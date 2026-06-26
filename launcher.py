@@ -25,7 +25,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.2"
+APP_VERSION = "0.3"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 DEFAULT_DOMAINS = [
@@ -363,6 +363,39 @@ class HostsManager:
             f.write(content)
 
     @staticmethod
+    def has_domain(domain):
+        try:
+            with open(HOSTS_PATH, "r", encoding="utf-8") as f:
+                for line in f:
+                    s = line.strip()
+                    if s.startswith("#") or not s:
+                        continue
+                    if domain in s.split()[1:]:
+                        return True
+        except OSError:
+            pass
+        return False
+
+    @staticmethod
+    def ensure_domains(ip, domains):
+        """hosts에 없는 도메인만 ip로 추가한다. 이미 있는 항목(사용자가 지정한 IP)은 건드리지 않음.
+        실제로 추가한 도메인 목록을 반환."""
+        missing = [d for d in domains if not HostsManager.has_domain(d)]
+        if not missing:
+            return []
+        try:
+            with open(HOSTS_PATH, "r", encoding="utf-8") as f:
+                content = f.read()
+        except OSError:
+            content = ""
+        content = content.rstrip("\n") + "\n"
+        for d in missing:
+            content += f"{ip} {d}\n"
+        with open(HOSTS_PATH, "w", encoding="utf-8") as f:
+            f.write(content)
+        return missing
+
+    @staticmethod
     def open_hosts_file():
         subprocess.Popen(["notepad.exe", HOSTS_PATH])
 
@@ -677,6 +710,23 @@ class App(tk.Tk):
             messagebox.showerror("오류",
                 f"{GAME_EXE}를 찾을 수 없습니다.\n({exe})\n\n설정 탭에서 게임 경로를 확인하세요.")
             return
+
+        # 게임 실행 전 hosts에 접속 도메인이 없으면 추가 (있으면 기존 IP 유지)
+        try:
+            self._sync_domains()
+            ip = self.ip_var.get().strip() or DEFAULT_IP
+            added = HostsManager.ensure_domains(ip, self.domains)
+            if added:
+                messagebox.showinfo("호스트 자동 설정",
+                    "hosts에 접속 도메인을 추가했습니다:\n\n"
+                    + "\n".join(f"{ip}  {d}" for d in added))
+        except PermissionError:
+            messagebox.showwarning("권한 오류",
+                "hosts 파일 수정에 관리자 권한이 필요합니다.\n"
+                "런처를 관리자 권한으로 실행하면 자동 추가됩니다.")
+        except OSError:
+            pass
+
         try:
             subprocess.Popen([exe], cwd=game_dir)
         except OSError as e:
