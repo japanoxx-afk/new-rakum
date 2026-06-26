@@ -25,7 +25,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.6"
+APP_VERSION = "0.7"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 DEFAULT_DOMAINS = [
@@ -128,14 +128,15 @@ def check_for_update():
             data = json.loads(resp.read())
         latest = data.get("launcher_version", APP_VERSION)
         url = data.get("launcher_url", "")
+        size = int(data.get("launcher_size", 0))
         if latest > APP_VERSION:
-            return latest, url
+            return latest, url, size
     except Exception:
         pass
-    return None, None
+    return None, None, 0
 
 
-def do_self_update(download_url):
+def do_self_update(download_url, expected_size=0):
     import urllib.request
     if not getattr(sys, "frozen", False):
         return False, "개발 모드에서는 자동 업데이트를 사용할 수 없습니다."
@@ -146,7 +147,30 @@ def do_self_update(download_url):
     try:
         urllib.request.urlretrieve(download_url, new_exe)
     except Exception as e:
+        try:
+            if os.path.exists(new_exe): os.remove(new_exe)
+        except OSError:
+            pass
         return False, f"다운로드 실패:\n{e}"
+
+    # 다운로드 무결성 검증: 깨진 파일로 교체해 런처가 망가지는 것을 방지.
+    # (검증 실패 시 기존 버전을 그대로 유지)
+    try:
+        sz = os.path.getsize(new_exe)
+        with open(new_exe, "rb") as f:
+            head = f.read(2)
+    except OSError as e:
+        return False, f"다운로드 확인 실패:\n{e}"
+    if head != b"MZ" or (expected_size and sz < expected_size):
+        try:
+            os.remove(new_exe)
+        except OSError:
+            pass
+        return False, (
+            f"다운로드가 손상되어 업데이트를 취소했습니다 (받은 크기 {sz:,} / 기대 {expected_size:,}).\n"
+            "현재 버전은 그대로 사용 가능합니다. 잠시 후 다시 시도하거나 수동 다운로드:\n"
+            "https://github.com/japanoxx-afk/new-rakum"
+        )
 
     bat_path = current_exe + ".update.bat"
     bat_content = (
@@ -921,7 +945,7 @@ if __name__ == "__main__":
     else:
         run_as_admin()
 
-        latest, url = check_for_update()
+        latest, url, size = check_for_update()
         if latest and url:
             _root = tk.Tk()
             _root.withdraw()
@@ -929,7 +953,7 @@ if __name__ == "__main__":
                 f"새 버전이 있습니다!\n\n현재: v{APP_VERSION}  →  최신: v{latest}\n\n지금 업데이트하시겠습니까?")
             _root.destroy()
             if do_update:
-                ok, err = do_self_update(url)
+                ok, err = do_self_update(url, size)
                 if ok:
                     sys.exit()
                 else:
