@@ -25,7 +25,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.3"
+APP_VERSION = "0.4"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 DEFAULT_DOMAINS = [
@@ -270,6 +270,81 @@ class LatencyPatch:
 
 
 # ═══════════════════════════════════════════════════════
+#  종료 크래시 방지 (CScenChannel/Guild/Ranking 소멸자)
+# ═══════════════════════════════════════════════════════
+
+class StabilityPatch:
+    """게임/로비에서 '나가기'·종료 시 CScenChannel/Guild/Ranking 의 scalar-deleting
+    소멸자가 operator delete 로 작은블록 힙을 손상시켜 크래시한다(__sbh_free_block).
+    그 operator delete 호출(12바이트)을 NOP 으로 건너뛰면 크래시가 사라진다(메모리는
+    소량 누수). 클라이언트 1.000d 기준 오프셋 + 바이트 시그니처 검증, 멱등, 백업 자동."""
+
+    # Channel/Guild/Ranking 의 'mov ecx,[ebp-4]; push ecx; call operator delete; add esp,4' 블록
+    SITES = [0x0001E94E, 0x0001F6CE, 0x0002234E]
+
+    def __init__(self, game_dir):
+        self.exe = os.path.join(game_dir, PATCH_EXE)
+
+    @property
+    def available(self):
+        return os.path.isfile(self.exe)
+
+    @staticmethod
+    def _is_block(data, o):
+        return (o + 12 <= len(data) and data[o] == 0x8B and data[o+1] == 0x4D
+                and data[o+2] == 0xFC and data[o+3] == 0x51 and data[o+4] == 0xE8
+                and data[o+9] == 0x83 and data[o+10] == 0xC4 and data[o+11] == 0x04)
+
+    @staticmethod
+    def _is_nop(data, o):
+        return o + 12 <= len(data) and all(data[o+k] == 0x90 for k in range(12))
+
+    def applied(self):
+        """모두 적용됨=True, 미적용=False, 확인불가=None."""
+        if not self.available:
+            return None
+        data = open(self.exe, "rb").read()
+        states = []
+        for o in self.SITES:
+            if self._is_nop(data, o):
+                states.append(True)
+            elif self._is_block(data, o):
+                states.append(False)
+            else:
+                return None  # 버전 불일치
+        return all(states)
+
+    def apply(self):
+        if not self.available:
+            return False, f"{PATCH_EXE}를 찾을 수 없습니다."
+        data = bytearray(open(self.exe, "rb").read())
+        todo = []
+        for o in self.SITES:
+            if self._is_nop(data, o):
+                continue
+            if not self._is_block(data, o):
+                return False, "대상 코드가 일치하지 않습니다 (1.000d가 아닐 수 있음)."
+            todo.append(o)
+        if not todo:
+            return True, "이미 적용됨."
+        import time
+        bak = self.exe + ".bak_scenguard_" + time.strftime("%Y%m%d_%H%M%S")
+        try:
+            with open(bak, "wb") as f:
+                f.write(data)
+            for o in todo:
+                for k in range(12):
+                    data[o+k] = 0x90
+            with open(self.exe, "wb") as f:
+                f.write(data)
+        except PermissionError:
+            return False, "관리자 권한이 필요합니다."
+        except OSError as e:
+            return False, str(e)
+        return True, f"종료 크래시 방지 적용 완료 ({len(todo)}곳)."
+
+
+# ═══════════════════════════════════════════════════════
 #  서버 / 호스트 / 디스플레이 매니저
 # ═══════════════════════════════════════════════════════
 
@@ -492,6 +567,7 @@ class App(tk.Tk):
         game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
         self.winmode = WindowModeManager(game_dir)
         self.latency = LatencyPatch(game_dir)
+        self.stability = StabilityPatch(game_dir)
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True, padx=8, pady=(8, 4))
@@ -507,6 +583,7 @@ class App(tk.Tk):
             command=self._on_launch_game,
         ).pack(anchor="center")
 
+        self._refresh_patch_status()
         self._update_status()
 
     # ── 서버 탭 ──
@@ -727,6 +804,15 @@ class App(tk.Tk):
         except OSError:
             pass
 
+        # 종료 크래시 방지 자동 적용 (미적용 상태일 때만)
+        try:
+            if self.stability.applied() is False:
+                ok, msg = self.stability.apply()
+                if ok:
+                    self._refresh_patch_status()
+        except Exception:
+            pass
+
         try:
             subprocess.Popen([exe], cwd=game_dir)
         except OSError as e:
@@ -760,6 +846,16 @@ class App(tk.Tk):
         ttk.Label(lat_frame,
                   text="1턴=가장 빠름(근거리/AI)  2턴=인터넷 권장  3턴=핑 높을 때  4턴=원래값\n"
                        "멀티는 함께하는 모든 PC가 같은 값이어야 합니다.  ※ 게임을 끈 상태에서 적용.",
+                  foreground="gray").pack(anchor="w", pady=(6, 0))
+
+        # ── 종료 크래시 방지 ──
+        stab_frame = ttk.LabelFrame(frame, text="종료 크래시 방지", padding=12)
+        stab_frame.pack(fill="x", pady=(0, 10))
+        self.stab_status_var = tk.StringVar()
+        ttk.Label(stab_frame, textvariable=self.stab_status_var).pack(anchor="w", pady=(0, 6))
+        ttk.Button(stab_frame, text="지금 적용", command=self._on_stability, width=12).pack(side="left")
+        ttk.Label(stab_frame,
+                  text="로비/게임 '나가기' 시 튕기는 현상을 막습니다. (게임 실행 시 자동 적용)",
                   foreground="gray").pack(anchor="w", pady=(6, 0))
 
         # ── 창모드 ──
@@ -798,6 +894,21 @@ class App(tk.Tk):
             ttk.Label(frame, text="※ ddraw.ini를 찾을 수 없습니다. 게임 경로를 확인하세요.",
                       foreground="red").pack(anchor="w", pady=(8, 0))
 
+    def _refresh_patch_status(self):
+        cur = self.latency.current()
+        self.lat_status_var.set(f"현재 지연: {cur}턴" if cur is not None else "현재 지연: (확인 불가)")
+        st = self.stability.applied()
+        self.stab_status_var.set(
+            "상태: 적용됨 ●" if st else ("상태: 미적용 ○" if st is False else "상태: 확인 불가"))
+
+    def _on_stability(self):
+        ok, msg = self.stability.apply()
+        if ok:
+            self._refresh_patch_status()
+            messagebox.showinfo("종료 크래시 방지", msg)
+        else:
+            messagebox.showerror("종료 크래시 방지", msg)
+
     def _on_browse_game(self):
         from tkinter import filedialog
         d = filedialog.askdirectory(title="라크무 설치 폴더 선택", initialdir=self.gamedir_var.get())
@@ -805,10 +916,10 @@ class App(tk.Tk):
             self.gamedir_var.set(d)
             self.winmode.game_dir = d
             self.latency = LatencyPatch(d)
+            self.stability = StabilityPatch(d)
             self.cfg["game_dir"] = d
             save_config(self.base_dir, self.cfg)
-            cur = self.latency.current()
-            self.lat_status_var.set(f"현재 지연: {cur}턴" if cur is not None else "현재 지연: (확인 불가)")
+            self._refresh_patch_status()
 
     def _on_latency(self, value):
         if self.latency.current() is None and not self.latency.available:
