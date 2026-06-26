@@ -28,10 +28,13 @@ Confirmed protocol flow (from packet captures):
 """
 
 import asyncio
+import json
 import logging
+import os
 import socket
 import struct
 import sys
+import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -89,6 +92,45 @@ P_POST_GAME2    = 0x27FF
 P_CRASH         = 0xFEFE
 
 MAX_PACKET      = 8192
+
+
+# ── 전적 기록 (matches.json) ──────────────────────────────
+MATCH_LOG = "matches.json"
+
+def _load_matches() -> list:
+    try:
+        with open(MATCH_LOG, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return []
+
+def _save_matches(matches: list) -> None:
+    try:
+        with open(MATCH_LOG, "w", encoding="utf-8") as f:
+            json.dump(matches[-500:], f, ensure_ascii=False, indent=1)
+    except OSError:
+        pass
+
+def record_match_start(map_name: str, players: list, room_title: str) -> None:
+    """게임 시작 시 [시간·맵·플레이어]를 기록."""
+    matches = _load_matches()
+    matches.append({
+        "time": _time.strftime("%Y-%m-%d %H:%M:%S"),
+        "map": map_name,
+        "players": list(players),
+        "room": room_title,
+        "results": {},   # {account: "win"/"lose"/raw} — post-game에서 채움
+    })
+    _save_matches(matches)
+
+def record_match_result(account: str, result: str) -> None:
+    """post-game 시 해당 플레이어의 승/패를 가장 최근 매치에 기록."""
+    matches = _load_matches()
+    for rec in reversed(matches):
+        if account in rec.get("players", []) and account not in rec.get("results", {}):
+            rec.setdefault("results", {})[account] = result
+            _save_matches(matches)
+            return
 
 
 def pack_pkt(ptype: int, payload: bytes = b"") -> bytes:
@@ -405,6 +447,12 @@ class ClientSession:
             await self._handle_chat(payload)
 
         elif ptype == P_POST_GAME:
+            # post-game 패킷: 승/패 추정값 캡처 (형식 분석용 hex 로깅 포함)
+            log.info(f"  Post-game 0x24FF from {self.account!r}: {payload.hex()}")
+            if self.account:
+                # 휴리스틱: payload 첫 바이트가 0이 아니면 승, 0이면 패 (실측으로 보정 예정)
+                result = "win" if (payload and payload[0] != 0) else "lose"
+                record_match_result(self.account, f"{result}({payload.hex()})")
             self.send(P_POST_GAME_ACK, bytes([2, 0]))
 
         elif ptype == P_POST_GAME2:
@@ -576,6 +624,13 @@ class ClientSession:
             return
 
         log.info(f"Game start: {self.peer} account={self.account!r} room={self.room_title!r} payload={payload.hex()}")
+
+        # 전적 기록: 방장이 시작할 때 한 번만 (시간·맵·플레이어)
+        room = STATE.find_room_by_title(self.room_title)
+        if room and self.account == room.owner:
+            players = [room.owner] + list(room.members)
+            record_match_start(room.map_name, players, room.title)
+            log.info(f"  Match recorded: map={room.map_name!r} players={players}")
 
         all_in_room = STATE.clients_in_room(self.room_title)
 

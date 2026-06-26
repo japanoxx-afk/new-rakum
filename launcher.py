@@ -25,7 +25,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.5"
+APP_VERSION = "0.6"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 DEFAULT_DOMAINS = [
@@ -498,6 +498,7 @@ class App(tk.Tk):
 
         self._build_server_tab(notebook)
         self._build_client_tab(notebook)
+        self._build_history_tab(notebook)
         self._build_settings_tab(notebook)
 
         launch_frame = ttk.Frame(self)
@@ -732,6 +733,63 @@ class App(tk.Tk):
             subprocess.Popen([exe], cwd=game_dir)
         except OSError as e:
             messagebox.showerror("실행 오류", str(e))
+
+    # ── 전적 탭 ──
+    def _build_history_tab(self, notebook):
+        frame = ttk.Frame(notebook, padding=12)
+        notebook.add(frame, text="  전적  ")
+
+        ttk.Label(frame, text="대전 기록", font=("맑은 고딕", 12, "bold")).pack(anchor="w", pady=(0, 6))
+        ttk.Label(frame, text="서버가 게임 시작 시 자동 기록합니다 (서버를 켜둔 PC 기준).",
+                  foreground="gray").pack(anchor="w", pady=(0, 8))
+
+        cols = ("time", "map", "players", "result")
+        tree = ttk.Treeview(frame, columns=cols, show="headings", height=12)
+        tree.heading("time", text="시간")
+        tree.heading("map", text="맵")
+        tree.heading("players", text="플레이어")
+        tree.heading("result", text="결과")
+        tree.column("time", width=130, anchor="w")
+        tree.column("map", width=120, anchor="w")
+        tree.column("players", width=140, anchor="w")
+        tree.column("result", width=110, anchor="w")
+        vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="left", fill="y")
+        self.history_tree = tree
+
+        btnbar = ttk.Frame(frame)
+        btnbar.pack(side="left", fill="y", padx=(8, 0))
+        ttk.Button(btnbar, text="새로고침", command=self._refresh_history, width=10).pack(pady=(0, 4))
+
+        self._refresh_history()
+
+    def _match_log_path(self):
+        return os.path.join(self.base_dir, "matches.json")
+
+    def _refresh_history(self):
+        tree = getattr(self, "history_tree", None)
+        if tree is None:
+            return
+        for it in tree.get_children():
+            tree.delete(it)
+        try:
+            with open(self._match_log_path(), "r", encoding="utf-8") as f:
+                matches = json.load(f)
+        except (OSError, ValueError):
+            matches = []
+        for rec in reversed(matches):  # 최신순
+            players = ", ".join(rec.get("players", []))
+            results = rec.get("results", {})
+            if results:
+                rtxt = ", ".join(f"{a}:{'승' if str(v).startswith('win') else '패'}"
+                                 for a, v in results.items())
+            else:
+                rtxt = "-"
+            mp = rec.get("map", "")
+            mp = mp.replace("Data\\Maps\\", "").replace(".rkm", "")
+            tree.insert("", "end", values=(rec.get("time", ""), mp, players, rtxt))
 
     # ── 설정 탭 ──
     def _build_settings_tab(self, notebook):
