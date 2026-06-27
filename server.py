@@ -48,6 +48,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("rhakmu")
 
+SERVER_VERSION = "0.9001"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -79,6 +80,7 @@ P_JOIN_ROOM     = 0x10FF
 P_LEAVE_ROOM    = 0x11FF
 P_CHAT          = 0x12FF
 P_CHAT_REPLY    = 0x13FF
+P_RANK_SEARCH   = 0x14FF
 P_RANK_LIST     = 0x15FF
 P_RANK_ACK1     = 0x16FF
 P_RANK_ACK2     = 0x17FF
@@ -447,7 +449,10 @@ class ClientSession:
         elif ptype == P_CHAN_SEL:
             self.send(P_CHAN_SEL, struct.pack("<I", 0))
 
-        elif ptype == P_RANK_LIST:
+        elif ptype == P_RANK_LIST or ptype == P_RANK_SEARCH:
+            # 랭킹 목록(0x15FF) / 검색(0x14FF): 빈 결과로 응답해 '요청중' 멈춤 해제.
+            # (실제 엔트리 채우기는 클라 파서 형식 확인 후 구현 예정)
+            log.info(f"  Rank query 0x{ptype:04X} payload={payload.hex()} -> empty ack")
             self.send(P_RANK_ACK1, b"")
             self.send(P_RANK_ACK2, b"")
 
@@ -773,6 +778,8 @@ class _HistoryHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/ranking"):
             self._json(compute_ranking())
+        elif self.path.startswith("/version"):
+            self._json({"server_version": SERVER_VERSION})
         else:  # /matches.json, /matches, /
             self._json(_load_matches())
 

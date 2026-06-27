@@ -25,7 +25,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9"
+APP_VERSION = "0.9001"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 DEFAULT_DOMAINS = [
@@ -88,6 +88,20 @@ def run_as_admin():
         args = f'"{os.path.abspath(__file__)}"'
     ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, args, None, 1)
     sys.exit()
+
+
+def get_server_version():
+    """실행할 server.py에서 SERVER_VERSION 을 읽어 표시용으로 반환."""
+    for p in (os.path.join(get_base_dir(), SERVER_SCRIPT),
+              os.path.join(get_resource_dir(), SERVER_SCRIPT)):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                m = re.search(r'SERVER_VERSION\s*=\s*"([^"]+)"', f.read())
+                if m:
+                    return m.group(1)
+        except OSError:
+            continue
+    return "?"
 
 
 def find_python():
@@ -541,8 +555,10 @@ class App(tk.Tk):
         notebook.add(frame, text="  호스트 (서버)  ")
 
         ttk.Label(frame, text="라크무 서버 관리", font=("맑은 고딕", 12, "bold")).pack(
-            anchor="w", pady=(0, 12)
+            anchor="w", pady=(0, 4)
         )
+        ttk.Label(frame, text=f"런처 v{APP_VERSION}   |   서버 v{get_server_version()}",
+                  foreground="gray").pack(anchor="w", pady=(0, 10))
 
         self.status_var = tk.StringVar(value="서버 상태: 꺼짐")
         ttk.Label(frame, textvariable=self.status_var, font=("맑은 고딕", 10)).pack(
