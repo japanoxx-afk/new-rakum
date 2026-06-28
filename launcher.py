@@ -25,13 +25,13 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9001"
+APP_VERSION = "0.9002"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
-DEFAULT_DOMAINS = [
-    "rhakmugame.hangame.naver.com",
-]
+GAME_HOST = "rhakmugame.hangame.naver.com"
+DEFAULT_DOMAINS = [GAME_HOST]
 DEFAULT_IP = "127.0.0.1"
+SERVER_PORT = 11223   # 서버 실행 여부 확인용 (로비 TCP)
 SERVER_LOOPBACK = "127.0.0.1"
 HOSTS_PATH = r"C:\Windows\System32\drivers\etc\hosts"
 CONFIG_FILE = "launcher_config.json"
@@ -88,6 +88,15 @@ def run_as_admin():
         args = f'"{os.path.abspath(__file__)}"'
     ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, args, None, 1)
     sys.exit()
+
+
+def is_server_running(host="127.0.0.1", port=SERVER_PORT, timeout=0.6):
+    """로컬에 라크무 서버가 떠 있는지(로비 TCP 포트 응답) 확인."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def get_server_version():
@@ -434,6 +443,19 @@ class HostsManager:
         return missing
 
     @staticmethod
+    def set_game_host(ip):
+        """rhakmugame.hangame.naver.com 한 줄만 ip로 설정/추가. 다른 줄은 절대 건드리지 않음."""
+        HostsManager.apply_ip(ip, [GAME_HOST])
+
+    @staticmethod
+    def read_raw():
+        try:
+            with open(HOSTS_PATH, "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError as e:
+            return f"(hosts 파일을 읽을 수 없습니다: {e})"
+
+    @staticmethod
     def open_hosts_file():
         subprocess.Popen(["notepad.exe", HOSTS_PATH])
 
@@ -542,9 +564,11 @@ class App(tk.Tk):
         launch_frame = ttk.Frame(self)
         launch_frame.pack(fill="x", padx=8, pady=(0, 10))
         ttk.Button(
-            launch_frame, text="게임 실행 (Launcher.exe)",
-            command=self._on_launch_game,
-        ).pack(anchor="center")
+            launch_frame, text="🎮 싱글플레이", command=self._on_single_play, width=18,
+        ).pack(side="left", expand=True, padx=4)
+        ttk.Button(
+            launch_frame, text="🌐 멀티플레이", command=self._on_multi_play, width=18,
+        ).pack(side="left", expand=True, padx=4)
 
         self._refresh_patch_status()
         self._update_status()
@@ -647,132 +671,111 @@ class App(tk.Tk):
         frame = ttk.Frame(notebook, padding=16)
         notebook.add(frame, text="  클라 (접속)  ")
 
-        ttk.Label(frame, text="접속 서버 설정", font=("맑은 고딕", 12, "bold")).pack(anchor="w", pady=(0, 8))
+        ttk.Label(frame, text="접속 정보 (hosts)", font=("맑은 고딕", 12, "bold")).pack(anchor="w", pady=(0, 4))
+        self.cur_ip_var = tk.StringVar()
+        ttk.Label(frame, textvariable=self.cur_ip_var, foreground="gray").pack(anchor="w", pady=(0, 8))
 
-        ip_frame = ttk.LabelFrame(frame, text="서버 IP (hosts 우회)", padding=10)
-        ip_frame.pack(fill="x", pady=(0, 8))
-        ip_row = ttk.Frame(ip_frame)
-        ip_row.pack(fill="x")
-        ttk.Label(ip_row, text="서버 IP:").pack(side="left")
-        current_ip = HostsManager.read_current_ip(self.domains)
-        self.ip_var = tk.StringVar(value=current_ip)
-        ttk.Entry(ip_row, textvariable=self.ip_var, width=22).pack(side="left", padx=(6, 8))
-        ttk.Button(ip_row, text="IP 적용", command=self._on_apply_ip, width=10).pack(side="left")
-        ttk.Label(ip_frame, text="로컬 서버는 127.0.0.1, 친구 서버는 그 PC의 IP를 입력",
-                  foreground="gray").pack(anchor="w", pady=(6, 0))
+        box = ttk.LabelFrame(frame, text="현재 hosts 파일 내용", padding=8)
+        box.pack(fill="both", expand=True, pady=(0, 8))
+        cont = ttk.Frame(box)
+        cont.pack(fill="both", expand=True)
+        sb = ttk.Scrollbar(cont, orient="vertical")
+        sb.pack(side="right", fill="y")
+        self.hosts_text = tk.Text(cont, height=9, font=("Consolas", 9), wrap="none",
+                                  yscrollcommand=sb.set)
+        self.hosts_text.pack(fill="both", expand=True)
+        sb.config(command=self.hosts_text.yview)
 
-        domain_frame = ttk.LabelFrame(frame, text="매핑 도메인 (편집 가능)", padding=8)
-        domain_frame.pack(fill="both", expand=True, pady=(0, 8))
-        list_container = ttk.Frame(domain_frame)
-        list_container.pack(fill="both", expand=True)
-        scrollbar = ttk.Scrollbar(list_container, orient="vertical")
-        scrollbar.pack(side="right", fill="y")
-        self.domain_listbox = tk.Listbox(list_container, height=4, font=("Consolas", 10),
-                                         yscrollcommand=scrollbar.set)
-        self.domain_listbox.pack(fill="both", expand=True)
-        scrollbar.config(command=self.domain_listbox.yview)
-        for d in self.domains:
-            self.domain_listbox.insert(tk.END, d)
-        domain_btn_frame = ttk.Frame(domain_frame)
-        domain_btn_frame.pack(fill="x", pady=(6, 0))
-        ttk.Button(domain_btn_frame, text="추가", command=self._on_add_domain, width=8).pack(side="left", padx=(0, 4))
-        ttk.Button(domain_btn_frame, text="삭제", command=self._on_remove_domain, width=8).pack(side="left", padx=(0, 4))
-        ttk.Button(domain_btn_frame, text="기본값 복원", command=self._on_reset_domains, width=12).pack(side="left")
+        btns = ttk.Frame(frame)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="새로고침", command=self._refresh_hosts_view, width=10).pack(side="left", padx=(0, 4))
+        ttk.Button(btns, text="호스트 파일 열기", command=self._on_open_hosts).pack(side="left")
+        ttk.Label(frame,
+                  text="※ 접속 주소는 아래 '싱글/멀티플레이' 버튼이 자동 설정합니다.\n"
+                       "   rhakmugame.hangame.naver.com 줄만 바뀌고 나머지는 보존됩니다.",
+                  foreground="gray").pack(anchor="w", pady=(8, 0))
 
-        ttk.Button(frame, text="호스트 파일 열기", command=self._on_open_hosts).pack(anchor="w")
+        self._refresh_hosts_view()
 
-    def _sync_domains(self):
-        self.domains = list(self.domain_listbox.get(0, tk.END))
-        self.cfg["domains"] = self.domains
-        save_config(self.base_dir, self.cfg)
-
-    def _on_add_domain(self):
-        dlg = tk.Toplevel(self)
-        dlg.title("도메인 추가")
-        dlg.geometry("360x100")
-        dlg.resizable(False, False)
-        dlg.transient(self)
-        dlg.grab_set()
-        ttk.Label(dlg, text="도메인 주소:").pack(anchor="w", padx=12, pady=(12, 4))
-        var = tk.StringVar()
-        entry = ttk.Entry(dlg, textvariable=var, width=44)
-        entry.pack(padx=12)
-        entry.focus_set()
-
-        def confirm(event=None):
-            val = var.get().strip()
-            if val:
-                self.domain_listbox.insert(tk.END, val)
-                self._sync_domains()
-            dlg.destroy()
-
-        entry.bind("<Return>", confirm)
-        ttk.Button(dlg, text="추가", command=confirm).pack(pady=8)
-
-    def _on_remove_domain(self):
-        sel = self.domain_listbox.curselection()
-        if not sel:
-            messagebox.showinfo("알림", "삭제할 도메인을 선택하세요.")
+    def _refresh_hosts_view(self):
+        if not hasattr(self, "hosts_text"):
             return
-        self.domain_listbox.delete(sel[0])
-        self._sync_domains()
-
-    def _on_reset_domains(self):
-        self.domain_listbox.delete(0, tk.END)
-        for d in DEFAULT_DOMAINS:
-            self.domain_listbox.insert(tk.END, d)
-        self._sync_domains()
-
-    def _on_apply_ip(self):
-        ip = self.ip_var.get().strip()
-        if not ip:
-            messagebox.showwarning("입력 오류", "IP 주소를 입력하세요.")
-            return
-        self._sync_domains()
-        if not self.domains:
-            messagebox.showwarning("입력 오류", "도메인 목록이 비어 있습니다.")
-            return
-        try:
-            HostsManager.apply_ip(ip, self.domains)
-            messagebox.showinfo("완료", "호스트 파일이 업데이트되었습니다.\n\n"
-                                + "\n".join(f"{ip}  {d}" for d in self.domains))
-        except PermissionError:
-            messagebox.showerror("권한 오류",
-                "호스트 파일 수정에 관리자 권한이 필요합니다.\n런처를 관리자 권한으로 실행해 주세요.")
-        except OSError as e:
-            messagebox.showerror("오류", str(e))
+        self.hosts_text.config(state="normal")
+        self.hosts_text.delete("1.0", tk.END)
+        self.hosts_text.insert("1.0", HostsManager.read_raw())
+        self.hosts_text.config(state="disabled")
+        ip = HostsManager.read_current_ip([GAME_HOST])
+        self.cur_ip_var.set(f"{GAME_HOST}  →  {ip}")
 
     def _on_open_hosts(self):
         HostsManager.open_hosts_file()
 
-    def _on_launch_game(self):
+    def _set_host_and_launch(self, ip):
+        """rhakmugame 호스트를 ip로 설정(다른 줄 보존) 후 게임 실행."""
         game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
         exe = os.path.join(game_dir, GAME_EXE)
         if not os.path.isfile(exe):
             messagebox.showerror("오류",
                 f"{GAME_EXE}를 찾을 수 없습니다.\n({exe})\n\n설정 탭에서 게임 경로를 확인하세요.")
             return
-
-        # 게임 실행 전 hosts에 접속 도메인이 없으면 추가 (있으면 기존 IP 유지)
         try:
-            self._sync_domains()
-            ip = self.ip_var.get().strip() or DEFAULT_IP
-            added = HostsManager.ensure_domains(ip, self.domains)
-            if added:
-                messagebox.showinfo("호스트 자동 설정",
-                    "hosts에 접속 도메인을 추가했습니다:\n\n"
-                    + "\n".join(f"{ip}  {d}" for d in added))
+            HostsManager.set_game_host(ip)
         except PermissionError:
             messagebox.showwarning("권한 오류",
-                "hosts 파일 수정에 관리자 권한이 필요합니다.\n"
-                "런처를 관리자 권한으로 실행하면 자동 추가됩니다.")
-        except OSError:
-            pass
-
+                "hosts 파일 수정에 관리자 권한이 필요합니다.\n런처를 관리자 권한으로 실행해 주세요.")
+            return
+        except OSError as e:
+            messagebox.showerror("오류", str(e))
+            return
+        if hasattr(self, "hosts_text"):
+            self._refresh_hosts_view()
         try:
             subprocess.Popen([exe], cwd=game_dir)
         except OSError as e:
             messagebox.showerror("실행 오류", str(e))
+
+    def _on_single_play(self):
+        # 싱글: 내 PC 서버(127.0.0.1)로 접속. 서버가 꺼져 있으면 자동으로 켠다.
+        if not is_server_running():
+            self.server.start()
+        self._set_host_and_launch("127.0.0.1")
+
+    def _on_multi_play(self):
+        # 멀티: 로컬 서버가 떠 있으면(=이 PC가 호스트) 127.0.0.1로 바로 실행.
+        if is_server_running():
+            self._set_host_and_launch("127.0.0.1")
+            return
+        # 서버가 없으면(=클라) 접속할 서버 IP를 입력받는다.
+        self._ask_server_ip_and_launch()
+
+    def _ask_server_ip_and_launch(self):
+        dlg = tk.Toplevel(self)
+        dlg.title("멀티플레이 접속")
+        dlg.geometry("360x140")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.grab_set()
+        ttk.Label(dlg, text="접속할 서버(호스트) IP를 입력하세요:").pack(anchor="w", padx=14, pady=(14, 4))
+        last = self.cfg.get("last_server_ip", HostsManager.read_current_ip([GAME_HOST]))
+        if last == "127.0.0.1":
+            last = ""
+        var = tk.StringVar(value=last)
+        entry = ttk.Entry(dlg, textvariable=var, width=30)
+        entry.pack(padx=14)
+        entry.focus_set()
+
+        def go(event=None):
+            ip = var.get().strip()
+            if not ip:
+                messagebox.showwarning("입력 오류", "서버 IP를 입력하세요.", parent=dlg)
+                return
+            self.cfg["last_server_ip"] = ip
+            save_config(self.base_dir, self.cfg)
+            dlg.destroy()
+            self._set_host_and_launch(ip)
+
+        entry.bind("<Return>", go)
+        ttk.Button(dlg, text="실행", command=go, width=12).pack(pady=12)
 
     # ── 전적 탭 ──
     def _build_history_tab(self, notebook):
@@ -807,11 +810,9 @@ class App(tk.Tk):
         self._refresh_history()
 
     def _server_ip(self):
-        try:
-            ip = self.ip_var.get().strip()
-        except Exception:
-            ip = ""
-        return ip or HostsManager.read_current_ip(self.domains) or DEFAULT_IP
+        # 전적/랭킹 조회용 서버 IP = 현재 hosts의 게임 호스트 IP (없으면 마지막 입력/기본)
+        return (HostsManager.read_current_ip([GAME_HOST])
+                or self.cfg.get("last_server_ip", "") or DEFAULT_IP)
 
     def _fetch_json(self, path):
         """서버 HTTP(11225)에서 전적/랭킹을 받아온다. 실패 시 로컬 파일 폴백."""
