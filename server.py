@@ -48,7 +48,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("rhakmu")
 
-SERVER_VERSION = "0.9002"
+SERVER_VERSION = "0.9003"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port

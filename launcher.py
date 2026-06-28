@@ -25,7 +25,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9002"
+APP_VERSION = "0.9003"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -43,6 +43,11 @@ DEFAULT_GAME_DIR = r"C:\Program Files (x86)\TriggerSoft\RhakMu"
 GAME_EXE = "Launcher.exe"   # 라크무는 Launcher.exe -> Rhakmu.exe 구조
 PATCH_EXE = "Rhakmu.exe"    # 레이턴시 패치 대상
 DDRAW_INI = "ddraw.ini"
+# 게임 버전은 런타임 글로벌로 계산돼 정적으로 못 읽으므로 Rhakmu.exe 크기로 식별
+GAME_VERSIONS = {
+    1069098: "1.000d",
+    1065002: "1.000a",
+}
 RESOLUTIONS = [
     "640x480", "800x600", "1024x768", "1280x720", "1280x960",
     "1600x900", "1920x1080", "2560x1440", "3440x1440", "3840x2160",
@@ -97,6 +102,16 @@ def is_server_running(host="127.0.0.1", port=SERVER_PORT, timeout=0.6):
             return True
     except OSError:
         return False
+
+
+def get_game_version(game_dir):
+    """Rhakmu.exe 크기로 게임 버전 식별."""
+    exe = os.path.join(game_dir, PATCH_EXE)
+    try:
+        sz = os.path.getsize(exe)
+    except OSError:
+        return "게임 없음"
+    return GAME_VERSIONS.get(sz, f"미확인({sz:,}B)")
 
 
 def get_server_version():
@@ -561,6 +576,10 @@ class App(tk.Tk):
         self._build_history_tab(notebook)
         self._build_settings_tab(notebook)
 
+        self.info_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.info_var, anchor="center",
+                  font=("맑은 고딕", 9, "bold")).pack(fill="x", padx=8, pady=(0, 2))
+
         launch_frame = ttk.Frame(self)
         launch_frame.pack(fill="x", padx=8, pady=(0, 10))
         ttk.Button(
@@ -569,6 +588,8 @@ class App(tk.Tk):
         ttk.Button(
             launch_frame, text="🌐 멀티플레이", command=self._on_multi_play, width=18,
         ).pack(side="left", expand=True, padx=4)
+
+        self._refresh_info_bar()
 
         self._refresh_patch_status()
         self._update_status()
@@ -751,9 +772,13 @@ class App(tk.Tk):
     def _ask_server_ip_and_launch(self):
         dlg = tk.Toplevel(self)
         dlg.title("멀티플레이 접속")
-        dlg.geometry("360x140")
         dlg.resizable(False, False)
         dlg.transient(self)
+        # 런처 창 근처(중앙)에 띄운다
+        self.update_idletasks()
+        px, py = self.winfo_rootx(), self.winfo_rooty()
+        pw = self.winfo_width()
+        dlg.geometry(f"360x140+{px + max(0,(pw-360)//2)}+{py + 100}")
         dlg.grab_set()
         ttk.Label(dlg, text="접속할 서버(호스트) IP를 입력하세요:").pack(anchor="w", padx=14, pady=(14, 4))
         last = self.cfg.get("last_server_ip", HostsManager.read_current_ip([GAME_HOST]))
@@ -939,6 +964,17 @@ class App(tk.Tk):
     def _refresh_patch_status(self):
         cur = self.latency.current()
         self.lat_status_var.set(f"현재 지연: {cur}턴" if cur is not None else "현재 지연: (확인 불가)")
+        self._refresh_info_bar()
+
+    def _refresh_info_bar(self):
+        if not hasattr(self, "info_var"):
+            return
+        game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
+        gv = get_game_version(game_dir)
+        lat = self.latency.current()
+        latmap = {1: "매우 빠름", 2: "빠름", 3: "보통", 4: "기본"}
+        latstr = f"{lat}턴 · {latmap.get(lat, '?')}" if lat is not None else "확인 불가"
+        self.info_var.set(f"게임 버전: {gv}     |     반응속도: {latstr}")
 
     def _on_browse_game(self):
         from tkinter import filedialog
@@ -957,8 +993,7 @@ class App(tk.Tk):
             return
         ok, msg = self.latency.apply(value)
         if ok:
-            cur = self.latency.current()
-            self.lat_status_var.set(f"현재 지연: {cur}턴" if cur is not None else "현재 지연: (확인 불가)")
+            self._refresh_patch_status()
             messagebox.showinfo("반응속도", msg + "\n\n게임을 실행해 확인하세요.")
         else:
             messagebox.showerror("반응속도", msg)
