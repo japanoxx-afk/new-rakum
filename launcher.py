@@ -25,7 +25,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9003"
+APP_VERSION = "0.9004"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -621,7 +621,8 @@ class App(tk.Tk):
 
         update_frame = ttk.Frame(frame)
         update_frame.pack(fill="x", pady=(12, 0))
-        ttk.Button(update_frame, text="서버 업데이트 (GitHub)", command=self._on_update, width=24).pack(side="left")
+        ttk.Button(update_frame, text="서버 업데이트 (GitHub)", command=self._on_update, width=20).pack(side="left")
+        ttk.Button(update_frame, text="런처 업데이트 확인", command=self._on_check_launcher_update, width=16).pack(side="left", padx=(6, 0))
         self.update_status_var = tk.StringVar()
         ttk.Label(update_frame, textvariable=self.update_status_var, foreground="gray").pack(side="left", padx=(8, 0))
 
@@ -677,6 +678,38 @@ class App(tk.Tk):
         except OSError as e:
             self.update_status_var.set("실패")
             messagebox.showerror("업데이트 실패", f"파일 저장 오류:\n{e}")
+
+    def _on_check_launcher_update(self):
+        import urllib.request
+        self.update_status_var.set("버전 확인 중...")
+        self.update()
+        try:
+            with urllib.request.urlopen(VERSION_CHECK_URL, timeout=6) as r:
+                data = json.loads(r.read())
+        except Exception as e:
+            self.update_status_var.set("확인 실패")
+            messagebox.showerror("런처 업데이트", f"버전 정보를 가져오지 못했습니다.\n{e}")
+            return
+        latest = str(data.get("launcher_version", ""))
+        url = data.get("launcher_url", "")
+        size = int(data.get("launcher_size", 0))
+        self.update_status_var.set("")
+        if not latest:
+            messagebox.showinfo("런처 업데이트", "버전 정보를 읽을 수 없습니다.")
+            return
+        if latest <= APP_VERSION:
+            messagebox.showinfo("런처 업데이트", f"이미 최신 버전입니다.\n현재 v{APP_VERSION}")
+            return
+        if not messagebox.askyesno("새 버전 있음",
+                f"새 런처 버전이 있습니다.\n\n현재  v{APP_VERSION}\n최신  v{latest}\n\n지금 업데이트하시겠습니까?"):
+            return
+        ok, err = do_self_update(url, size)
+        if ok:
+            messagebox.showinfo("런처 업데이트", "다운로드 완료. 런처를 재시작합니다.")
+            self.destroy()
+            sys.exit()
+        else:
+            messagebox.showerror("런처 업데이트 실패", err)
 
     def _update_status(self):
         if self.server.running:
