@@ -56,7 +56,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9005"
+SERVER_VERSION = "0.9006"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -748,13 +748,21 @@ class DP8RelayProtocol(asyncio.DatagramProtocol):
             (c for c in self._state.clients if c.peer_ip == src_ip), None
         )
         if client is None:
-            # 라드민에서 흔한 실패: UDP 출발IP != 로비 TCP 접속IP → 여기서 막힘.
+            # 라드민에서 흔한 실패: UDP 출발IP != 로비 TCP 접속IP.
+            # 예전엔 여기서 버려서 발견 실패 → 이제 접속한 다른 모든 피어로 폴백 릴레이.
+            targets = [c for c in self._state.clients
+                       if c.peer_ip not in (src_ip, "127.0.0.1", "::1")]
             key = ("nomatch", src_ip)
             if key not in self._seen:
                 self._seen.add(key)
                 peers = [c.peer_ip for c in self._state.clients]
-                log.info(f"DP8: UDP {src_ip}:{src_port} 수신했으나 이 IP로 접속한 TCP 세션 없음 "
-                         f"(접속IP들={peers}). 브로드캐스트 출발IP와 로비 접속IP가 달라 릴레이 불가.")
+                log.info(f"DP8: UDP {src_ip}:{src_port} 출발IP가 로비 접속IP와 불일치(접속IP들={peers}) "
+                         f"→ 전체 피어 {[c.peer_ip for c in targets]}로 폴백 릴레이")
+            for other in targets:
+                try:
+                    self._transport.sendto(data, (other.peer_ip, UDP_RELAY_PORT))
+                except Exception as e:
+                    log.warning(f"DP8 fallback relay error -> {other.peer_ip}: {e}")
             return
         if not client.room_title:
             key = ("noroom", src_ip)
