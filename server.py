@@ -48,7 +48,15 @@ logging.basicConfig(
 )
 log = logging.getLogger("rhakmu")
 
-SERVER_VERSION = "0.9004"
+# 서버 로그를 파일(server.log)로도 남긴다 — 진단 시 이 파일만 공유하면 됨.
+try:
+    _fh = logging.FileHandler("server.log", encoding="utf-8")
+    _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", "%Y-%m-%d %H:%M:%S"))
+    logging.getLogger().addHandler(_fh)
+except OSError:
+    pass
+
+SERVER_VERSION = "0.9005"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -724,6 +732,7 @@ class DP8RelayProtocol(asyncio.DatagramProtocol):
     def __init__(self, state: ServerState):
         self._state = state
         self._transport: Optional[asyncio.DatagramTransport] = None
+        self._seen: set = set()   # 진단 로그 중복 방지
 
     def connection_made(self, transport: asyncio.DatagramTransport):
         self._transport = transport
@@ -734,25 +743,44 @@ class DP8RelayProtocol(asyncio.DatagramProtocol):
     def datagram_received(self, data: bytes, addr: tuple):
         src_ip, src_port = addr
 
-        # Find room for this source IP
+        # 이 브로드캐스트 출발IP와 일치하는 TCP 접속 찾기
         client = next(
             (c for c in self._state.clients if c.peer_ip == src_ip), None
         )
-        if client is None or not client.room_title:
+        if client is None:
+            # 라드민에서 흔한 실패: UDP 출발IP != 로비 TCP 접속IP → 여기서 막힘.
+            key = ("nomatch", src_ip)
+            if key not in self._seen:
+                self._seen.add(key)
+                peers = [c.peer_ip for c in self._state.clients]
+                log.info(f"DP8: UDP {src_ip}:{src_port} 수신했으나 이 IP로 접속한 TCP 세션 없음 "
+                         f"(접속IP들={peers}). 브로드캐스트 출발IP와 로비 접속IP가 달라 릴레이 불가.")
+            return
+        if not client.room_title:
+            key = ("noroom", src_ip)
+            if key not in self._seen:
+                self._seen.add(key)
+                log.info(f"DP8: {src_ip}(account={client.account}) 브로드캐스트 수신했으나 방에 없음.")
             return
 
-        # Forward to every other room member as unicast
         others = [
             c for c in self._state.clients_in_room(client.room_title)
             if c.peer_ip != src_ip and c.peer_ip not in ("127.0.0.1", "::1")
         ]
+        if not others:
+            key = ("noother", src_ip, client.room_title)
+            if key not in self._seen:
+                self._seen.add(key)
+                log.info(f"DP8: {src_ip}({client.account}) room={client.room_title} 릴레이 대상 피어 없음.")
+            return
+
         for other in others:
             try:
                 self._transport.sendto(data, (other.peer_ip, UDP_RELAY_PORT))
-                log.debug(
-                    f"DP8 relay: {src_ip} -> {other.peer_ip}:{UDP_RELAY_PORT}"
-                    f" ({len(data)} bytes)"
-                )
+                key = ("relay", src_ip, other.peer_ip)
+                if key not in self._seen:
+                    self._seen.add(key)
+                    log.info(f"DP8 relay OK: {src_ip} -> {other.peer_ip}:{UDP_RELAY_PORT} (첫 릴레이, {len(data)}B)")
             except Exception as e:
                 log.warning(f"DP8 relay send error -> {other.peer_ip}: {e}")
 
