@@ -25,7 +25,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9006"
+APP_VERSION = "0.9007"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -93,6 +93,61 @@ def run_as_admin():
         args = f'"{os.path.abspath(__file__)}"'
     ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, args, None, 1)
     sys.exit()
+
+
+# ── 라드민(26.x) DP8 바인딩 우선순위 자동 적용 ──────────────
+# DirectPlay8은 P2P 세션에 "자기 로컬 IP"를 박아 상대에게 알린다. 하마치는 설치 시
+# 자기 어댑터 우선순위(interface metric)를 물리 랜보다 높게 잡지만, 라드민은 그렇지
+# 않아 DP8이 물리 랜(192.168.x)을 선택 → 상대가 라드민망 밖 IP로 접속 → 동기화 실패.
+# 라드민 어댑터의 metric을 1(최우선)로 낮춰 DP8이 26.x를 자기 IP로 쓰게 강제한다.
+def _run_ps(script):
+    """PowerShell 스크립트를 창 없이 실행하고 (returncode, stdout+stderr) 반환."""
+    flags = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
+    try:
+        p = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            capture_output=True, text=True, creationflags=flags, timeout=20,
+        )
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+    except Exception as e:
+        return 1, str(e)
+
+
+def has_radmin_adapter():
+    """26.x IPv4를 가진 어댑터가 있으면 그 IP를 반환, 없으면 None."""
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip.startswith("26."):
+                return ip
+    except Exception:
+        pass
+    return None
+
+
+def fix_radmin_priority():
+    """라드민(26.x) 어댑터 metric을 1로 설정. (ok: bool, message: str) 반환.
+    26.x 어댑터가 없으면 (True, '') — 조용히 건너뜀(자동 호출용)."""
+    ip = has_radmin_adapter()
+    if not ip:
+        return True, ""
+    if not is_admin():
+        return False, "라드민 우선순위 적용에는 관리자 권한이 필요합니다."
+    script = (
+        "$a = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
+        "Where-Object { $_.IPAddress -like '26.*' } | Select-Object -First 1; "
+        "if (-not $a) { Write-Output 'NO26'; exit 0 }; "
+        "Set-NetIPInterface -InterfaceIndex $a.InterfaceIndex -InterfaceMetric 1; "
+        "$n = (Get-NetAdapter -InterfaceIndex $a.InterfaceIndex).Name; "
+        "Write-Output ('OK ' + $n + ' ' + $a.IPAddress)"
+    )
+    rc, out = _run_ps(script)
+    out = out.strip()
+    if rc == 0 and out.startswith("OK"):
+        return True, f"라드민 어댑터 우선순위 적용 완료 ({out[3:].strip()})"
+    if "NO26" in out:
+        return True, ""
+    return False, f"적용 실패: {out}"
 
 
 def is_server_running(host="127.0.0.1", port=SERVER_PORT, timeout=0.6):
@@ -795,6 +850,14 @@ class App(tk.Tk):
         self._set_host_and_launch("127.0.0.1")
 
     def _on_multi_play(self):
+        # 라드민(26.x)이 있으면 DP8이 26.x로 바인딩하도록 어댑터 우선순위를 먼저 적용.
+        ok, msg = fix_radmin_priority()
+        if not ok:
+            messagebox.showwarning("라드민 우선순위",
+                msg + "\n\n런처를 관리자 권한으로 다시 실행하면 자동 적용됩니다.\n"
+                "(이대로 진행해도 대전은 시도됩니다.)")
+        elif msg:
+            self._set_status(msg) if hasattr(self, "_set_status") else None
         # 멀티: 로컬 서버가 떠 있으면(=이 PC가 호스트) 127.0.0.1로 바로 실행.
         if is_server_running():
             self._set_host_and_launch("127.0.0.1")
@@ -958,6 +1021,22 @@ class App(tk.Tk):
                        "멀티는 함께하는 모든 PC가 같은 값이어야 합니다.  ※ 게임을 끈 상태에서 적용.",
                   foreground="gray").pack(anchor="w", pady=(6, 0))
 
+        # ── 라드민 네트워크 최적화 ──
+        radmin_ip = has_radmin_adapter()
+        rad_frame = ttk.LabelFrame(frame, text="라드민 멀티 최적화 (동기화 실패 해결)", padding=12)
+        rad_frame.pack(fill="x", pady=(0, 10))
+        if radmin_ip:
+            rad_txt = f"라드민 어댑터 감지됨 ({radmin_ip}). 멀티플레이 시 자동 적용됩니다."
+        else:
+            rad_txt = "라드민(26.x) 어댑터가 감지되지 않았습니다. 라드민 VPN을 켜세요."
+        self.rad_status_var = tk.StringVar(value=rad_txt)
+        ttk.Label(rad_frame, textvariable=self.rad_status_var, foreground="gray").pack(anchor="w", pady=(0, 6))
+        ttk.Button(rad_frame, text="지금 적용", command=self._on_fix_radmin, width=14).pack(anchor="w")
+        ttk.Label(rad_frame,
+                  text="라드민일 때 게임(DP8)이 잘못된 랜카드 IP로 접속해 동기화가 실패합니다.\n"
+                       "라드민 어댑터를 최우선으로 지정해 해결합니다.  ※ 대전하는 두 PC 모두 적용.",
+                  foreground="gray").pack(anchor="w", pady=(6, 0))
+
         # ── 창모드 ──
         mode_frame = ttk.LabelFrame(frame, text="디스플레이 모드", padding=12)
         mode_frame.pack(fill="x", pady=(0, 10))
@@ -993,6 +1072,27 @@ class App(tk.Tk):
         if not self.winmode.available:
             ttk.Label(frame, text="※ ddraw.ini를 찾을 수 없습니다. 게임 경로를 확인하세요.",
                       foreground="red").pack(anchor="w", pady=(8, 0))
+
+    def _on_fix_radmin(self):
+        ip = has_radmin_adapter()
+        if not ip:
+            messagebox.showinfo("라드민 최적화",
+                "라드민(26.x) 어댑터가 감지되지 않았습니다.\n라드민 VPN을 먼저 실행하세요.")
+            return
+        if not is_admin():
+            if messagebox.askyesno("관리자 권한 필요",
+                    "라드민 우선순위 적용에는 관리자 권한이 필요합니다.\n"
+                    "관리자 권한으로 런처를 다시 실행할까요?"):
+                run_as_admin()
+            return
+        ok, msg = fix_radmin_priority()
+        if ok and msg:
+            self.rad_status_var.set(msg)
+            messagebox.showinfo("라드민 최적화", msg + "\n\n라드민과 게임을 재시작한 뒤 대전하세요.")
+        elif ok:
+            messagebox.showinfo("라드민 최적화", "라드민 어댑터가 없어 건너뛰었습니다.")
+        else:
+            messagebox.showwarning("라드민 최적화", msg)
 
     def _refresh_patch_status(self):
         cur = self.latency.current()
