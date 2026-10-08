@@ -94,3 +94,25 @@ Next gate
 Local launcher artifact: RhakMuLauncher_v0.9022.exe, --update-probe reports 0.9022.
 31 automated tests: 30 passed, 1 optional frozen-server integration skipped.
 The installed game SHA-256 remains EF006B8B3A5319279E4313E6FAED873CA655082643CB79535D81F05804306D16.
+
+UI crash repair — viewport-1280-ui-v3
+  Observed crash 06:41:05, CPannelCommand::DrawCtrl return 0045C545 ->
+  iCARUS16_PutClip16RleSprite -> Put16RleSprite / rep movsd access violation.
+  Root coordinate defect reproduced with the original executable in Unicorn:
+  startup function 45B7C0 caches large-mode command positions using (112,168).
+  Updating shared origin to (240,120) does not refresh those cached coordinates.
+  Original InitVariables leaves row-2 Y=688; DrawCtrl adds 45, producing Y=733
+  outside the new 720 surface. Patched initialization yields Y=640, bar Y=685.
+  Refresh only the 10 high-mode RECTs both after initialization and on ChangeRes;
+  do not reset current commands, production state, or other object fields.
+  Left decoration originally uses absolute X=0 while right follows HUD origin.
+  Translate left by HUD_left-112, so both decorations attach to the panel.
+  Full-frame presentation previously depended on the next complete redraw to
+  erase the software cursor. Expanded side bands were not redrawn. Restore the
+  saved cursor background AFTER presentation, matching the existing mouse-only
+  path. Validate dimensions and bounds first; no full-frame clear added.
+  New helpers occupy checked-zero .text padding EB800/EBA00/EBB00/EBC00;
+  existing networking/panel guard caves EB420..EB700 remain unchanged.
+  Automated: 35 tests total, 34 passed / 1 optional integration skipped.
+  Actual in-game result is NOT yet verified. Bottom side terrain coverage,
+  other independent UI coordinates, all effects and multiplayer remain pending.

@@ -62,6 +62,26 @@ def transform(source, width=1280, height=720):
     replace(0x4dc3fa, HIGHMODE_ORIGINAL,
             HIGHMODE_CODE + b'\x90' * (len(HIGHMODE_ORIGINAL)-len(HIGHMODE_CODE)),
             'dynamic full clip, centered HUD container and shared child origin')
+    from viewport_helpers import helpers, RECTS, INIT_RETURN, CURSOR_RETURN, LEFT_DECORATION
+    # The existing network patch already maps the entire .text raw allocation.
+    if source[0x208:0x20c] != struct.pack('<I', 0xeb000):
+        raise ValueError('Unexpected .text virtual size; helper addresses are not safe')
+    for va, code in helpers().items():
+        if len(code) > 256:
+            raise ValueError('Helper exceeds its reserved region')
+        replace(va, bytes(len(code)), code, 'viewport UI helper in verified zero padding')
+
+    def jump(va, target, original, reason):
+        replace(va, original, b'\xe9'+struct.pack('<i', target-va-5)+b'\x90'*(len(original)-5), reason)
+
+    jump(0x45bab0, RECTS, bytes.fromhex('558bec83ec44535657894dfc5f5e5b8be55dc3'),
+         'refresh command images AND hit rectangles on resolution change')
+    jump(0x45bc0e, INIT_RETURN, bytes.fromhex('5f5e5b8be55dc3'),
+         'initialize command rectangles using current HUD origin, not startup coordinates')
+    jump(0x4d664c, CURSOR_RETURN, bytes.fromhex('5f5e5b8be55dc3'),
+         'restore software cursor background after presenting each full frame')
+    jump(0x464772, LEFT_DECORATION, bytes.fromhex('668b54010252'),
+         'attach left 112px decoration to centered panel instead of screen edge')
     return bytes(data), edits
 
 
