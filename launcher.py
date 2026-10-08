@@ -12,6 +12,8 @@ import re
 import shutil
 import subprocess
 import sys
+import ipaddress
+import tempfile
 import tkinter as tk
 import sync_port_patch
 import launcher_update
@@ -27,7 +29,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9014"
+APP_VERSION = "0.9015"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -197,18 +199,35 @@ def find_python():
 
 
 def load_config(base_dir):
-    path = os.path.join(base_dir, CONFIG_FILE)
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
+    # Import legacy settings, but prefer the version/folder-independent copy.
+    cfg = {}
+    for path in (os.path.join(base_dir, CONFIG_FILE), config_path(base_dir)):
+        try:
+            with open(path, "r", encoding="utf-8-sig") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                cfg.update(data)
+        except (OSError, ValueError):
+            pass
+    return cfg
+
+
+def config_path(base_dir):
+    root = os.environ.get('LOCALAPPDATA')
+    return os.path.join(root, 'RhakMu', CONFIG_FILE) if root else os.path.join(base_dir, CONFIG_FILE)
 
 
 def save_config(base_dir, cfg):
-    path = os.path.join(base_dir, CONFIG_FILE)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    path = config_path(base_dir)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, temp = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        os.replace(temp, path)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
 
 
 # ═══════════════════════════════════════════════════════
@@ -251,16 +270,12 @@ def do_self_update(download_url, expected_size=0):
 # ═══════════════════════════════════════════════════════
 
 def run_server_mode():
-    kernel32 = ctypes.windll.kernel32
-    kernel32.AllocConsole()
-    kernel32.SetConsoleTitleW("라크무 서버")
-
-    sys.stdout = open("CONOUT$", "w", encoding="utf-8")
-    sys.stderr = open("CONOUT$", "w", encoding="utf-8")
-    sys.stdin = open("CONIN$", "r", encoding="utf-8")
-
     base = get_base_dir()
     os.chdir(base)
+    # Windowed PyInstaller executables have no standard streams.
+    sys.stdout = open(os.path.join(base, 'server-console.log'), 'a', encoding='utf-8', buffering=1)
+    sys.stderr = sys.stdout
+    sys.stdin = open(os.devnull, 'r')
 
     # 업데이트된 로컬 파일을 우선, 없으면 exe 내장 버전 사용
     script = os.path.join(base, SERVER_SCRIPT)
@@ -269,8 +284,7 @@ def run_server_mode():
 
     if not os.path.isfile(script):
         print(f"오류: {SERVER_SCRIPT}를 찾을 수 없습니다.")
-        input("Enter를 눌러 종료...")
-        return
+        raise FileNotFoundError(script)
 
     with open(script, "r", encoding="utf-8") as f:
         code = f.read()
@@ -359,37 +373,43 @@ class ServerManager:
     def start(self):
         if self.proc and self.proc.poll() is None:
             return False, "서버가 이미 실행 중입니다."
+        if is_server_running():
+            return False, "다른 서버가 이미 실행 중입니다. 기존 서버를 종료한 뒤 시작하세요."
 
         try:
             HostsManager.apply_ip(SERVER_LOOPBACK, DEFAULT_DOMAINS)
         except OSError:
             pass
 
-        if getattr(sys, "frozen", False):
+        args = [sys.executable, '--server'] if getattr(sys, 'frozen', False) else [sys.executable, os.path.abspath(__file__), '--server']
+        try:
             self.proc = subprocess.Popen(
-                [sys.executable, "--server"],
-                cwd=self.base_dir,
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
+                args, cwd=self.base_dir,
+                creationflags=0x08000000 if os.name == 'nt' else 0,
+                env={**os.environ, 'PYINSTALLER_RESET_ENVIRONMENT': '1'},
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
-            return True, "서버를 시작했습니다. (hosts → 127.0.0.1)"
-
-        python = find_python()
-        script = os.path.join(self.base_dir, SERVER_SCRIPT)
-        if not python:
-            return False, "Python이 설치되어 있지 않습니다."
-        if not os.path.isfile(script):
-            return False, f"{SERVER_SCRIPT}를 찾을 수 없습니다."
-        self.proc = subprocess.Popen(
-            [python, script],
-            cwd=self.base_dir,
-            creationflags=subprocess.CREATE_NEW_CONSOLE,
-        )
-        return True, "서버를 시작했습니다."
+        except OSError as e:
+            return False, f'서버 시작 실패: {e}'
+        return True, "서버 시작 중 — 런처에서 상태와 로그를 확인하세요."
 
     def stop(self):
         if not self.proc or self.proc.poll() is not None:
             return False, "실행 중인 서버가 없습니다."
-        self.proc.terminate()
+        # One-file PyInstaller has a bootloader parent and a worker child.
+        # Terminate only our process tree, not unrelated Python/game servers.
+        if os.name == 'nt':
+            result = subprocess.run(['taskkill', '/PID', str(self.proc.pid), '/T', '/F'],
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    creationflags=0x08000000, timeout=10)
+            if result.returncode and self.proc.poll() is None:
+                return False, '서버 종료 실패: ' + result.stdout.decode(errors='replace')
+        else:
+            self.proc.terminate()
+        try:
+            self.proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            return False, "서버 종료가 지연되고 있습니다. 잠시 후 다시 종료하세요."
         self.proc = None
         return True, "서버를 종료했습니다."
 
@@ -722,6 +742,13 @@ class App(tk.Tk):
             self._stop_capture()
             messagebox.showinfo("통신 진단", "기록 저장 중입니다. 저장이 끝난 뒤 런처를 닫아 주세요.")
             return
+        if self.server.running:
+            if not messagebox.askyesno('서버 종료', '런처를 닫으면 실행 중인 서버도 종료됩니다. 닫으시겠습니까?'):
+                return
+            ok, msg = self.server.stop()
+            if not ok:
+                messagebox.showerror('서버', msg)
+                return
         self.destroy()
 
     # ── 서버 탭 ──
@@ -748,6 +775,9 @@ class App(tk.Tk):
         self.btn_restart.pack(side="left", padx=(0, 8))
         self.btn_stop = ttk.Button(btn_frame, text="서버 종료", command=self._on_stop, width=14)
         self.btn_stop.pack(side="left")
+        ttk.Label(frame, text='별도 창 없이 실행됩니다. 런처를 닫으면 서버도 종료됩니다.', foreground='gray').pack(anchor='w', pady=6)
+        self.server_log = tk.Text(frame, height=8, wrap='word', state='disabled')
+        self.server_log.pack(fill='both', expand=True)
 
         update_frame = ttk.Frame(frame)
         update_frame.pack(fill="x", pady=(12, 0))
@@ -810,6 +840,9 @@ class App(tk.Tk):
             messagebox.showerror("업데이트 실패", f"파일 저장 오류:\n{e}")
 
     def _on_check_launcher_update(self):
+        if self.server.running:
+            messagebox.showinfo('런처 업데이트', '먼저 서버 종료 버튼을 누른 뒤 업데이트하세요.')
+            return
         import urllib.request
         self.update_status_var.set("버전 확인 중...")
         self.update()
@@ -843,12 +876,32 @@ class App(tk.Tk):
 
     def _update_status(self):
         if self.server.running:
-            self.status_var.set("서버 상태: 실행 중 ●")
+            ready = is_server_running(timeout=0.05)
+            self.status_var.set("서버 상태: 실행 중 ●" if ready else "서버 상태: 시작 중…")
             self.btn_start.state(["disabled"])
         else:
-            self.status_var.set("서버 상태: 꺼짐 ○")
+            code = self.server.proc.poll() if self.server.proc else None
+            self.status_var.set(f"서버 종료 (코드 {code}) — 아래 로그 확인" if code is not None else "서버 상태: 꺼짐 ○")
             self.btn_start.state(["!disabled"])
-        self.after(2000, self._update_status)
+        self.btn_stop.state(['!disabled' if self.server.running else 'disabled'])
+        self.btn_restart.state(['!disabled' if self.server.running else 'disabled'])
+        try:
+            with open(os.path.join(self.base_dir, 'server-console.log'), 'rb') as f:
+                f.seek(0, 2)
+                f.seek(max(0, f.tell() - 16000))
+                text = f.read().decode('utf-8', errors='replace')
+            if text != getattr(self, '_last_server_log', None):
+                self._last_server_log = text
+                self.server_log.config(state='normal')
+                self.server_log.delete('1.0', tk.END)
+                self.server_log.insert('1.0', text)
+                self.server_log.see(tk.END)
+                self.server_log.config(state='disabled')
+        except OSError:
+            pass
+        if getattr(self, '_status_timer', None):
+            self.after_cancel(self._status_timer)
+        self._status_timer = self.after(2000, self._update_status)
 
     # ── 클라 탭 ──
     def _build_client_tab(self, notebook):
@@ -857,6 +910,12 @@ class App(tk.Tk):
 
         ttk.Label(frame, text="접속 정보 (hosts)", font=("맑은 고딕", 12, "bold")).pack(anchor="w", pady=(0, 4))
         self.cur_ip_var = tk.StringVar()
+        ip_row = ttk.Frame(frame)
+        ip_row.pack(fill='x', pady=6)
+        ttk.Label(ip_row, text='서버 VPN IP: ').pack(side='left')
+        self.saved_ip_var = tk.StringVar(value=self.cfg.get('last_server_ip', ''))
+        ttk.Entry(ip_row, textvariable=self.saved_ip_var, width=20).pack(side='left')
+        ttk.Button(ip_row, text='저장', command=self._save_server_ip).pack(side='left', padx=6)
         self.radmin_only = tk.BooleanVar(value=self.cfg.get('radmin_only', True))
         ttk.Checkbutton(frame, text="라드민 전용 모드 (게임 IP 고정 + 하마치 일시 중지)",
                         variable=self.radmin_only).pack(anchor="w")
@@ -988,8 +1047,28 @@ class App(tk.Tk):
         if is_server_running():
             self._set_host_and_launch("127.0.0.1", multiplayer=True)
             return
-        # 서버가 없으면(=클라) 접속할 서버 IP를 입력받는다.
-        self._ask_server_ip_and_launch()
+        # Reuse the saved address without another dialog.
+        if self.saved_ip_var.get().strip():
+            if self._save_server_ip(notify=False):
+                self._set_host_and_launch(self.cfg['last_server_ip'], multiplayer=True)
+        else:
+            self._ask_server_ip_and_launch()
+
+    def _save_server_ip(self, notify=True):
+        try:
+            ip = str(ipaddress.IPv4Address(self.saved_ip_var.get().strip()))
+            if ipaddress.IPv4Address(ip).is_unspecified or ipaddress.IPv4Address(ip).is_multicast:
+                raise ValueError('접속 가능한 서버 IPv4 주소를 입력하세요.')
+            updated = {**self.cfg, 'last_server_ip': ip, 'radmin_only': self.radmin_only.get()}
+            save_config(self.base_dir, updated)
+            self.cfg = updated
+            self.saved_ip_var.set(ip)
+        except (ValueError, OSError) as e:
+            messagebox.showerror('IP 저장 실패', str(e))
+            return False
+        if notify:
+            messagebox.showinfo('IP 저장', '저장했습니다. 다음 멀티플레이부터 이 주소로 접속합니다.')
+        return True
 
     def _ask_server_ip_and_launch(self):
         dlg = tk.Toplevel(self)
@@ -1016,8 +1095,9 @@ class App(tk.Tk):
             if not ip:
                 messagebox.showwarning("입력 오류", "서버 IP를 입력하세요.", parent=dlg)
                 return
-            self.cfg["last_server_ip"] = ip
-            save_config(self.base_dir, self.cfg)
+            self.saved_ip_var.set(ip)
+            if not self._save_server_ip(notify=False):
+                return
             dlg.destroy()
             self._set_host_and_launch(ip, multiplayer=True)
 
