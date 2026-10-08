@@ -16,6 +16,7 @@ import ipaddress
 import tempfile
 import tkinter as tk
 import sync_port_patch
+import peer_address_patch
 import launcher_update
 from tkinter import ttk, messagebox
 
@@ -29,7 +30,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9015"
+APP_VERSION = "0.9016"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -666,6 +667,18 @@ class App(tk.Tk):
         row.pack(anchor="w")
         ttk.Button(row, text="포트 수정 적용", command=lambda: self._sync_port_patch(True)).pack(side="left")
         ttk.Button(row, text="포트 수정 원복", command=lambda: self._sync_port_patch(False)).pack(side="left", padx=6)
+        ttk.Button(frame, text='상대 주소 복구 패치 원복', command=self._restore_peer_address).pack(anchor='w', pady=4)
+
+    def _restore_peer_address(self):
+        rc, out = _run_ps("if (Get-Process Rhakmu,Launcher -ErrorAction SilentlyContinue) { Write-Output 'RUNNING' }")
+        if rc != 0 or 'RUNNING' in out:
+            messagebox.showwarning('상대 주소 패치', '게임을 완전히 종료한 후 원복하세요.')
+            return
+        try:
+            result = peer_address_patch.apply(os.path.join(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE), False)
+            messagebox.showinfo('상대 주소 패치', result + '\n라드민 전용 모드로 다시 실행하면 재적용됩니다.')
+        except Exception as e:
+            messagebox.showerror('상대 주소 패치', str(e))
 
     def _sync_port_patch(self, enabled):
         rc, out = _run_ps("if (Get-Process Rhakmu -ErrorAction SilentlyContinue) { Write-Output 'RUNNING' }")
@@ -694,6 +707,12 @@ class App(tk.Tk):
                 json.dump({"launcher_version": APP_VERSION, "case": self.capture_label.get(),
                            "peer_ip": self.capture_peer.get().strip(), "started": datetime.datetime.now().isoformat(),
                            "lobby_ip": HostsManager.read_current_ip([GAME_HOST])}, f, ensure_ascii=False, indent=2)
+            try:
+                game_data = pathlib.Path(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE).read_bytes()
+                patch_status = {'peer_address': peer_address_patch.state(game_data), 'sync_port': sync_port_patch.state(game_data)}
+            except (ValueError, OSError) as e:
+                patch_status = {'error': str(e)}
+            pathlib.Path(self.capture_dir, 'game-patches.json').write_text(json.dumps(patch_status), encoding='utf-8')
             self.capture_process = subprocess.Popen(
                 ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                  os.path.join(get_resource_dir(), "launcher_capture.ps1"),
@@ -970,6 +989,17 @@ class App(tk.Tk):
         root = os.path.join(os.environ.get('LOCALAPPDATA', self.base_dir), 'RhakMu', 'radmin-session')
         try:
             os.makedirs(root, exist_ok=True)
+            if not restore:
+                rc, out = _run_ps("if (Get-Process Rhakmu,Launcher -ErrorAction SilentlyContinue) { Write-Output 'RUNNING' }")
+                if rc != 0 or 'RUNNING' in out:
+                    raise RuntimeError('게임을 완전히 종료한 뒤 다시 실행하세요.')
+                game_exe = os.path.join(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE)
+                # Validate both sites before changing either; preserve user patches.
+                game_data = pathlib.Path(game_exe).read_bytes()
+                peer_address_patch.state(game_data)
+                sync_port_patch.state(game_data)
+                sync_port_patch.apply(game_exe, True)
+                peer_address_patch.apply(game_exe, True)
             helper = os.path.join(root, 'radmin_session.ps1')
             shutil.copyfile(os.path.join(get_resource_dir(), 'radmin_session.ps1'), helper)
             shutil.copyfile(os.path.join(get_resource_dir(), 'radmin_address.ps1'), os.path.join(root, 'radmin_address.ps1'))

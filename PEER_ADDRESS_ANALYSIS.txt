@@ -1,0 +1,56 @@
+2026-10-09 / launcher 0.9016
+
+Evidence and scope
+------------------
+Only two push 0x8813 instructions occur in the installed Rhakmu.exe,
+at 0x44a118 and 0x44a1b6. Both belong to the unknown-source fallback
+in the UDP receive dispatcher, after checksum verification and failure
+to match all eight selected player IPs and their candidate IP lists.
+Prior failure captures repeatedly show these announcements.
+This is evidence that at least some packets reach the game's receiver,
+not merely that a VPN adapter sees them.
+
+At 0x449f5c, a received unknown-source 0x8813 is checked for session
+and recipient. When BOTH match, 0x449f88 jumps to the next receive
+iteration WITHOUT learning the sender address or replying.
+The adjacent 0x8814 path learns the address, but no immediate 0x8814
+send instruction was found in this executable. No claim is made that
+the entire game/DLL collection can never generate that type.
+
+Reproduction
+------------
+Unicorn runs the installed game's original CRC implementation and
+receive dispatcher with two different stored/source peer addresses.
+The valid 0x8813 is discarded without updating the player table.
+The next packet from that source still fails player identification.
+With the patch, the address and cached sockaddr are updated, and the
+next packet reaches the ORIGINAL known-player receive handler.
+This is a controlled machine-code replay, NOT a live two-PC success.
+
+Patch
+-----
+Replace only the successful-0x8813 discard jump with a helper in
+verified unused .text padding. Extend .text VirtualSize within its
+existing raw allocation; no file growth, new section or relocation.
+Require payload length 12, header size 10, type 0x8813, same session,
+correct recipient, sender slot 0..7/nonself/active/already populated,
+and source IPv4 starting with 26. CRC validation remains untouched.
+Update selected peer IPv4 AND the cached per-player UDP sockaddr to
+that source and port 11223. Never inject game commands or skip sync.
+Other source prefixes (including Hamachi) do not learn through this
+helper. Existing known-source behavior is unchanged.
+
+Deployment
+----------
+Radmin launch validates and automatically applies this patch plus the
+existing fallback-port fix while the game is closed. Both PCs need
+the new launcher and Radmin mode. Persistent binary patch has a full
+content-addressed backup. Diagnostics tab offers explicit restoration.
+Restoration preserves unrelated byte edits. Capture includes patch state.
+
+Tests
+-----
+Original/patched receive-path replay, invalid CRC/session/recipient/
+sender/size/status/non-Radmin rejection, assembler equality, signature
+conflict rejection, file restoration preserving unrelated modifications.
+Actual multiplayer still requires verification by the two participants.
