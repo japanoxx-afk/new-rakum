@@ -25,7 +25,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9007"
+APP_VERSION = "0.9008"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -630,6 +630,8 @@ class App(tk.Tk):
         self._build_client_tab(notebook)
         self._build_history_tab(notebook)
         self._build_settings_tab(notebook)
+        self._build_capture_tab(notebook)
+        self.protocol("WM_DELETE_WINDOW", self._close_launcher)
 
         self.info_var = tk.StringVar()
         ttk.Label(self, textvariable=self.info_var, anchor="center",
@@ -648,6 +650,99 @@ class App(tk.Tk):
 
         self._refresh_patch_status()
         self._update_status()
+
+    def _build_capture_tab(self, notebook):
+        self.capture_process = None
+        self.capture_dir = None
+        frame = ttk.Frame(notebook, padding=16)
+        notebook.add(frame, text="통신 진단")
+        ttk.Label(frame, text="게임 시작 동기화 기록", font=("맑은 고딕", 12, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="양쪽 PC에서 기록 시작 → 기록 중 표시 확인 → 게임 시작\n"
+                  "로비로 돌아오면 기록 종료를 누르세요. 120초 후 자동 종료됩니다.\n"
+                  "하마치 성공 기록도 같은 방법으로 남겨 비교할 수 있습니다.",
+                  wraplength=420).pack(anchor="w", pady=10)
+        self.capture_label = tk.StringVar(value="Radmin 실패")
+        ttk.Combobox(frame, textvariable=self.capture_label, state="readonly",
+                     values=("Radmin 실패", "Hamachi 성공", "기타"), width=22).pack(anchor="w")
+        ttk.Label(frame, text="상대 VPN IP (선택)").pack(anchor="w", pady=(10, 2))
+        self.capture_peer = tk.StringVar()
+        ttk.Entry(frame, textvariable=self.capture_peer).pack(anchor="w")
+        ttk.Label(frame, text="브로드캐스트를 포함해 모든 어댑터의 패킷 앞 256바이트를 기록합니다.\n"
+                  "다른 앱의 통신·IP·로그인 정보가 포함될 수 있습니다. 파일은 PC에만 저장됩니다.",
+                  wraplength=420).pack(anchor="w", pady=10)
+        self.capture_start = ttk.Button(frame, text="기록 시작 (120초)", command=self._start_capture)
+        self.capture_start.pack(anchor="w", pady=4)
+        self.capture_stop = ttk.Button(frame, text="기록 종료 및 저장", command=self._stop_capture, state="disabled")
+        self.capture_stop.pack(anchor="w", pady=4)
+        ttk.Button(frame, text="저장 폴더 열기", command=self._open_capture).pack(anchor="w", pady=4)
+        self.capture_status = tk.StringVar(value="대기 중 — 관리자 권한이 필요합니다.")
+        ttk.Label(frame, textvariable=self.capture_status, wraplength=420).pack(anchor="w", pady=10)
+
+    def _start_capture(self):
+        if self.capture_process is not None:
+            return
+        if not is_admin():
+            messagebox.showwarning("통신 진단", "런처를 관리자 권한으로 실행해 주세요.")
+            return
+        import datetime
+        import tempfile
+        root = os.path.join(os.environ.get("LOCALAPPDATA", self.base_dir), "RhakMu", "diagnostics")
+        try:
+            os.makedirs(root, exist_ok=True)
+            self.capture_dir = tempfile.mkdtemp(prefix=datetime.datetime.now().strftime("%Y%m%d_%H%M%S_"), dir=root)
+            with open(os.path.join(self.capture_dir, "session.json"), "w", encoding="utf-8") as f:
+                json.dump({"launcher_version": APP_VERSION, "case": self.capture_label.get(),
+                           "peer_ip": self.capture_peer.get().strip(), "started": datetime.datetime.now().isoformat(),
+                           "lobby_ip": HostsManager.read_current_ip([GAME_HOST])}, f, ensure_ascii=False, indent=2)
+            self.capture_process = subprocess.Popen(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                 os.path.join(get_resource_dir(), "launcher_capture.ps1"),
+                 "-OutputDir", self.capture_dir, "-ServerDir", self.base_dir],
+                creationflags=0x08000000, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            messagebox.showerror("통신 진단", str(e))
+            return
+        self.capture_start.config(state="disabled")
+        self.capture_stop.config(state="normal")
+        self.capture_status.set("기록 준비 중…")
+        self.after(500, self._poll_capture)
+
+    def _stop_capture(self):
+        if self.capture_process is not None:
+            pathlib.Path(self.capture_dir, "stop").touch()
+            self.capture_stop.config(state="disabled")
+            self.capture_status.set("기록 종료 및 저장 중…")
+
+    def _poll_capture(self):
+        try:
+            status = pathlib.Path(self.capture_dir, "status.txt").read_text(encoding="utf-8-sig").strip()
+            if status.startswith("CAPTURING:"):
+                self.capture_status.set("기록 중 — 지금 게임을 시작하세요. " + status.split(":", 1)[1])
+            elif status.startswith("Saving"):
+                self.capture_status.set("패킷 파일 변환·저장 중…")
+        except OSError:
+            pass
+        code = self.capture_process.poll()
+        if code is None:
+            self.after(500, self._poll_capture)
+            return
+        self.capture_process = None
+        self.capture_start.config(state="normal")
+        self.capture_stop.config(state="disabled")
+        self.capture_status.set(("저장 완료: " if code == 0 else "기록 오류 — error.txt / capture.log 확인: ") + self.capture_dir)
+
+    def _open_capture(self):
+        if self.capture_dir:
+            os.startfile(self.capture_dir)
+        else:
+            messagebox.showinfo("통신 진단", "먼저 기록을 시작해 주세요.")
+
+    def _close_launcher(self):
+        if self.capture_process is not None:
+            self._stop_capture()
+            messagebox.showinfo("통신 진단", "기록 저장 중입니다. 저장이 끝난 뒤 런처를 닫아 주세요.")
+            return
+        self.destroy()
 
     # ── 서버 탭 ──
     def _build_server_tab(self, notebook):
