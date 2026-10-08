@@ -61,6 +61,8 @@ class PreferencesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             exe = str(Path(root, 'launcher.exe'))
             shutil.copyfile(os.environ['RHAKMU_TEST_EXE'], exe)
+            # Integrated releases must ignore a stale external server override.
+            Path(root, 'server.py').write_text("raise RuntimeError('STALE_EXTERNAL_SERVER')\n", encoding='utf-8')
             server = launcher.ServerManager(root)
             with patch.object(launcher.sys, 'frozen', True, create=True), patch.object(launcher.sys, 'executable', exe), patch.object(launcher.HostsManager, 'apply_ip'):
                 try:

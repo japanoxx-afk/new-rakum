@@ -1,0 +1,23 @@
+Source: Downloads/RhakMU.ERR, latest entry 2026-10-09 05:57:03.
+EIP=0, return 0x463512, CPannelMgr::ProcessMenu. EDX=0x01010501.
+Installed 1.000d at 0x46350f calls [edx+0x30], then dereferences EAX.
+The corresponding existing legacy script patches 0x462822, not this
+build's actual crash site; it is not blindly reused.
+
+Guard at actual signature 0x463502..0x463516 in a separate verified
+.text padding area 0x4eb600. Uses existing IsBadReadPtr/IsBadCodePtr
+imports plus explicit NULL checks before dereference/call and after
+return. Invalid menu keeps the original -1 menu id and skips dispatch.
+Pre-call failure discards the two already-pushed arguments; post-call
+failure leaves the original callee-cleaned stack intact.
+These checks are defensive, not a lifetime guarantee or heap repair.
+No multiplayer/checksum/command logic is changed by this guard.
+
+Tests emulate original NULL call failure, guarded skip, valid callback
+return and stack balance. Backups and atomic replacement; only known
+1.000d signature allowed. Peer patch must map padding first. Restoring
+the peer patch through the launcher first restores this guard as well.
+
+Older 05:49:15 DeleteAllControls crash is distinct. The log cannot
+establish ownership/lifetime corruption's origin; not claimed fixed.
+Live user gameplay recurrence remains unverified.

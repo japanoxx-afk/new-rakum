@@ -17,6 +17,8 @@ import tempfile
 import tkinter as tk
 import sync_port_patch
 import peer_address_patch
+import panel_guard_patch
+from release_notes import NOTES
 import launcher_update
 from tkinter import ttk, messagebox
 
@@ -30,7 +32,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9018"
+APP_VERSION = "0.9019"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -176,8 +178,7 @@ def get_game_version(game_dir):
 
 def get_server_version():
     """실행할 server.py에서 SERVER_VERSION 을 읽어 표시용으로 반환."""
-    for p in (os.path.join(get_base_dir(), SERVER_SCRIPT),
-              os.path.join(get_resource_dir(), SERVER_SCRIPT)):
+    for p in (os.path.join(get_resource_dir(), SERVER_SCRIPT),):
         try:
             with open(p, "r", encoding="utf-8") as f:
                 m = re.search(r'SERVER_VERSION\s*=\s*"([^"]+)"', f.read())
@@ -278,10 +279,8 @@ def run_server_mode():
     sys.stderr = sys.stdout
     sys.stdin = open(os.devnull, 'r')
 
-    # 업데이트된 로컬 파일을 우선, 없으면 exe 내장 버전 사용
-    script = os.path.join(base, SERVER_SCRIPT)
-    if not os.path.isfile(script):
-        script = os.path.join(get_resource_dir(), SERVER_SCRIPT)
+    # A release carries its server; stale external scripts must not override it.
+    script = os.path.join(get_resource_dir(), SERVER_SCRIPT)
 
     if not os.path.isfile(script):
         print(f"오류: {SERVER_SCRIPT}를 찾을 수 없습니다.")
@@ -686,6 +685,8 @@ class App(tk.Tk):
             if enabled:
                 peer_address_patch.state(pathlib.Path(path).read_bytes())
                 sync_port_patch.apply(path, True)
+            else:
+                panel_guard_patch.apply(path, False)
             result = peer_address_patch.apply(path, enabled)
             verified = peer_address_patch.state(pathlib.Path(path).read_bytes())
             if verified != enabled:
@@ -817,8 +818,8 @@ class App(tk.Tk):
 
         update_frame = ttk.Frame(frame)
         update_frame.pack(fill="x", pady=(12, 0))
-        ttk.Button(update_frame, text="서버 업데이트 (GitHub)", command=self._on_update, width=20).pack(side="left")
-        ttk.Button(update_frame, text="런처 업데이트 확인", command=self._on_check_launcher_update, width=16).pack(side="left", padx=(6, 0))
+        ttk.Button(update_frame, text="통합 업데이트 (런처·서버)", command=self._on_check_launcher_update, width=25).pack(side="left")
+        ttk.Button(update_frame, text="패치노트", command=self._show_patch_notes, width=10).pack(side="left", padx=6)
         self.update_status_var = tk.StringVar()
         ttk.Label(update_frame, textvariable=self.update_status_var, foreground="gray").pack(side="left", padx=(8, 0))
 
@@ -852,28 +853,17 @@ class App(tk.Tk):
             messagebox.showwarning("서버", msg)
 
     def _on_update(self):
-        import urllib.request
-        import urllib.error
-        self.update_status_var.set("다운로드 중...")
-        self.update()
-        dest = os.path.join(self.base_dir, SERVER_SCRIPT)
-        try:
-            req = urllib.request.Request(GITHUB_RAW_URL)
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = resp.read()
-            with open(dest, "wb") as f:
-                f.write(data)
-            size_kb = len(data) / 1024
-            self.update_status_var.set(f"완료 ({size_kb:.0f}KB)")
-            messagebox.showinfo("업데이트",
-                f"{SERVER_SCRIPT}를 최신 버전으로 업데이트했습니다.\n"
-                f"({size_kb:.0f}KB)\n\n서버가 실행 중이면 재시작해야 적용됩니다.")
-        except urllib.error.URLError as e:
-            self.update_status_var.set("실패")
-            messagebox.showerror("업데이트 실패", f"다운로드 오류:\n{e}")
-        except OSError as e:
-            self.update_status_var.set("실패")
-            messagebox.showerror("업데이트 실패", f"파일 저장 오류:\n{e}")
+        return self._on_check_launcher_update()
+
+    def _show_patch_notes(self):
+        dlg = tk.Toplevel(self)
+        dlg.title('패치노트')
+        dlg.geometry('620x520')
+        from tkinter.scrolledtext import ScrolledText
+        text = ScrolledText(dlg, wrap='word', padx=12, pady=12)
+        text.pack(fill='both', expand=True)
+        text.insert('1.0', NOTES)
+        text.configure(state='disabled')
 
     def _on_check_launcher_update(self):
         if self.server.running:
@@ -1096,10 +1086,12 @@ class App(tk.Tk):
         data = exe.read_bytes()
         peer_address_patch.state(data)
         sync_port_patch.state(data)
+        panel_guard_patch.state(data)
         sync_port_patch.apply(exe, True)
         peer_address_patch.apply(exe, True)
+        panel_guard_patch.apply(exe, True)
         verified = exe.read_bytes()
-        if not sync_port_patch.state(verified) or verified[0xeb420:0xeb420+len(peer_address_patch.CODE)] != peer_address_patch.CODE:
+        if not panel_guard_patch.state(verified) or not sync_port_patch.state(verified) or verified[0xeb420:0xeb420+len(peer_address_patch.CODE)] != peer_address_patch.CODE:
             raise RuntimeError('왕건 방식 주소 응답 패치 검증 실패. 게임을 실행하지 않았습니다.')
         cfg = {**self.cfg, 'game_dir': str(path)}
         save_config(self.base_dir, cfg)
