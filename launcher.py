@@ -26,7 +26,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9010"
+APP_VERSION = "0.9011"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -620,6 +620,7 @@ class App(tk.Tk):
         self.base_dir = get_base_dir()
         self.server = ServerManager(self.base_dir)
         self.cfg = load_config(self.base_dir)
+        self.radmin_session = None
         self.domains = list(self.cfg.get("domains", DEFAULT_DOMAINS))
 
         game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
@@ -898,6 +899,13 @@ class App(tk.Tk):
 
         ttk.Label(frame, text="접속 정보 (hosts)", font=("맑은 고딕", 12, "bold")).pack(anchor="w", pady=(0, 4))
         self.cur_ip_var = tk.StringVar()
+        self.radmin_only = tk.BooleanVar(value=self.cfg.get('radmin_only', True))
+        ttk.Checkbutton(frame, text="라드민 전용 모드 (멀티 실행 시 하마치 일시 중지)",
+                        variable=self.radmin_only).pack(anchor="w")
+        ttk.Label(frame, text="양쪽 PC에서 사용하세요. 게임 종료 후 하마치를 복구합니다.").pack(anchor="w")
+        ttk.Button(frame, text="하마치 상태 복구", command=lambda: self._radmin_session_start(restore=True)).pack(anchor="w")
+        self.radmin_status = tk.StringVar(value="라드민 전용 모드 대기")
+        ttk.Label(frame, textvariable=self.radmin_status, wraplength=420).pack(anchor="w")
         ttk.Label(frame, textvariable=self.cur_ip_var, foreground="gray").pack(anchor="w", pady=(0, 8))
 
         box = ttk.LabelFrame(frame, text="현재 hosts 파일 내용", padding=8)
@@ -935,7 +943,42 @@ class App(tk.Tk):
     def _on_open_hosts(self):
         HostsManager.open_hosts_file()
 
-    def _set_host_and_launch(self, ip):
+    def _radmin_session_start(self, restore=False):
+        if self.radmin_session is not None and self.radmin_session.poll() is None:
+            messagebox.showinfo("라드민 전용", "게임 세션이 진행 중입니다. 게임 종료 후 자동 복구됩니다.")
+            return
+        if not is_admin():
+            messagebox.showwarning("라드민 전용", "관리자 권한으로 런처를 실행하세요.")
+            return
+        root = os.path.join(os.environ.get('LOCALAPPDATA', self.base_dir), 'RhakMu', 'radmin-session')
+        try:
+            os.makedirs(root, exist_ok=True)
+            helper = os.path.join(root, 'radmin_session.ps1')
+            shutil.copyfile(os.path.join(get_resource_dir(), 'radmin_session.ps1'), helper)
+            args = ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', helper,
+                    '-StateDir', root, '-GameDir', self.cfg.get('game_dir', DEFAULT_GAME_DIR)]
+            if restore:
+                args.append('-Restore')
+            self.radmin_session = subprocess.Popen(args, creationflags=0x08000000)
+            self.radmin_status.set('네트워크 상태 확인 중…')
+            self.after(1000, lambda: self._poll_radmin_session(root))
+        except Exception as e:
+            messagebox.showerror('라드민 전용', str(e))
+
+    def _poll_radmin_session(self, root):
+        try:
+            text = pathlib.Path(root, 'status.txt').read_text(encoding='utf-8-sig').strip()
+            self.radmin_status.set({'STARTING':'하마치 중지 완료 — 게임 시작 중',
+                                   'PLAYING':'라드민 전용 게임 실행 중',
+                                   'RESTORED':'하마치 원래 상태 복구 완료'}.get(text, text))
+        except OSError:
+            pass
+        if self.radmin_session.poll() is None:
+            self.after(1000, lambda: self._poll_radmin_session(root))
+        elif self.radmin_session.returncode:
+            messagebox.showerror('라드민 전용', self.radmin_status.get())
+
+    def _set_host_and_launch(self, ip, multiplayer=False):
         """rhakmugame 호스트를 ip로 설정(다른 줄 보존) 후 게임 실행."""
         game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
         exe = os.path.join(game_dir, GAME_EXE)
@@ -955,6 +998,14 @@ class App(tk.Tk):
         if hasattr(self, "hosts_text"):
             self._refresh_hosts_view()
         try:
+            if multiplayer and self.radmin_only.get():
+                if ip != '127.0.0.1' and not ip.startswith('26.'):
+                    messagebox.showwarning('라드민 전용', '서버의 라드민 26.x 주소를 입력하세요.')
+                    return
+                self.cfg['radmin_only'] = True
+                save_config(self.base_dir, self.cfg)
+                self._radmin_session_start()
+                return
             subprocess.Popen([exe], cwd=game_dir)
         except OSError as e:
             messagebox.showerror("실행 오류", str(e))
@@ -976,7 +1027,7 @@ class App(tk.Tk):
             self._set_status(msg) if hasattr(self, "_set_status") else None
         # 멀티: 로컬 서버가 떠 있으면(=이 PC가 호스트) 127.0.0.1로 바로 실행.
         if is_server_running():
-            self._set_host_and_launch("127.0.0.1")
+            self._set_host_and_launch("127.0.0.1", multiplayer=True)
             return
         # 서버가 없으면(=클라) 접속할 서버 IP를 입력받는다.
         self._ask_server_ip_and_launch()
@@ -1009,7 +1060,7 @@ class App(tk.Tk):
             self.cfg["last_server_ip"] = ip
             save_config(self.base_dir, self.cfg)
             dlg.destroy()
-            self._set_host_and_launch(ip)
+            self._set_host_and_launch(ip, multiplayer=True)
 
         entry.bind("<Return>", go)
         ttk.Button(dlg, text="실행", command=go, width=12).pack(pady=12)
