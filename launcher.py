@@ -26,7 +26,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9009"
+APP_VERSION = "0.9010"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -255,7 +255,7 @@ def do_self_update(download_url, expected_size=0):
             head = f.read(2)
     except OSError as e:
         return False, f"다운로드 확인 실패:\n{e}"
-    if head != b"MZ" or (expected_size and sz < expected_size):
+    if head != b"MZ" or (expected_size and sz != expected_size):
         try:
             os.remove(new_exe)
         except OSError:
@@ -282,6 +282,8 @@ def do_self_update(download_url, expected_size=0):
     subprocess.Popen(
         ["cmd", "/c", bat_path],
         creationflags=subprocess.CREATE_NO_WINDOW,
+        # Restart must unpack its own runtime, not reuse the exiting app's _MEI.
+        env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
     )
     return True, ""
 
