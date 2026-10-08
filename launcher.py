@@ -30,7 +30,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9017"
+APP_VERSION = "0.9018"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -605,6 +605,12 @@ class App(tk.Tk):
         game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
         self.winmode = WindowModeManager(game_dir)
         self.latency = LatencyPatch(game_dir)
+        self.gamedir_var = tk.StringVar(value=game_dir)
+        launch_path = ttk.LabelFrame(self, text='게임 실행 경로 (설치 폴더 또는 Launcher.exe)', padding=6)
+        launch_path.pack(fill='x', padx=8, pady=4)
+        ttk.Entry(launch_path, textvariable=self.gamedir_var).pack(side='left', fill='x', expand=True)
+        ttk.Button(launch_path, text='찾기', command=self._on_browse_game).pack(side='left', padx=4)
+        ttk.Button(launch_path, text='게임 실행', command=self._on_game_play).pack(side='left')
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True, padx=8, pady=(8, 4))
@@ -1039,6 +1045,11 @@ class App(tk.Tk):
 
     def _set_host_and_launch(self, ip, multiplayer=False):
         """rhakmugame 호스트를 ip로 설정(다른 줄 보존) 후 게임 실행."""
+        try:
+            self._prepare_game_launch()
+        except Exception as e:
+            messagebox.showerror('게임 실행 중단', str(e))
+            return
         game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
         exe = os.path.join(game_dir, GAME_EXE)
         if not os.path.isfile(exe):
@@ -1068,6 +1079,42 @@ class App(tk.Tk):
             subprocess.Popen([exe], cwd=game_dir)
         except OSError as e:
             messagebox.showerror("실행 오류", str(e))
+
+    def _prepare_game_launch(self):
+        path = pathlib.Path(self.gamedir_var.get().strip().strip('"')).expanduser()
+        if path.is_file():
+            if path.name.lower() != GAME_EXE.lower():
+                raise ValueError('게임 설치 폴더 또는 Launcher.exe를 선택하세요.')
+            path = path.parent
+        path = path.resolve()
+        if not (path / GAME_EXE).is_file() or not (path / PATCH_EXE).is_file():
+            raise ValueError('해당 경로에 Launcher.exe와 Rhakmu.exe가 있어야 합니다.')
+        rc, out = _run_ps("if (Get-Process Rhakmu,Launcher -ErrorAction SilentlyContinue) { Write-Output 'RUNNING' }")
+        if rc != 0 or 'RUNNING' in out:
+            raise RuntimeError('게임을 완전히 종료한 뒤 실행하세요. 실행 중에는 패치하지 않습니다.')
+        exe = path / PATCH_EXE
+        data = exe.read_bytes()
+        peer_address_patch.state(data)
+        sync_port_patch.state(data)
+        sync_port_patch.apply(exe, True)
+        peer_address_patch.apply(exe, True)
+        verified = exe.read_bytes()
+        if not sync_port_patch.state(verified) or verified[0xeb420:0xeb420+len(peer_address_patch.CODE)] != peer_address_patch.CODE:
+            raise RuntimeError('왕건 방식 주소 응답 패치 검증 실패. 게임을 실행하지 않았습니다.')
+        cfg = {**self.cfg, 'game_dir': str(path)}
+        save_config(self.base_dir, cfg)
+        self.cfg = cfg
+        self.gamedir_var.set(str(path))
+        self.winmode.game_dir = str(path)
+        self.latency = LatencyPatch(str(path))
+        self.info_var.set('왕건 방식 주소 응답 패치 확인 완료 — 게임 실행')
+
+    def _on_game_play(self):
+        # Use the saved multiplayer destination when available; otherwise local.
+        if self.saved_ip_var.get().strip() or is_server_running():
+            self._on_multi_play()
+        else:
+            self._on_single_play()
 
     def _on_single_play(self):
         # 싱글: 내 PC 서버(127.0.0.1)로 접속. 서버가 꺼져 있으면 자동으로 켠다.
@@ -1246,7 +1293,6 @@ class App(tk.Tk):
         # ── 게임 경로 ──
         path_frame = ttk.LabelFrame(frame, text="게임 설치 경로", padding=10)
         path_frame.pack(fill="x", pady=(0, 10))
-        self.gamedir_var = tk.StringVar(value=self.winmode.game_dir)
         ttk.Entry(path_frame, textvariable=self.gamedir_var, width=44).pack(side="left", padx=(0, 6))
         ttk.Button(path_frame, text="찾기", command=self._on_browse_game, width=6).pack(side="left")
 
