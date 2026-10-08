@@ -1,0 +1,31 @@
+2026-10-09 / 0.9017
+Compared local Documents/wanggun project (Korean directory name: 왕건-claude)
+dummyserver.py and installed C:/Program Files/태조왕건/WangGun.exe against
+RhakMu/TG_Net. No files in the WangGun project or installation were changed.
+
+WangGun executable imports WG_Net and KAURI UDP functions. RhakMu imports
+TG_Net and has different object layouts, global addresses and ports.
+Neither the project README nor dummyserver is a replacement game-network
+source tree. dummyserver explicitly leaves game UDP 6112 unbound.
+Therefore copying DLLs or its lobby server is not a compatible migration.
+
+Concrete transferable behavior:
+WangGun unknown-source dispatcher at 0x40cadd recognizes 0x8813/0x8814.
+At 0x40cb67 it checks session and recipient, checks sender participation,
+then pushes sender and 0x8814 at 0x40cba1 and calls 0x40c640 to reply.
+At 0x40caf7..0x40cb5c it accepts an 0x8814 address response.
+RhakMu 0x449f5c..0x449f88 checks session/recipient for 0x8813 but skips
+to the receive loop, with no analogous acknowledgement at that site.
+
+0.9017 retains the guarded 0.9016 Radmin-source address learning and adds
+the corresponding 0x8814 reply using RhakMu's own 0x448de0 serializer,
+CRC and UDP sender. It does not copy WangGun addresses or DLL code.
+0.9016 patches can be upgraded and restored; backups remain automatic.
+Explicit apply+readback UI added because prior captures said unpatched
+despite Radmin mode being selected. That launch discrepancy is not yet
+explained; direct application avoids relying on that path for this test.
+
+Verification: actual RhakMu receive/CRC/send code emulation, exact 12-byte
+0x8814 reply including checksum; malformed and wrong-player rejection;
+legacy patch migration and reversible changes. Live two-PC multiplayer
+success is NOT verified by these tests.

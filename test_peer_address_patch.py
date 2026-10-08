@@ -37,6 +37,9 @@ class PeerAddressTests(unittest.TestCase):
         machine.reg_write(UC_X86_REG_ESP, 0x2007000)
         machine.mem_write(0x2007ffc, struct.pack('<I', 0x1800000))
         machine.mem_write(0x1800018, struct.pack('<I', 0x1806000))
+        machine.mem_write(0x1800044, struct.pack('<I', 0x1806200))
+        machine.mem_write(0x4ec2ec, struct.pack('<I', 0x1808000))
+        machine.mem_write(0x1808000, b'\xc3')
         payload = struct.pack('<HHBBI', 0x8813, size, sender, recipient, session)
         payload += crc(payload)
         if corrupt:
@@ -71,6 +74,9 @@ class PeerAddressTests(unittest.TestCase):
             expected = '26.240.153.112' if enabled else '192.168.0.8'
             self.assertEqual(bytes(machine.mem_read(0x7f7934+0x11e0,4)), socket.inet_aton(expected))
             self.assertEqual(bytes(machine.mem_read(0x1800054+0x284,4)), socket.inet_aton(expected))
+            if enabled:
+                ack = struct.pack('<HHBBI', 0x8814, 10, 0, 1, 0)
+                self.assertEqual(bytes(machine.mem_read(0x1806200,12)), ack + crc(ack))
             # Next packet from this source: original rejects the source; patched
             # game dispatches it to the original known-player handler.
             result = self.run_to_decision(machine, 0x449e0d, {0x449ce0, 0x449f34})
@@ -104,6 +110,15 @@ class PeerAddressTests(unittest.TestCase):
         data[0xeb420] = 1
         with self.assertRaises(ValueError):
             patch.transform(data, True)
+
+    def test_upgrade_from_9016(self):
+        data = bytearray(patch.transform(self.original, True))
+        data[0xeb420:0xeb520] = patch.OLD_CODE.ljust(256, b'\x90')
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root, 'Rhakmu.exe')
+            path.write_bytes(data)
+            patch.apply(path)
+            self.assertEqual(path.read_bytes(), patch.transform(self.original, True))
 
 if __name__ == '__main__':
     unittest.main()

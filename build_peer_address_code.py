@@ -33,10 +33,15 @@ jb done
 cmp dword ptr [eax+0x7f7934], 0
 je done
 mov [eax+0x7f7934], ebx
+mov edi, ecx
 imul ecx, ecx, 0x284
 mov [esi+ecx+0x54], ebx
 mov word ptr [esi+ecx+0x50], 2
 mov word ptr [esi+ecx+0x52], 0xd72b
+push edi
+push 0x8814
+mov ecx, esi
+call 0x448de0
 done:
 popad
 popfd

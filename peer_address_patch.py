@@ -12,6 +12,8 @@ import tempfile
 
 CODE = bytes.fromhex('9c608b75fc8b7e18837f080c75728b570c66813a1388756866837a020a75618b42063b05c412b40075560fb605cc12b4003a4205754a0fb64a0483f908734139c1743d8b1f80fb1a753669c1e011000080b80e797f0020722783b834797f0000741e899834797f0069c984020000895c0e5466c7440e50020066c7440e522bd7619de940eef5ff')
 PREFIX = bytes.fromhex('8b4dfc8b51188b420c8b48063b0dc412b400751d8b55fc8b42188b480c0fbe51050fbe05cc12b4003bd07505')
+OLD_CODE = CODE
+CODE = bytes.fromhex('9c608b75fc8b7e18837f080c0f85810000008b570c66813a1388757766837a020a75708b42063b05c412b40075650fb605cc12b4003a420575590fb64a0483f908735039c1744c8b1f80fb1a754569c1e011000080b80e797f0020723683b834797f0000742d899834797f0089cf69c984020000895c0e5466c7440e50020066c7440e522bd757681488000089f1e82dd9f5ff619de92deef5ff')
 TEXT_HEADER = bytes.fromhex('2e7465787400000012a40e000010000000b00e000010000000000000000000000000000020000060')
 SITES = (
     (0x49f88, bytes.fromhex('e95a030000'), b'\xe9' + struct.pack('<i', 0x4eb420 - 0x449f8d)),
@@ -30,6 +32,8 @@ def state(data):
     states = []
     for offset, original, patched in SITES:
         value = data[offset:offset + len(original)]
+        if offset == 0xeb420 and value == OLD_CODE.ljust(256, b'\x90'):
+            value = patched
         if value not in (original, patched):
             raise ValueError(f'패치 영역 충돌: {offset:#x}. 변경하지 않았습니다.')
         states.append(value == patched)
@@ -47,7 +51,9 @@ def transform(data, enabled):
 def apply(path, enabled=True):
     path = Path(path)
     data = path.read_bytes()
-    if state(data) == enabled:
+    current = state(data)
+    legacy = data[0xeb420:0xeb520] == OLD_CODE.ljust(256, b'\x90')
+    if current == enabled and not (enabled and legacy):
         return '이미 적용되어 있습니다.' if enabled else '이미 원복되어 있습니다.'
     backup = path.with_name(path.name + '.bak_peeraddr_' + hashlib.sha256(data).hexdigest()[:16])
     if backup.exists():

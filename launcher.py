@@ -30,7 +30,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9016"
+APP_VERSION = "0.9017"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -667,16 +667,24 @@ class App(tk.Tk):
         row.pack(anchor="w")
         ttk.Button(row, text="포트 수정 적용", command=lambda: self._sync_port_patch(True)).pack(side="left")
         ttk.Button(row, text="포트 수정 원복", command=lambda: self._sync_port_patch(False)).pack(side="left", padx=6)
+        ttk.Button(frame, text='왕건 방식 주소 응답 패치 적용', command=lambda: self._restore_peer_address(True)).pack(anchor='w', pady=4)
         ttk.Button(frame, text='상대 주소 복구 패치 원복', command=self._restore_peer_address).pack(anchor='w', pady=4)
 
-    def _restore_peer_address(self):
+    def _restore_peer_address(self, enabled=False):
         rc, out = _run_ps("if (Get-Process Rhakmu,Launcher -ErrorAction SilentlyContinue) { Write-Output 'RUNNING' }")
         if rc != 0 or 'RUNNING' in out:
             messagebox.showwarning('상대 주소 패치', '게임을 완전히 종료한 후 원복하세요.')
             return
         try:
-            result = peer_address_patch.apply(os.path.join(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE), False)
-            messagebox.showinfo('상대 주소 패치', result + '\n라드민 전용 모드로 다시 실행하면 재적용됩니다.')
+            path = os.path.join(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE)
+            if enabled:
+                peer_address_patch.state(pathlib.Path(path).read_bytes())
+                sync_port_patch.apply(path, True)
+            result = peer_address_patch.apply(path, enabled)
+            verified = peer_address_patch.state(pathlib.Path(path).read_bytes())
+            if verified != enabled:
+                raise RuntimeError('패치 적용 확인 실패')
+            messagebox.showinfo('상대 주소 패치', result + '\n파일 재검증 완료: ' + path)
         except Exception as e:
             messagebox.showerror('상대 주소 패치', str(e))
 
@@ -709,7 +717,10 @@ class App(tk.Tk):
                            "lobby_ip": HostsManager.read_current_ip([GAME_HOST])}, f, ensure_ascii=False, indent=2)
             try:
                 game_data = pathlib.Path(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE).read_bytes()
-                patch_status = {'peer_address': peer_address_patch.state(game_data), 'sync_port': sync_port_patch.state(game_data)}
+                patch_status = {'peer_address': peer_address_patch.state(game_data), 'sync_port': sync_port_patch.state(game_data),
+                                'peer_reply_8814': game_data[0xeb420:0xeb420+len(peer_address_patch.CODE)] == peer_address_patch.CODE,
+                                'game_path': str(pathlib.Path(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE)),
+                                'radmin_mode_selected': self.radmin_only.get()}
             except (ValueError, OSError) as e:
                 patch_status = {'error': str(e)}
             pathlib.Path(self.capture_dir, 'game-patches.json').write_text(json.dumps(patch_status), encoding='utf-8')
