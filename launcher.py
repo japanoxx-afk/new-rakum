@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tkinter as tk
 import sync_port_patch
+import launcher_update
 from tkinter import ttk, messagebox
 
 # server.py는 런타임 exec로 실행되므로 PyInstaller가 의존성을 자동 감지 못 한다.
@@ -26,7 +27,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9012"
+APP_VERSION = "0.9013"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -217,7 +218,7 @@ def save_config(base_dir, cfg):
 def check_for_update():
     import urllib.request
     try:
-        req = urllib.request.Request(VERSION_CHECK_URL)
+        req = urllib.request.Request(VERSION_CHECK_URL + '?check=' + str(__import__('time').time_ns()), headers={'Cache-Control': 'no-cache'})
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read())
         latest = data.get("launcher_version", APP_VERSION)
@@ -231,58 +232,18 @@ def check_for_update():
 
 
 def do_self_update(download_url, expected_size=0):
-    import urllib.request
-    import urllib.parse
-    if not getattr(sys, "frozen", False):
-        return False, "개발 모드에서는 자동 업데이트를 사용할 수 없습니다."
-
-    current_exe = sys.executable
-    filename = os.path.basename(urllib.parse.urlparse(download_url).path)
-    if not re.fullmatch(r'RhakMuLauncher_v[0-9.]+\.exe', filename):
-        return False, '업데이트 파일명이 올바르지 않습니다.'
-    target = os.path.join(os.path.dirname(current_exe), filename)
-    if os.path.normcase(os.path.abspath(target)) == os.path.normcase(os.path.abspath(current_exe)):
-        return False, '현재 실행 파일과 업데이트 파일이 같습니다. 버전 정보를 다시 확인하세요.'
-    import tempfile
-    fd, new_exe = tempfile.mkstemp(prefix='rhakmu_update_', suffix='.download', dir=os.path.dirname(current_exe))
-    os.close(fd)
-
+    if not getattr(sys, 'frozen', False):
+        return False, '개발 모드에서는 자동 업데이트를 사용할 수 없습니다.'
     try:
-        urllib.request.urlretrieve(download_url, new_exe)
+        match = re.search(r'RhakMuLauncher_v([0-9.]+)\.exe$', download_url)
+        if not match:
+            raise ValueError('올바르지 않은 업데이트 주소입니다.')
+        launcher_update.install(download_url, expected_size, sys.executable, match.group(1))
+        return True, ''
     except Exception as e:
-        try:
-            if os.path.exists(new_exe): os.remove(new_exe)
-        except OSError:
-            pass
-        return False, f"다운로드 실패:\n{e}"
+        return False, f'업데이트 실패: {e}\n현재 런처는 유지됩니다.'
 
-    # 다운로드 무결성 검증: 깨진 파일로 교체해 런처가 망가지는 것을 방지.
-    # (검증 실패 시 기존 버전을 그대로 유지)
-    try:
-        sz = os.path.getsize(new_exe)
-        with open(new_exe, "rb") as f:
-            head = f.read(2)
-    except OSError as e:
-        return False, f"다운로드 확인 실패:\n{e}"
-    if head != b"MZ" or (expected_size and sz != expected_size):
-        try:
-            os.remove(new_exe)
-        except OSError:
-            pass
-        return False, (
-            f"다운로드가 손상되어 업데이트를 취소했습니다 (받은 크기 {sz:,} / 기대 {expected_size:,}).\n"
-            "현재 버전은 그대로 사용 가능합니다. 잠시 후 다시 시도하거나 수동 다운로드:\n"
-            "https://github.com/japanoxx-afk/new-rakum"
-        )
 
-    try:
-        # Keep the running executable intact, including when --server owns it.
-        os.replace(new_exe, target)
-        subprocess.Popen([target], cwd=os.path.dirname(target),
-                         env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"})
-    except OSError as e:
-        return False, f'새 런처 설치/실행 실패: {e}\n기존 런처는 보존됩니다.\n새 파일: {target}'
-    return True, ""
 
 
 # ═══════════════════════════════════════════════════════
@@ -853,7 +814,7 @@ class App(tk.Tk):
         self.update_status_var.set("버전 확인 중...")
         self.update()
         try:
-            with urllib.request.urlopen(VERSION_CHECK_URL, timeout=6) as r:
+            with urllib.request.urlopen(VERSION_CHECK_URL + '?check=' + str(__import__('time').time_ns()), timeout=6) as r:
                 data = json.loads(r.read())
         except Exception as e:
             self.update_status_var.set("확인 실패")
@@ -1327,6 +1288,14 @@ class App(tk.Tk):
 # ═══════════════════════════════════════════════════════
 
 if __name__ == "__main__":
+    if '--update-probe' in sys.argv:
+        result_path = sys.argv[sys.argv.index('--update-probe') + 1]
+        probe_app = App()
+        probe_app.withdraw()
+        probe_app.update_idletasks()
+        probe_app.destroy()
+        pathlib.Path(result_path).write_text(json.dumps({'version': APP_VERSION}), encoding='utf-8')
+        sys.exit(0)
     if "--server" in sys.argv:
         run_server_mode()
     else:
@@ -1349,4 +1318,9 @@ if __name__ == "__main__":
                     _r.destroy()
 
         app = App()
+        if getattr(sys, 'frozen', False):
+            try:
+                launcher_update.make_shortcut(sys.executable)
+            except Exception as e:
+                messagebox.showwarning('바로가기', f'고정 바로가기를 만들지 못했습니다: {e}')
         app.mainloop()
