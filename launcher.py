@@ -19,6 +19,7 @@ import sync_port_patch
 import peer_address_patch
 import panel_guard_patch
 from release_notes import NOTES
+from hosts_entries import replace_entries
 import launcher_update
 from tkinter import ttk, messagebox
 
@@ -32,7 +33,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9019"
+APP_VERSION = "0.9020"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -443,19 +444,9 @@ class HostsManager:
         try:
             with open(HOSTS_PATH, "r", encoding="utf-8") as f:
                 content = f.read()
-        except OSError:
+        except FileNotFoundError:
             content = ""
-
-        for domain in domains:
-            pattern = re.compile(
-                rf"^[^\S\n]*\S+\s+{re.escape(domain)}\s*$",
-                re.MULTILINE,
-            )
-            content = pattern.sub("", content)
-
-        content = content.rstrip("\n") + "\n"
-        for domain in domains:
-            content += f"{ip} {domain}\n"
+        content = replace_entries(content, ip, domains)
 
         with open(HOSTS_PATH, "w", encoding="utf-8") as f:
             f.write(content)
@@ -609,7 +600,6 @@ class App(tk.Tk):
         launch_path.pack(fill='x', padx=8, pady=4)
         ttk.Entry(launch_path, textvariable=self.gamedir_var).pack(side='left', fill='x', expand=True)
         ttk.Button(launch_path, text='찾기', command=self._on_browse_game).pack(side='left', padx=4)
-        ttk.Button(launch_path, text='게임 실행', command=self._on_game_play).pack(side='left')
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True, padx=8, pady=(8, 4))
@@ -627,6 +617,7 @@ class App(tk.Tk):
 
         launch_frame = ttk.Frame(self)
         launch_frame.pack(fill="x", padx=8, pady=(0, 10))
+        ttk.Button(launch_frame, text='게임 실행', command=self._on_game_play, width=14).pack(side='left', expand=True, padx=4)
         ttk.Button(
             launch_frame, text="🎮 싱글플레이", command=self._on_single_play, width=18,
         ).pack(side="left", expand=True, padx=4)
@@ -790,8 +781,18 @@ class App(tk.Tk):
 
     # ── 서버 탭 ──
     def _build_server_tab(self, notebook):
-        frame = ttk.Frame(notebook, padding=16)
-        notebook.add(frame, text="  호스트 (서버)  ")
+        tab = ttk.Frame(notebook)
+        notebook.add(tab, text="  호스트 · 접속  ")
+        canvas = tk.Canvas(tab, highlightthickness=0)
+        scroll = ttk.Scrollbar(tab, orient='vertical', command=canvas.yview)
+        scroll.pack(side='right', fill='y')
+        canvas.pack(side='left', fill='both', expand=True)
+        canvas.configure(yscrollcommand=scroll.set)
+        frame = ttk.Frame(canvas, padding=12)
+        window = canvas.create_window((0, 0), window=frame, anchor='nw')
+        frame.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>', lambda e: canvas.itemconfigure(window, width=e.width))
+        self.connection_parent = frame
 
         ttk.Label(frame, text="라크무 서버 관리", font=("맑은 고딕", 12, "bold")).pack(
             anchor="w", pady=(0, 4)
@@ -813,7 +814,7 @@ class App(tk.Tk):
         self.btn_stop = ttk.Button(btn_frame, text="서버 종료", command=self._on_stop, width=14)
         self.btn_stop.pack(side="left")
         ttk.Label(frame, text='별도 창 없이 실행됩니다. 런처를 닫으면 서버도 종료됩니다.', foreground='gray').pack(anchor='w', pady=6)
-        self.server_log = tk.Text(frame, height=8, wrap='word', state='disabled')
+        self.server_log = tk.Text(frame, height=4, wrap='word', state='disabled')
         self.server_log.pack(fill='both', expand=True)
 
         update_frame = ttk.Frame(frame)
@@ -931,8 +932,8 @@ class App(tk.Tk):
 
     # ── 클라 탭 ──
     def _build_client_tab(self, notebook):
-        frame = ttk.Frame(notebook, padding=16)
-        notebook.add(frame, text="  클라 (접속)  ")
+        frame = ttk.LabelFrame(self.connection_parent, text='서버 접속 설정', padding=8)
+        frame.pack(fill='x', pady=8)
 
         ttk.Label(frame, text="접속 정보 (hosts)", font=("맑은 고딕", 12, "bold")).pack(anchor="w", pady=(0, 4))
         self.cur_ip_var = tk.StringVar()
@@ -940,8 +941,12 @@ class App(tk.Tk):
         ip_row.pack(fill='x', pady=6)
         ttk.Label(ip_row, text='서버 VPN IP: ').pack(side='left')
         self.saved_ip_var = tk.StringVar(value=self.cfg.get('last_server_ip', ''))
-        ttk.Entry(ip_row, textvariable=self.saved_ip_var, width=20).pack(side='left')
-        ttk.Button(ip_row, text='저장', command=self._save_server_ip).pack(side='left', padx=6)
+        ip_entry = ttk.Entry(ip_row, textvariable=self.saved_ip_var, width=20)
+        ip_entry.pack(side='left')
+        ip_entry.bind('<Return>', lambda e: self._save_server_ip())
+        ip_entry.bind('<FocusOut>', self._commit_ip_input)
+        ttk.Button(ip_row, text='저장·적용', command=self._save_server_ip).pack(side='left', padx=6)
+        ttk.Label(frame, text='IP 입력 후 Enter 또는 다른 항목 클릭 시 hosts에 반영됩니다.', foreground='gray').pack(anchor='w')
         self.radmin_only = tk.BooleanVar(value=self.cfg.get('radmin_only', True))
         ttk.Checkbutton(frame, text="라드민 전용 모드 (게임 IP 고정 + 하마치 일시 중지)",
                         variable=self.radmin_only).pack(anchor="w")
@@ -957,7 +962,7 @@ class App(tk.Tk):
         cont.pack(fill="both", expand=True)
         sb = ttk.Scrollbar(cont, orient="vertical")
         sb.pack(side="right", fill="y")
-        self.hosts_text = tk.Text(cont, height=9, font=("Consolas", 9), wrap="none",
+        self.hosts_text = tk.Text(cont, height=4, font=("Consolas", 9), wrap="none",
                                   yscrollcommand=sb.set)
         self.hosts_text.pack(fill="both", expand=True)
         sb.config(command=self.hosts_text.yview)
@@ -965,7 +970,7 @@ class App(tk.Tk):
         btns = ttk.Frame(frame)
         btns.pack(fill="x")
         ttk.Button(btns, text="새로고침", command=self._refresh_hosts_view, width=10).pack(side="left", padx=(0, 4))
-        ttk.Button(btns, text="호스트 파일 열기", command=self._on_open_hosts).pack(side="left")
+        ttk.Button(btns, text="hosts 폴더 열기", command=self._on_open_hosts).pack(side="left")
         ttk.Label(frame,
                   text="※ 접속 주소는 아래 '싱글/멀티플레이' 버튼이 자동 설정합니다.\n"
                        "   rhakmugame.hangame.naver.com 줄만 바뀌고 나머지는 보존됩니다.",
@@ -984,7 +989,13 @@ class App(tk.Tk):
         self.cur_ip_var.set(f"{GAME_HOST}  →  {ip}")
 
     def _on_open_hosts(self):
-        HostsManager.open_hosts_file()
+        os.startfile(os.path.dirname(HOSTS_PATH))
+
+    def _commit_ip_input(self, event=None):
+        value = self.saved_ip_var.get().strip()
+        if not value or value == getattr(self, '_last_applied_ip', None):
+            return
+        self._save_server_ip(notify=False)
 
     def _radmin_session_start(self, restore=False):
         if self.radmin_session is not None and self.radmin_session.poll() is None:
@@ -1140,14 +1151,17 @@ class App(tk.Tk):
             if ipaddress.IPv4Address(ip).is_unspecified or ipaddress.IPv4Address(ip).is_multicast:
                 raise ValueError('접속 가능한 서버 IPv4 주소를 입력하세요.')
             updated = {**self.cfg, 'last_server_ip': ip, 'radmin_only': self.radmin_only.get()}
+            HostsManager.set_game_host(ip)
             save_config(self.base_dir, updated)
             self.cfg = updated
             self.saved_ip_var.set(ip)
+            self._last_applied_ip = ip
+            self._refresh_hosts_view()
         except (ValueError, OSError) as e:
             messagebox.showerror('IP 저장 실패', str(e))
             return False
         if notify:
-            messagebox.showinfo('IP 저장', '저장했습니다. 다음 멀티플레이부터 이 주소로 접속합니다.')
+            messagebox.showinfo('IP 저장', 'IP를 저장하고 hosts의 게임 접속 주소에 반영했습니다.')
         return True
 
     def _ask_server_ip_and_launch(self):
