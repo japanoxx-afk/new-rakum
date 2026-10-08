@@ -33,7 +33,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9020"
+APP_VERSION = "0.9021"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -582,9 +582,9 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"라크무 런처 v{APP_VERSION}")
-        self.geometry("520x620")
+        self.geometry("720x820")
         self.resizable(True, True)
-        self.minsize(460, 560)
+        self.minsize(620, 680)
 
         self.base_dir = get_base_dir()
         self.server = ServerManager(self.base_dir)
@@ -617,7 +617,6 @@ class App(tk.Tk):
 
         launch_frame = ttk.Frame(self)
         launch_frame.pack(fill="x", padx=8, pady=(0, 10))
-        ttk.Button(launch_frame, text='게임 실행', command=self._on_game_play, width=14).pack(side='left', expand=True, padx=4)
         ttk.Button(
             launch_frame, text="🎮 싱글플레이", command=self._on_single_play, width=18,
         ).pack(side="left", expand=True, padx=4)
@@ -956,17 +955,6 @@ class App(tk.Tk):
         ttk.Label(frame, textvariable=self.radmin_status, wraplength=420).pack(anchor="w")
         ttk.Label(frame, textvariable=self.cur_ip_var, foreground="gray").pack(anchor="w", pady=(0, 8))
 
-        box = ttk.LabelFrame(frame, text="현재 hosts 파일 내용", padding=8)
-        box.pack(fill="both", expand=True, pady=(0, 8))
-        cont = ttk.Frame(box)
-        cont.pack(fill="both", expand=True)
-        sb = ttk.Scrollbar(cont, orient="vertical")
-        sb.pack(side="right", fill="y")
-        self.hosts_text = tk.Text(cont, height=4, font=("Consolas", 9), wrap="none",
-                                  yscrollcommand=sb.set)
-        self.hosts_text.pack(fill="both", expand=True)
-        sb.config(command=self.hosts_text.yview)
-
         btns = ttk.Frame(frame)
         btns.pack(fill="x")
         ttk.Button(btns, text="새로고침", command=self._refresh_hosts_view, width=10).pack(side="left", padx=(0, 4))
@@ -979,12 +967,8 @@ class App(tk.Tk):
         self._refresh_hosts_view()
 
     def _refresh_hosts_view(self):
-        if not hasattr(self, "hosts_text"):
+        if not hasattr(self, "cur_ip_var"):
             return
-        self.hosts_text.config(state="normal")
-        self.hosts_text.delete("1.0", tk.END)
-        self.hosts_text.insert("1.0", HostsManager.read_raw())
-        self.hosts_text.config(state="disabled")
         ip = HostsManager.read_current_ip([GAME_HOST])
         self.cur_ip_var.set(f"{GAME_HOST}  →  {ip}")
 
@@ -1066,7 +1050,7 @@ class App(tk.Tk):
         except OSError as e:
             messagebox.showerror("오류", str(e))
             return
-        if hasattr(self, "hosts_text"):
+        if hasattr(self, "cur_ip_var"):
             self._refresh_hosts_view()
         try:
             if multiplayer and self.radmin_only.get():
