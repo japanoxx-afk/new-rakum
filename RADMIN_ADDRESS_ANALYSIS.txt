@@ -1,0 +1,36 @@
+2026-10-09 / launcher 0.9014
+
+Confirmed static behavior:
+TG_Net.dll (81979 bytes), TGNet_Get_MyIPaddress RVA 0x2010 calls
+gethostname then TGNet_Get_IPAddressFromHostName (RVA 0x1f80).
+The latter takes the FIRST h_addr_list entry, without VPN selection.
+Rhakmu.exe calls it at 0x412ed1; the result is used by 0x42c040 at
+0x412f90, which stores an IPv4 in player table field 0x7f7934.
+The game's UDP receive dispatcher 0x449d80 checks the sender against
+that table and three alternative addresses before accepting game data.
+0x8811 asks for a packet sequence again; it is NOT a ready handshake.
+
+Change:
+In Radmin mode only, before starting the game, replace the 80-byte
+TGNet_Get_MyIPaddress function with a position-independent cdecl routine
+returning the single active Radmin adapter's IPv4 as a NUL-terminated
+string. Require buffer capacity >=16 and non-NULL. No relocation entries
+occur inside this function. Exact original bytes and DLL size required.
+Full DLL backup and recovery state saved before atomic replacement.
+After game exit restore only these 80 bytes, preserving other changes.
+Interrupted sessions refuse a new launch until explicit recovery.
+No firewall/route changes; existing temporary Hamachi isolation remains.
+
+Verification:
+Unicorn executes generated x86 for four IPs, minimum/short/NULL buffers,
+cdecl stack balance and preservation of EBX/ESI/EDI/EBP.
+Windows PowerShell 5 lifecycle mock uses a COPY of installed DLL and
+checks patch-before-launch, full hash restoration, adapter restoration.
+
+Limitations:
+Not yet verified in a two-PC multiplayer session. This addresses the
+first-address selection, not every possible source of synchronization
+failure. 192.168 addresses are legitimate on the users' shared LAN and
+are not by themselves evidence of a network failure. The successful
+Hamachi capture starts after initialization, so it cannot establish
+the exact initial handshake difference. Both PCs must use Radmin mode.

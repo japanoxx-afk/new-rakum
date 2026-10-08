@@ -27,7 +27,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9013"
+APP_VERSION = "0.9014"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -858,10 +858,10 @@ class App(tk.Tk):
         ttk.Label(frame, text="접속 정보 (hosts)", font=("맑은 고딕", 12, "bold")).pack(anchor="w", pady=(0, 4))
         self.cur_ip_var = tk.StringVar()
         self.radmin_only = tk.BooleanVar(value=self.cfg.get('radmin_only', True))
-        ttk.Checkbutton(frame, text="라드민 전용 모드 (멀티 실행 시 하마치 일시 중지)",
+        ttk.Checkbutton(frame, text="라드민 전용 모드 (게임 IP 고정 + 하마치 일시 중지)",
                         variable=self.radmin_only).pack(anchor="w")
         ttk.Label(frame, text="양쪽 PC에서 사용하세요. 게임 종료 후 하마치를 복구합니다.").pack(anchor="w")
-        ttk.Button(frame, text="하마치 상태 복구", command=lambda: self._radmin_session_start(restore=True)).pack(anchor="w")
+        ttk.Button(frame, text="게임 IP / 하마치 상태 복구", command=lambda: self._radmin_session_start(restore=True)).pack(anchor="w")
         self.radmin_status = tk.StringVar(value="라드민 전용 모드 대기")
         ttk.Label(frame, textvariable=self.radmin_status, wraplength=420).pack(anchor="w")
         ttk.Label(frame, textvariable=self.cur_ip_var, foreground="gray").pack(anchor="w", pady=(0, 8))
@@ -913,6 +913,7 @@ class App(tk.Tk):
             os.makedirs(root, exist_ok=True)
             helper = os.path.join(root, 'radmin_session.ps1')
             shutil.copyfile(os.path.join(get_resource_dir(), 'radmin_session.ps1'), helper)
+            shutil.copyfile(os.path.join(get_resource_dir(), 'radmin_address.ps1'), os.path.join(root, 'radmin_address.ps1'))
             args = ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', helper,
                     '-StateDir', root, '-GameDir', self.cfg.get('game_dir', DEFAULT_GAME_DIR)]
             if restore:
@@ -926,9 +927,9 @@ class App(tk.Tk):
     def _poll_radmin_session(self, root):
         try:
             text = pathlib.Path(root, 'status.txt').read_text(encoding='utf-8-sig').strip()
-            self.radmin_status.set({'STARTING':'하마치 중지 완료 — 게임 시작 중',
+            self.radmin_status.set({'STARTING':'게임 IP를 라드민으로 고정 — 게임 시작 중',
                                    'PLAYING':'라드민 전용 게임 실행 중',
-                                   'RESTORED':'하마치 원래 상태 복구 완료'}.get(text, text))
+                                   'RESTORED':'게임 IP / 하마치 원래 상태 복구 완료'}.get(text, text))
         except OSError:
             pass
         if self.radmin_session.poll() is None:

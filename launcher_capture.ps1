@@ -11,6 +11,10 @@ function Pkt([string[]]$Arguments) {
     if ($code -ne 0) { throw "pktmon $($Arguments -join ' '): $result" }
 }
 try {
+    $addressState = Join-Path $env:LOCALAPPDATA 'RhakMu\radmin-session\address.json'
+    if (Test-Path -LiteralPath $addressState) {
+        Copy-Item -LiteralPath $addressState -Destination (Join-Path $OutputDir 'radmin-address-start.json')
+    }
     # Do not clear another application's global packet filters.
     $filters = (& pktmon filter list 2>&1 | Out-String)
     $filterCode = $LASTEXITCODE
