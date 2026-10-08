@@ -20,6 +20,7 @@ import peer_address_patch
 import panel_guard_patch
 from release_notes import NOTES
 from hosts_entries import replace_entries
+from display_settings import WindowModeManager, RENDERERS
 import launcher_update
 from tkinter import ttk, messagebox
 
@@ -33,7 +34,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9021"
+APP_VERSION = "0.9022"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -57,16 +58,14 @@ GAME_VERSIONS = {
     1065002: "1.000a",
 }
 RESOLUTIONS = [
-    "640x480", "800x600", "1024x768", "1280x720", "1280x960",
+    "0x0", "640x480", "800x600", "1024x768", "1280x720", "1280x960",
     "1600x900", "1920x1080", "2560x1440", "3440x1440", "3840x2160",
 ]
 SHADERS = [
     ("선명하게 (Lanczos)", "Lanczos"),
     ("부드럽게 (Bicubic)", "Bicubic"),
     ("기본 (Bilinear)", "Bilinear"),
-    ("픽셀아트 보간 (xBR-lv2)", "xBR-lv2"),
     ("도트 그대로 (Nearest)", "Nearest neighbor"),
-    ("catmull-rom (기본값)", "Shaders\\interpolation\\catmull-rom-bilinear.glsl"),
 ]
 SHADER_VALUES = {label: val for label, val in SHADERS}
 
@@ -500,78 +499,6 @@ class HostsManager:
     @staticmethod
     def open_hosts_file():
         subprocess.Popen(["notepad.exe", HOSTS_PATH])
-
-
-class WindowModeManager:
-    def __init__(self, game_dir):
-        self.game_dir = game_dir
-
-    @property
-    def ini_path(self):
-        return os.path.join(self.game_dir, DDRAW_INI)
-
-    @property
-    def available(self):
-        return os.path.isfile(self.ini_path)
-
-    def read_settings(self):
-        result = {"windowed": False, "width": 800, "height": 600,
-                  "shader": "", "maintas": False}
-        if not self.available:
-            return result
-        try:
-            with open(self.ini_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith(";") or "=" not in line:
-                        continue
-                    key, _, val = line.partition("=")
-                    key, val = key.strip(), val.strip()
-                    if key == "windowed":
-                        result["windowed"] = val.lower() == "true"
-                    elif key == "width" and val.isdigit():
-                        result["width"] = int(val)
-                    elif key == "height" and val.isdigit():
-                        result["height"] = int(val)
-                    elif key == "shader":
-                        result["shader"] = val
-                    elif key == "maintas":
-                        result["maintas"] = val.lower() == "true"
-        except OSError:
-            pass
-        return result
-
-    def apply_settings(self, windowed, width, height, shader="", maintas=False):
-        if not self.available:
-            return False, f"ddraw.ini를 찾을 수 없습니다.\n({self.ini_path})"
-        try:
-            with open(self.ini_path, "r", encoding="utf-8") as f:
-                content = f.read()
-        except OSError as e:
-            return False, str(e)
-
-        def set_value(text, key, value):
-            pattern = re.compile(rf"^(\s*){re.escape(key)}\s*=.*$", re.MULTILINE)
-            if pattern.search(text):
-                return pattern.sub(rf"\g<1>{key}={value}", text)
-            return text
-
-        content = set_value(content, "windowed", "true" if windowed else "false")
-        content = set_value(content, "fullscreen", "false" if windowed else "true")
-        content = set_value(content, "width", str(width))
-        content = set_value(content, "height", str(height))
-        content = set_value(content, "maintas", "true" if maintas else "false")
-        if shader:
-            content = set_value(content, "shader", shader)
-
-        try:
-            with open(self.ini_path, "w", encoding="utf-8") as f:
-                f.write(content)
-        except OSError as e:
-            return False, str(e)
-
-        mode = "창모드" if windowed else "전체화면"
-        return True, f"{mode} ({width}x{height}) 적용 완료."
 
 
 # ═══════════════════════════════════════════════════════
@@ -1277,8 +1204,17 @@ class App(tk.Tk):
 
     # ── 설정 탭 ──
     def _build_settings_tab(self, notebook):
-        frame = ttk.Frame(notebook, padding=16)
-        notebook.add(frame, text="  설정  ")
+        page = ttk.Frame(notebook)
+        notebook.add(page, text="  설정  ")
+        canvas = tk.Canvas(page, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(page, orient='vertical', command=canvas.yview)
+        scrollbar.pack(side='right', fill='y')
+        canvas.pack(side='left', fill='both', expand=True)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        frame = ttk.Frame(canvas, padding=16)
+        item = canvas.create_window((0, 0), window=frame, anchor='nw')
+        frame.bind('<Configure>', lambda event: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>', lambda event: canvas.itemconfigure(item, width=event.width))
 
         # ── 게임 경로 ──
         path_frame = ttk.LabelFrame(frame, text="게임 설치 경로", padding=10)
@@ -1323,19 +1259,35 @@ class App(tk.Tk):
         # ── 창모드 ──
         mode_frame = ttk.LabelFrame(frame, text="디스플레이 모드", padding=12)
         mode_frame.pack(fill="x", pady=(0, 10))
-        settings = self.winmode.read_settings()
+        try:
+            settings = self.winmode.read_settings()
+        except (OSError, UnicodeError) as exc:
+            settings = WindowModeManager('').read_settings()
+            ttk.Label(mode_frame, text=f'설정 읽기 실패: {exc}', foreground='red', wraplength=500).pack()
         self.windowed_var = tk.BooleanVar(value=settings["windowed"])
         ttk.Checkbutton(mode_frame, text="창모드로 실행 (Alt+Enter 토글)",
                         variable=self.windowed_var).pack(anchor="w", pady=(0, 6))
         self.maintas_var = tk.BooleanVar(value=settings.get("maintas", False))
-        ttk.Checkbutton(mode_frame, text="비율 유지 (4:3 고정)",
+        ttk.Checkbutton(mode_frame, text="원본 비율 유지 (해제하면 화면 채우기)",
                         variable=self.maintas_var).pack(anchor="w", pady=(0, 10))
         res_row = ttk.Frame(mode_frame)
         res_row.pack(fill="x", pady=(0, 4))
-        ttk.Label(res_row, text="해상도:").pack(side="left")
+        ttk.Label(res_row, text="출력 크기:").pack(side="left")
         current_res = f"{settings['width']}x{settings['height']}"
         self.res_var = tk.StringVar(value=current_res)
         ttk.Combobox(res_row, textvariable=self.res_var, values=RESOLUTIONS, width=14).pack(side="left", padx=(6, 0))
+        ttk.Label(mode_frame, text='0x0 = 게임이 요청한 원본 크기. 위 값은 화면 확대 크기입니다.\n'
+                  '내부 지도 확장(1280×720 / 1920×1080)은 개발 중이며 아직 적용되지 않습니다.',
+                  foreground='gray', wraplength=510).pack(anchor='w', pady=4)
+        render_row = ttk.Frame(mode_frame)
+        render_row.pack(fill='x')
+        ttk.Label(render_row, text='렌더러:').pack(side='left')
+        self.renderer_var = tk.StringVar(value=settings.get('renderer', 'auto'))
+        ttk.Combobox(render_row, textvariable=self.renderer_var, values=RENDERERS,
+                     state='readonly', width=14).pack(side='left', padx=6)
+        self.confine_var = tk.BooleanVar(value=settings.get('confine', True))
+        ttk.Checkbutton(mode_frame, text='마우스 가두기 (cnc-ddraw 설정)',
+                        variable=self.confine_var).pack(anchor='w')
 
         shader_frame = ttk.LabelFrame(frame, text="업스케일 셰이더 (화질)", padding=12)
         shader_frame.pack(fill="x", pady=(0, 10))
@@ -1415,7 +1367,13 @@ class App(tk.Tk):
             messagebox.showerror("반응속도", msg)
 
     def _on_apply_winmode(self):
+        rc, out = _run_ps("if (Get-Process Rhakmu,Launcher -ErrorAction SilentlyContinue) { Write-Output 'RUNNING' }")
+        if rc != 0 or 'RUNNING' in out:
+            messagebox.showwarning('게임 실행 중', '게임을 종료한 뒤 출력 설정을 변경하세요.')
+            return
         game_dir = self.gamedir_var.get().strip()
+        if os.path.isfile(game_dir) and os.path.basename(game_dir).lower() == GAME_EXE.lower():
+            game_dir = os.path.dirname(game_dir)
         if game_dir != self.winmode.game_dir:
             self.winmode.game_dir = game_dir
             self.cfg["game_dir"] = game_dir
@@ -1434,6 +1392,7 @@ class App(tk.Tk):
         ok, msg = self.winmode.apply_settings(
             self.windowed_var.get(), width, height,
             shader=shader_val, maintas=self.maintas_var.get(),
+            renderer=self.renderer_var.get(), confine=self.confine_var.get(),
         )
         if ok:
             messagebox.showinfo("설정", msg)

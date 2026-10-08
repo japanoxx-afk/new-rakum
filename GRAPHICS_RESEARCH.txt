@@ -1,0 +1,96 @@
+RhakMu graphics investigation — 2026-10-09
+STATUS: incomplete research, not a playable expanded-viewport release.
+
+Scope and reference
+  Source: this repository (new-rakum), not the older rakmu repository.
+  Reference: Documents/ChatGPT/wanggun/tools/build_viewport_probe.py.
+  WangGun addresses, 800x600 assumptions, gameplay/selection changes were NOT copied.
+  Source SHA-256 allowlist is in viewport_probe.py. Rhakmu.exe size 1069098 is
+  identified by the existing launcher as 1.000d; this is not independent version
+  resource verification. The inspected EXE already contains networking patches.
+
+Static evidence (RhakMu virtual addresses)
+  4D9826/4D982F initialize classSCREEN width/height at 0106A5E0/0106A5E2
+  to 1024/768. 4D98D9 invokes iCARUS_Init@32 with 16-bit color and these
+  dimensions for both physical and virtual buffers.
+  4DC480 classSCREEN::ResolutionChange reinitializes iCARUS and calls
+  CPannelMgr::ChangeResAction (465830). Scene paths request BOTH 800x600 and
+  1024x768; a single initial-global edit is insufficient.
+  4DC1EF..4DC244 choose RGB565/RGB555/reversed masks from queried pixel format.
+  iCARUS.dll imports DirectDrawCreateEx. Its iCARUS_Init is 10017ED0;
+  10017FC3..10017FCE divides byte pitch by bytes/pixel. RhakMu Draw_Tile uses
+  engine pixels at tagICARUS+70 and row-offset table +74 (4CA766..4CA784).
+  Runtime baseline observed at 800x600: RGB565, 16 bits/pixel, byte pitch 1600,
+  pixel pitch 800; physical/virtual dimensions both 800x600.
+  4CA690 Draw_Tile derives columns = width/32, rows = (height-152)/32.
+  This is integer division, so 720 introduces a partial bottom strip that
+  cannot be solved by merely increasing the surface dimensions.
+  World tile stride is 0x208, independent of screen width; do not replace it.
+  46732D..4673A8 minimap camera extents derive from the above tile dimensions
+  and map dimensions. No simple 16:9 scale factor should replace projection.
+  4D7F20 camera recenter/boundary similarly uses width and height-152.
+  4DC3FA..4DC469 large-mode HUD has fixed left/right margins 112/113 and
+  clipping constants 1024/768. Child controls have individual ChangeRes methods.
+  435550 MakeSkyDrawList, 43E520 Object_MakeDrawList, 4CC520 Draw_SKYCharacter,
+  4CE470 Draw_GNDCharacter, 4CFEE0 Draw_GNDConstruct,
+  4D23F0/4D28F0/4D2960 magic/bullets, 4CAF40 Draw_WarFog, 4CA960 Draw_Rain,
+  4D3B50 construction preview, 4D41B0 drag box, 4D4440 cursor:
+  identified candidates, NOT fully verified/fixed.
+  Symbol names were recovered heuristically from local Rhakmu.000 and checked
+  against selected executable instructions; symbol extraction alone is not proof.
+
+Implemented, safe launcher-only changes (local v0.9022)
+  Label output size honestly; 0x0 leaves the game's requested resolution intact.
+  Keep original aspect ratio or stretch. Renderer and cursor-confinement settings.
+  Set d3d9_filter as well as OpenGL shader, so Direct3D9 filter selection works.
+  Section-local edits preserve other profiles and timing options; missing keys
+  are inserted. Conflicting [rhakmu] overrides cause a safe refusal.
+  Back up exact original INI with hash suffix, fsync and atomic replace.
+  Reject invalid values and edits while Rhakmu/Launcher processes exist.
+  Restore INI: quit game, copy desired ddraw.ini.bak_<hash> over ddraw.ini.
+  Installation EXE/DLL, hosts, saves and working Radmin patches were not changed.
+
+Experimental binary work
+  viewport_probe.py only writes a NEW directory in research/runtime.
+  Exact SHA-256 checks for EXE/iCARUS/GameCtrl plus per-instruction byte guards.
+  First probe changed initialization and clipped the 1024x768 menu at 720 height.
+  This was observed live, not merely inferred. That approach was discarded.
+  Current probe preserves initial/logo/post-game resolutions, changes only the
+  two CGameMenu::Menu_GameBeforeProcess requests (4237F8/423821) and high-res option,
+  and rewrites the large-mode screen setup block 4DC3FA..4DC474 in place:
+    full clip = actual surface size; HUD = centered 800px x bottom 185px;
+    shared large-mode panel/minimap origin at 501EA0 = (width-800)/2, height-600.
+  No new code cave or extra section. Unit tests emulate this block at 1024x768
+  and 1280x720. Visual child positioning is still unverified.
+  It is deliberately NOT in the launcher or updater. Partial tile drawing,
+  all collectors and scene transitions are unfinished. DO NOT use for
+  multiplayer, save games, or call this a finished high-resolution patch.
+
+Verification
+  Automated: config section isolation/insertion, backup, atomic failure,
+  filter values, invalid dimensions, running-game refusal; existing network,
+  hosts and auto-launch regression tests. Probe manifests are reversible and
+  network code/caves remain byte-for-byte identical.
+  Actual game: initial direct startup without required arguments exited 0.
+  User opened the first probe. Observed cropped menu (1024x768 asset / 1280x720
+  surface). Relaunched menu-safe probe with the observed non-secret startup
+  arguments "http://rhakmu. trigger.co.kr"; login menu fully visible.
+  User entered a test battle; runtime remained 800x600, and user reported the
+  in-game resolution button had no effect. Therefore changed battle-entry
+  requests, not the guarded option event. User authorized closing the old test;
+  started research/runtime/viewport-1280-auto-v2/Rhakmu.exe (PID 54156).
+  Menu runtime verified: 1024x768 RGB565, byte pitch 2048, matching full clip.
+  Awaiting the user's login and battle entry for expanded-surface verification.
+  Login interaction is performed by the user, not UI automation.
+  No new multiplayer or performance success claim is made.
+
+Next gate
+  Verify auto-entry probe actually requests 1280x720 at battle start.
+  Finish terrain partial rows, HUD+hitboxes+minimap and camera/input.
+  Then all factions/effects/fog/audio, 1920x1080, timing and cross-resolution
+  multiplayer. IME, DPI/dual monitor, Alt+Tab and long battles remain unverified.
+  Do not change the release version.json until the playable viewport is ready.
+
+Local launcher artifact: RhakMuLauncher_v0.9022.exe, --update-probe reports 0.9022.
+31 automated tests: 30 passed, 1 optional frozen-server integration skipped.
+The installed game SHA-256 remains EF006B8B3A5319279E4313E6FAED873CA655082643CB79535D81F05804306D16.
