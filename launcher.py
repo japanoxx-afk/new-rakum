@@ -26,7 +26,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9011"
+APP_VERSION = "0.9012"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -232,11 +232,20 @@ def check_for_update():
 
 def do_self_update(download_url, expected_size=0):
     import urllib.request
+    import urllib.parse
     if not getattr(sys, "frozen", False):
         return False, "개발 모드에서는 자동 업데이트를 사용할 수 없습니다."
 
     current_exe = sys.executable
-    new_exe = current_exe + ".new"
+    filename = os.path.basename(urllib.parse.urlparse(download_url).path)
+    if not re.fullmatch(r'RhakMuLauncher_v[0-9.]+\.exe', filename):
+        return False, '업데이트 파일명이 올바르지 않습니다.'
+    target = os.path.join(os.path.dirname(current_exe), filename)
+    if os.path.normcase(os.path.abspath(target)) == os.path.normcase(os.path.abspath(current_exe)):
+        return False, '현재 실행 파일과 업데이트 파일이 같습니다. 버전 정보를 다시 확인하세요.'
+    import tempfile
+    fd, new_exe = tempfile.mkstemp(prefix='rhakmu_update_', suffix='.download', dir=os.path.dirname(current_exe))
+    os.close(fd)
 
     try:
         urllib.request.urlretrieve(download_url, new_exe)
@@ -266,25 +275,13 @@ def do_self_update(download_url, expected_size=0):
             "https://github.com/japanoxx-afk/new-rakum"
         )
 
-    bat_path = current_exe + ".update.bat"
-    bat_content = (
-        '@echo off\r\n'
-        'echo 업데이트 중...\r\n'
-        'timeout /t 2 /nobreak >nul\r\n'
-        f'del "{current_exe}"\r\n'
-        f'move "{new_exe}" "{current_exe}"\r\n'
-        f'start "" "{current_exe}"\r\n'
-        f'del "%~f0"\r\n'
-    )
-    with open(bat_path, "w", encoding="mbcs") as f:
-        f.write(bat_content)
-
-    subprocess.Popen(
-        ["cmd", "/c", bat_path],
-        creationflags=subprocess.CREATE_NO_WINDOW,
-        # Restart must unpack its own runtime, not reuse the exiting app's _MEI.
-        env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
-    )
+    try:
+        # Keep the running executable intact, including when --server owns it.
+        os.replace(new_exe, target)
+        subprocess.Popen([target], cwd=os.path.dirname(target),
+                         env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"})
+    except OSError as e:
+        return False, f'새 런처 설치/실행 실패: {e}\n기존 런처는 보존됩니다.\n새 파일: {target}'
     return True, ""
 
 
