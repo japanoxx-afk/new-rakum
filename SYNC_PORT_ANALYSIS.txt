@@ -1,0 +1,36 @@
+2026-10-09: RhakMu 1.000d synchronization destination port
+
+Evidence:
+- Failed Radmin capture: 20261009_003839_cm6alz2p, remote 003843_7dd9dm0p.
+  Repeated payload 13 88 0a 00 ... sent to UDP 6112; ICMP port unreachable.
+- Successful Hamachi capture: 20261009_004922_svkjepeu.
+  UDP 11223 in both directions with changing 00 20 ... payloads.
+  Capture begins after game start; initial successful handshake unavailable.
+  Room owner also differs, so this is not a controlled VPN-only comparison.
+- Rhakmu.exe 1.000d (1069098 bytes): VA 0044A13D/file offset 0004A13D
+  push 0x17e0 (6112), call 004DD46E (WSOCK32 htons), store sockaddr port.
+  This sockaddr is passed to 00448EB0 with packet type 0x8813 at 0044A1B6.
+  Normal per-player send uses 00448DE0; fallback uses this explicit sockaddr.
+- Socket creation callers 00423B6A/00423C1B push 0x2bd7 (11223) to
+  00448800, which calls TGNet_CreateUDPSocket via IAT 004EC2F8.
+
+Change:
+- Optional launcher patch replaces only 6112 immediate with 11223.
+- Exact surrounding instruction signature and file size required.
+- Content-addressed full backup before replacement; restore changes only
+  this site and preserves other patches. Running game blocks UI operation.
+- Does not change DLLs, interface metrics, routes, firewall or server protocol.
+
+Verification:
+- Unit tests: unknown image rejection, idempotence, two-byte-only change,
+  restoration preserving unrelated edits.
+- Installed game copy: patched instruction disassembled as push 0x2bd7;
+  restoration byte-identical to original copy.
+- GUI construction and PyInstaller executable build passed.
+
+Limitations:
+- Actual multiplayer with patch is not yet verified.
+- Does not establish why this fallback is exercised under Radmin.
+- Mixed LAN/VPN addressing and asymmetric delivery may remain relevant.
+- Earlier assumption that all these packets are DirectPlay8 was not proven;
+  the identified 0x8813 path is in Rhakmu.exe using TG_Net UDP routines.

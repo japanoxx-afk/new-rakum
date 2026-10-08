@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tkinter as tk
+import sync_port_patch
 from tkinter import ttk, messagebox
 
 # server.py는 런타임 exec로 실행되므로 PyInstaller가 의존성을 자동 감지 못 한다.
@@ -25,7 +26,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9008"
+APP_VERSION = "0.9009"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -677,6 +678,24 @@ class App(tk.Tk):
         ttk.Button(frame, text="저장 폴더 열기", command=self._open_capture).pack(anchor="w", pady=4)
         self.capture_status = tk.StringVar(value="대기 중 — 관리자 권한이 필요합니다.")
         ttk.Label(frame, textvariable=self.capture_status, wraplength=420).pack(anchor="w", pady=10)
+        ttk.Label(frame, text="동기화 포트 수정 (1.000d, 대전 검증 전)\n"
+                  "게임 종료 후 양쪽 PC에 적용하세요. 문제가 생기면 원복할 수 있습니다.",
+                  wraplength=420).pack(anchor="w", pady=4)
+        row = ttk.Frame(frame)
+        row.pack(anchor="w")
+        ttk.Button(row, text="포트 수정 적용", command=lambda: self._sync_port_patch(True)).pack(side="left")
+        ttk.Button(row, text="포트 수정 원복", command=lambda: self._sync_port_patch(False)).pack(side="left", padx=6)
+
+    def _sync_port_patch(self, enabled):
+        rc, out = _run_ps("if (Get-Process Rhakmu -ErrorAction SilentlyContinue) { Write-Output 'RUNNING' }")
+        if rc != 0 or 'RUNNING' in out:
+            messagebox.showwarning("동기화 포트", "게임을 완전히 종료한 후 다시 적용하세요.")
+            return
+        try:
+            result = sync_port_patch.apply(os.path.join(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE), enabled)
+            messagebox.showinfo("동기화 포트", result)
+        except Exception as e:
+            messagebox.showerror("동기화 포트", str(e))
 
     def _start_capture(self):
         if self.capture_process is not None:
