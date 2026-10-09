@@ -68,7 +68,8 @@ def transform(source, width=1280, height=720):
     if source[0x208:0x20c] != struct.pack('<I', 0xeb000):
         raise ValueError('Unexpected .text virtual size; helper addresses are not safe')
     import viewport_terrain as terrain
-    helper_code = {**helpers(), **terrain.helpers()}
+    import crash_helpers
+    helper_code = {**helpers(), **terrain.helpers(), **crash_helpers.helpers()}
     regions = sorted((va, va+len(code)) for va,code in helper_code.items())
     if any(end > next_start for (_,end),(next_start,_) in zip(regions,regions[1:])):
         raise ValueError('Overlapping helper allocations')
@@ -98,6 +99,12 @@ def transform(source, width=1280, height=720):
          'anchor resource control to right edge and rebuild native hover rectangles')
     jump(0x46b59b, OBJECT_TOOLTIP, bytes.fromhex('8b4d088b55ec'),
          'anchor production description above the current command panel, not screen left')
+    jump(0x463a94, crash_helpers.HUD_DRAW, bytes.fromhex('8b118b4df8ff522c'),
+         'reject invalid HUD draw object, vtable or null/non-code target from ERR')
+    jump(0x42891e, crash_helpers.FORM_DRAW, bytes.fromhex('8b10ff5220'),
+         'reject unreadable lobby form/list sentinel before native drawing')
+    jump(0x4289a1, crash_helpers.FORM_PROCESS, bytes.fromhex('8b10ff521c'),
+         'reject damaged lobby form before processing input; preserve stdcall cleanup')
     # CPannelMgr adds the origin before Create, but CPannelButton::Create and
     # ChangeRes already add it. Keep immutable faction-local coordinates here.
     for va, instruction in ((0x461b58, '03d1'), (0x461b84, '03c8'),

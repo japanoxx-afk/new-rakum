@@ -38,7 +38,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9025"
+APP_VERSION = "0.9026"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1493,7 +1493,7 @@ class App(tk.Tk):
 
 if __name__ == "__main__":
     if '--update-probe' in sys.argv:
-        if viewport_patch.manifest().get('version')!=8:
+        if viewport_patch.manifest().get('version')!=9:
             raise RuntimeError('고해상도 패치 데이터 누락')
         result_path = sys.argv[sys.argv.index('--update-probe') + 1]
         probe_app = App()

@@ -1,0 +1,39 @@
+ERR analysis / 2026-10-09 / launcher 0.9026, viewport manifest v9
+
+Source: installed RhakMU.ERR, 1,157,292 bytes at analysis time. Append-only
+history includes older 1.000a crashes; do not attribute every entry to 0.9025.
+ERR does not record launcher version or installed executable hash.
+
+14:08:49: EIP=0, return=00463A9C CPannelMgr::Draw. EDX=01010501,
+ECX=1B97FD10. Native call at 463A99 uses [vtable+2C], without checking
+the object/vtable/function. New guarded dispatch checks readable object,
+vtable and executable non-null target, preserving valid call semantics.
+This is a defensive skip, not recovery of a damaged panel.
+
+14:16:22: FIRST fault GameCtrl.dll DrawControl+5, mov esi,[edi], EDI=10.
+Native DrawControl loads EDI from form+3C (list sentinel). It is not a valid
+pointer. After this, 31 ProcessCtrlProc+16 errors occur during the same
+second, repeatedly reading the same form+3C with descending stack addresses.
+These are secondary errors, not evidence of 31 independent game crashes.
+Similar signatures predate high-resolution work (00:14,00:29,01:16,02:15,05:57).
+
+New guards at ctrlMGR Draw / Process check form, virtual method, sentinel,
+and first list-node readability before the native dispatch. Invalid input
+returns false and discards exactly 12 stdcall argument bytes; valid engine
+calls retain original semantics. Guards cannot detect readable freed memory,
+corruption of later nodes, or races. No exception swallowing, DLL replacement,
+game-network modifications, or installed game writes during investigation.
+
+Code caves: EB520..EB56B and EB570..EB5E5, EB760..EB777, EB790..EB7B1.
+Builder verifies zero original bytes, nonoverlap and allowlisted entire hash.
+Existing peer address EB420..EB51F and panel guard EB600..EB6FF unchanged.
+Tests replay real x86 dispatch sites: original NULL HUD and native DLL invalid
+sentinel fault; guarded cases return; native empty-form DrawControl succeeds;
+input valid/invalid paths retain stack cleanup. Optional original mode restores
+the guards too, since this repair is part of the high-resolution manifest.
+
+Remaining: obtain first-fault full memory dump / reproduce transition that
+invalidates form or panel to identify allocation lifetime or overwriting cause.
+Do not claim these guards repair heap corruption or guarantee crash-free play.
+Verification: 63 tests run, 61 passed, 2 optional frozen-server tests skipped.
+Frozen 0.9026 --update-probe exited 0 with bundled manifest version 9.

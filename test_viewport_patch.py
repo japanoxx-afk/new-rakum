@@ -30,7 +30,8 @@ class ViewportReleaseTests(unittest.TestCase):
         self.assertEqual(output,viewport_probe.transform(self.source)[0])
         self.assertEqual(vp.transform(output),output)
         self.assertEqual(vp.transform(output,False),self.source)
-        self.assertEqual(output[0xeb420:0xeb700],self.source[0xeb420:0xeb700])
+        self.assertEqual(output[0xeb420:0xeb520],self.source[0xeb420:0xeb520])
+        self.assertEqual(output[0xeb600:0xeb700],self.source[0xeb600:0xeb700])
 
     def test_preserves_latency_quantity_and_panel_options(self):
         for turns in range(1,5):

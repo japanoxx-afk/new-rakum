@@ -49,7 +49,8 @@ class ViewportProbeTests(unittest.TestCase):
             restored[start:start+len(before)] = before
         self.assertEqual(bytes(restored), source)
         self.assertEqual(output[0x49d80:0x4a500], source[0x49d80:0x4a500])
-        self.assertEqual(output[0xeb420:0xeb700], source[0xeb420:0xeb700])
+        self.assertEqual(output[0xeb420:0xeb520], source[0xeb420:0xeb520])
+        self.assertEqual(output[0xeb600:0xeb700], source[0xeb600:0xeb700])
 
 
 if __name__ == '__main__':
