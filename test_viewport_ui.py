@@ -9,7 +9,7 @@ import viewport_probe
 import viewport_patch
 from viewport_helpers import helpers, CURSOR_RETURN, LEFT_DECORATION, MENU_CHILDREN, TOOLTIP_RECTS
 
-SOURCE = Path(r'C:\Program Files (x86)\TriggerSoft\RhakMu\Rhakmu.exe')
+SOURCE = Path(__file__).parent/'research/runtime/viewport-1280-ui-v5/Rhakmu.exe.original'
 STOP, SETRECT, PUTIMAGE = 0x2000f000, 0x2000e000, 0x2000e100
 OBJECT, STACK = 0x20002000, 0x2000c000
 

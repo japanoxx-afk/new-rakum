@@ -7,11 +7,20 @@ import viewport_probe
 import panel_guard_patch
 import resource_amount_patch as amount
 
-SOURCE=Path(r'C:\Program Files (x86)\TriggerSoft\RhakMu\Rhakmu.exe')
+SOURCE=Path(__file__).parent/'research/runtime/viewport-1280-ui-v5/Rhakmu.exe.original'
 
 class ViewportReleaseTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.source=vp.transform(SOURCE.read_bytes(),False)
+
+    def test_preserves_supported_command_cadence(self):
+        candidate=bytearray(self.source)
+        candidate[0xd7b97]=3
+        output=vp.transform(candidate)
+        self.assertEqual(output[0xd7b97],3)
+        self.assertEqual(vp.transform(output,False),candidate)
+        candidate[0xd7b97]=2
+        with self.assertRaises(ValueError):vp.transform(candidate)
 
     def test_complete_previous_release_migrates(self):
         for recipe in vp.manifest()['legacy_edits']:

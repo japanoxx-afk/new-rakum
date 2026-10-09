@@ -22,6 +22,8 @@ import sync_port_patch
 import peer_address_patch
 import panel_guard_patch
 import viewport_patch
+import command_cadence_trial
+import command_cadence_installer
 from release_notes import NOTES
 from hosts_entries import replace_entries
 from display_settings import WindowModeManager, RENDERERS
@@ -38,7 +40,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9027"
+APP_VERSION = "0.9028"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1085,6 +1087,12 @@ class App(tk.Tk):
         peer_address_patch.apply(exe, True)
         panel_guard_patch.apply(exe, True)
         viewport_patch.apply(exe, self.cfg.get('viewport_1280', True))
+        cadence_enabled = self.cfg.get('command_cadence_99ms', exe.read_bytes()[0xd7b97] == 3)
+        if cadence_enabled:
+            ok, msg = LatencyPatch(str(path)).apply(4)
+            if not ok: raise RuntimeError(msg)
+        command_cadence_installer.apply(exe, cadence_enabled)
+        self.cfg['command_cadence_99ms'] = bool(cadence_enabled)
         verified = exe.read_bytes()
         if not panel_guard_patch.state(verified) or not sync_port_patch.state(verified) or verified[0xeb420:0xeb420+len(peer_address_patch.CODE)] != peer_address_patch.CODE:
             raise RuntimeError('왕건 방식 주소 응답 패치 검증 실패. 게임을 실행하지 않았습니다.')
@@ -1115,6 +1123,21 @@ class App(tk.Tk):
             self._on_multi_play()
         else:
             self._on_single_play()
+
+    def _on_cadence_apply(self):
+        enabled = bool(self.cadence_var.get())
+        if enabled and not messagebox.askyesno('명령 응답 개선',
+                '멀티플레이 안정성은 검증 중입니다. 상대방도 같은 설정이 필요합니다.\n'
+                '4턴을 유지하고 전송 간격을 약 99ms로 변경할까요?'):
+            self.cadence_var.set(self.cfg.get('command_cadence_99ms', False)); return
+        old = dict(self.cfg)
+        self.cfg['command_cadence_99ms'] = enabled
+        try:
+            self._prepare_game_launch()
+        except Exception as error:
+            self.cfg = old
+            messagebox.showerror('명령 응답 개선', str(error)); return
+        messagebox.showinfo('명령 응답 개선', '적용 완료. 멀티플레이는 양쪽 모두 같은 설정을 사용하세요.')
 
     def _on_single_play(self):
         self._set_host_and_launch("127.0.0.1")
@@ -1321,6 +1344,16 @@ class App(tk.Tk):
                   foreground="gray").pack(anchor="w", pady=(6, 0))
 
         # ── 라드민 네트워크 최적화 ──
+        try:
+            cadence_current = pathlib.Path(self.latency.exe).read_bytes()[0xd7b97] == 3
+        except OSError:
+            cadence_current = False
+        self.cadence_var = tk.BooleanVar(value=self.cfg.get('command_cadence_99ms', cadence_current))
+        ttk.Checkbutton(lat_frame, text='명령 응답 개선: 약 99ms 전송 / 4턴 유지 (멀티 검증 중)',
+                        variable=self.cadence_var).pack(anchor='w', pady=(8, 0))
+        ttk.Button(lat_frame, text='전송 간격 적용 / 원복', command=self._on_cadence_apply).pack(anchor='w', pady=4)
+        ttk.Label(lat_frame, text='상대방도 같은 설정 필수. 끄고 적용하면 기존 간격으로 복원됩니다.',
+                  foreground='gray').pack(anchor='w')
         radmin_ip = has_radmin_adapter()
         rad_frame = ttk.LabelFrame(frame, text="라드민 멀티 최적화 (동기화 실패 해결)", padding=12)
         rad_frame.pack(fill="x", pady=(0, 10))
@@ -1447,6 +1480,8 @@ class App(tk.Tk):
             self._refresh_patch_status()
 
     def _on_latency(self, value):
+        if value != 4 and self.cfg.get('command_cadence_99ms', self.cadence_var.get()):
+            messagebox.showwarning('명령 지연', '99ms 명령 응답 개선은 4턴 전용입니다. 먼저 전송 간격을 원복하세요.'); return
         if self.latency.current() is None and not self.latency.available:
             messagebox.showerror("오류", f"{PATCH_EXE}를 찾을 수 없습니다.\n설정 탭에서 게임 경로를 확인하세요.")
             return

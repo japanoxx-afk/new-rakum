@@ -6,7 +6,7 @@ import resource_amount_patch as patch
 
 class ResourcePatchTests(unittest.TestCase):
     def test_guard_and_reversibility(self):
-        source=Path(r'C:\Program Files (x86)\TriggerSoft\RhakMu\Rhakmu.exe').read_bytes()
+        source=(Path(__file__).parent/'research/runtime/viewport-1280-ui-v5/Rhakmu.exe.original').read_bytes()
         patched=patch.transform(source)
         self.assertEqual(patch.transform(patched),patched)
         self.assertEqual(patch.transform(patched,False),source)

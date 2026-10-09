@@ -40,6 +40,9 @@ def transform(data,enabled=True):
     normalized[at:at+len(amount)]=resource_amount_patch.OLD
     if normalized[0xd7abe] not in (1,2,3,4):raise ValueError('알 수 없는 명령 지연 설정')
     normalized[0xd7abe]=4
+    if normalized[0xd7b96:0xd7b9b] not in (bytes.fromhex('b905000000'),bytes.fromhex('b903000000')):
+        raise ValueError('알 수 없는 명령 전송 간격')
+    normalized[0xd7b97]=5
     if hashlib.sha256(normalized).hexdigest()!=spec['source_hash']:
         raise ValueError('검증되지 않은 게임 파일입니다. 고해상도 패치를 적용하지 않았습니다.')
     if enabled:

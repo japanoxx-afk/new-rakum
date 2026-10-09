@@ -34,7 +34,7 @@ class ViewportProbeTests(unittest.TestCase):
             viewport_probe.transform(b'', 1920, 1080)
 
     def test_known_binary_changes_only_manifest_regions(self):
-        path = Path(r'C:\Program Files (x86)\TriggerSoft\RhakMu\Rhakmu.exe')
+        path = Path(__file__).parent/'research/runtime/viewport-1280-ui-v5/Rhakmu.exe.original'
         if not path.exists():
             self.skipTest('Local reference executable unavailable')
         source = viewport_patch.transform(path.read_bytes(),False)
