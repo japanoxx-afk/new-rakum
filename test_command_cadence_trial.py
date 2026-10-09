@@ -63,6 +63,9 @@ class SchedulerTests(unittest.TestCase):
         changed = trial.transform(source)
         self.assertEqual([i for i, (a, b) in enumerate(zip(source, changed)) if a != b], [trial.OFFSET + 1])
         self.assertEqual(changed[trial.BUFFER_OFFSET], 4)
+        self.assertEqual(trial.transform(changed), changed)
+        self.assertEqual(trial.transform(changed, False), source)
+        self.assertEqual(trial.transform(source, False), source)
 
     def test_unknown_and_nonfour_turn_rejected(self):
         source = bytearray(SOURCE.read_bytes())

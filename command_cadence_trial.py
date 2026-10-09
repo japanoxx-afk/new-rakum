@@ -14,16 +14,18 @@ AFTER = bytes.fromhex('b903000000')
 BUFFER_OFFSET = 0xD7ABE
 
 
-def transform(data):
+def transform(data, enabled=True):
     # Reuse the official whole-image allowlist, normalizing viewport only for
     # validation. Preserve the actual viewport and independent resource patch.
-    viewport_patch.transform(data, False)
-    if data[OFFSET:OFFSET + 5] != BEFORE:
+    current = data[OFFSET:OFFSET + 5]
+    if current not in (BEFORE, AFTER):
         raise ValueError('Unsupported command scheduler')
+    normalized = data[:OFFSET] + BEFORE + data[OFFSET + 5:]
+    viewport_patch.transform(normalized, False)
     if data[BUFFER_OFFSET] != 4:
         raise ValueError('This experiment requires the existing four-turn setting')
     result = bytearray(data)
-    result[OFFSET:OFFSET + 5] = AFTER
+    result[OFFSET:OFFSET + 5] = AFTER if enabled else BEFORE
     return bytes(result)
 
 
