@@ -40,7 +40,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9030"
+APP_VERSION = "0.9031"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -371,6 +371,21 @@ class LatencyPatch:
 #  서버 / 호스트 / 디스플레이 매니저
 # ═══════════════════════════════════════════════════════
 
+def verify_local_rhakmu_server():
+    """Non-login protocol probe; never infer server identity from an open port."""
+    try:
+        with socket.create_connection(('127.0.0.1', SERVER_PORT), timeout=1) as connection:
+            connection.sendall(struct.pack('<HH4sI', 0x01ff, 12, b'RHAK', 1000))
+            reply = b''
+            while len(reply) < 8:
+                part = connection.recv(8-len(reply))
+                if not part: return False
+                reply += part
+            return reply == struct.pack('<HHI', 0x01ff, 8, 0)
+    except OSError:
+        return False
+
+
 class ServerManager:
     def __init__(self, base_dir):
         self.base_dir = base_dir
@@ -426,14 +441,18 @@ class ServerManager:
         # Do not terminate an arbitrary listener or unrelated Python process.
         folder = str(pathlib.Path(self.base_dir).resolve()).replace("'", "''")
         source = os.path.abspath(__file__).replace("'", "''")
+        verified = '$true' if verify_local_rhakmu_server() else '$false'
         script = """
         $ErrorActionPreference='Stop'
         $listenerIds=@(Get-NetTCPConnection -State Listen -LocalPort 11223 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
         $owned=@(Get-CimInstance Win32_Process | Where-Object {
-            $_.CommandLine -match '(?:^|\\s)--server(?:\\s|$)' -and (
+            ($_.CommandLine -match '(?:^|\\s)--server(?:\\s|$)' -and (
                 ($_.Name -match '^RhakMuLauncher(?:_v[0-9.]+)?\\.exe$' -and
                  ([IO.Path]::GetDirectoryName($_.ExecutablePath) -eq 'FOLDER' -or $_.ProcessId -in $listenerIds)) -or
-                ($_.Name -match '^python(?:w)?\\.exe$' -and $_.CommandLine.Contains('SOURCE')))
+                ($_.Name -match '^python(?:w)?\\.exe$' -and $_.CommandLine.Contains('SOURCE')))) -or
+            (VERIFIED -and $_.ProcessId -in $listenerIds -and (
+                $_.Name -match '^RhakMuServer(?:_v[0-9.]+)?\\.exe$' -or
+                ($_.Name -match '^python(?:w)?\\.exe$' -and $_.CommandLine -match '(?:^|[\\s"\\\\/])server\\.py(?:"|\\s|$)')))
         })
         if (-not $owned.Count) { throw '이 런처가 관리하는 서버를 찾지 못했습니다. 다른 서버 프로그램을 확인하세요.' }
         $ids=@($owned.ProcessId)
@@ -443,7 +462,7 @@ class ServerManager:
                 if ($LASTEXITCODE -ne 0) { throw '이전 서버 종료 실패' }
             }
         }
-        """.replace('FOLDER', folder).replace('SOURCE', source)
+        """.replace('FOLDER', folder).replace('SOURCE', source).replace('VERIFIED', verified)
         rc, out = _run_ps(script)
         if rc:
             return False, out.strip()

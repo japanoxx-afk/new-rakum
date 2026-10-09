@@ -5,6 +5,18 @@ import launcher
 import launcher_update
 
 class PipelineTests(unittest.TestCase):
+    def test_protocol_probe_requires_exact_response(self):
+        import struct
+        for reply,expected in ((struct.pack('<HHI',0x01ff,8,0),True),(b'HTTP/1.1',False),(b'',False)):
+            connection=Mock()
+            connection.recv.return_value=reply
+            context=Mock()
+            context.__enter__=Mock(return_value=connection)
+            context.__exit__=Mock(return_value=False)
+            with patch.object(launcher.socket,'create_connection',return_value=context):
+                self.assertEqual(launcher.verify_local_rhakmu_server(),expected)
+            connection.sendall.assert_called_once_with(struct.pack('<HH4sI',0x01ff,12,b'RHAK',1000))
+
     def test_server_start_button_restarts_instead_of_rejecting(self):
         app=SimpleNamespace(server=Mock(),_update_status=Mock())
         app.server.restart.return_value=(True,'ok')
