@@ -5,6 +5,13 @@ import launcher
 import launcher_update
 
 class PipelineTests(unittest.TestCase):
+    def test_server_start_button_restarts_instead_of_rejecting(self):
+        app=SimpleNamespace(server=Mock(),_update_status=Mock())
+        app.server.restart.return_value=(True,'ok')
+        launcher.App._on_start(app)
+        app.server.restart.assert_called_once()
+        app.server.start.assert_not_called()
+
     def app(self):
         return SimpleNamespace(_prepare_game_launch=Mock(), server=Mock(),
             radmin_only=Mock(get=lambda:False), info_var=Mock(), after=Mock(),

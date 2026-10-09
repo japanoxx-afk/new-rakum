@@ -40,7 +40,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9028"
+APP_VERSION = "0.9029"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -428,10 +428,11 @@ class ServerManager:
         source = os.path.abspath(__file__).replace("'", "''")
         script = """
         $ErrorActionPreference='Stop'
+        $listenerIds=@(Get-NetTCPConnection -State Listen -LocalPort 11223 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
         $owned=@(Get-CimInstance Win32_Process | Where-Object {
             $_.CommandLine -match '(?:^|\\s)--server(?:\\s|$)' -and (
                 ($_.Name -match '^RhakMuLauncher(?:_v[0-9.]+)?\\.exe$' -and
-                 [IO.Path]::GetDirectoryName($_.ExecutablePath) -eq 'FOLDER') -or
+                 ([IO.Path]::GetDirectoryName($_.ExecutablePath) -eq 'FOLDER' -or $_.ProcessId -in $listenerIds)) -or
                 ($_.Name -match '^python(?:w)?\\.exe$' -and $_.CommandLine.Contains('SOURCE')))
         })
         if (-not $owned.Count) { throw '이 런처가 관리하는 서버를 찾지 못했습니다. 다른 서버 프로그램을 확인하세요.' }
@@ -447,6 +448,11 @@ class ServerManager:
         if rc:
             return False, out.strip()
         self.proc = None
+        deadline = time.monotonic() + 5
+        while is_server_running(timeout=0.1) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if is_server_running(timeout=0.1):
+            return False, '11223 포트가 아직 사용 중입니다. 다른 서버의 종료 여부를 확인하세요.'
         return True, '이전 런처 서버를 종료했습니다.'
 
     @property
@@ -794,7 +800,7 @@ class App(tk.Tk):
                 ttk.Label(frame, text=f"※ {SERVER_SCRIPT}를 같은 폴더에 넣어주세요.", foreground="gray").pack(anchor="w")
 
     def _on_start(self):
-        ok, msg = self.server.start()
+        ok, msg = self.server.restart()
         self._update_status()
         if not ok:
             messagebox.showwarning("서버", msg)

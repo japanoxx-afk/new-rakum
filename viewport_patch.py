@@ -44,7 +44,10 @@ def transform(data,enabled=True):
         raise ValueError('알 수 없는 명령 전송 간격')
     normalized[0xd7b97]=5
     if hashlib.sha256(normalized).hexdigest()!=spec['source_hash']:
-        raise ValueError('검증되지 않은 게임 파일입니다. 고해상도 패치를 적용하지 않았습니다.')
+        raise ValueError('검증되지 않은 게임 파일입니다. 고해상도 패치를 적용하지 않았습니다.\n'
+                         '파일 SHA256: '+hashlib.sha256(data).hexdigest()+'\n'
+                         '검증 기준 SHA256: '+hashlib.sha256(normalized).hexdigest()+'\n'
+                         '임의 패치는 적용하지 않습니다. 설치된 Rhakmu.exe를 ZIP으로 보내 주세요.')
     if enabled:
         for edit in spec['edits']:
             offset=int(edit['va'],16)-0x400000;after=bytes.fromhex(edit['after'])
