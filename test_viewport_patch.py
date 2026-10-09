@@ -22,6 +22,25 @@ class ViewportReleaseTests(unittest.TestCase):
         candidate[0xd7b97]=2
         with self.assertRaises(ValueError):vp.transform(candidate)
 
+    def test_bpc_deleting_destructor_variant_is_preserved(self):
+        for cadence in (3,5):
+            candidate=bytearray(self.source)
+            candidate[0xd7b97]=cadence
+            for offset,original in vp.LEGACY_DELETE_SITES:
+                candidate[offset:offset+len(original)]=b'\x90'*len(original)
+            output=vp.transform(candidate)
+            self.assertEqual(vp.transform(output,False),candidate)
+            for offset,original in vp.LEGACY_DELETE_SITES:
+                self.assertEqual(output[offset:offset+len(original)],b'\x90'*len(original))
+        candidate[vp.LEGACY_DELETE_SITES[0][0]]=0xcc
+        with self.assertRaises(ValueError):vp.transform(candidate)
+
+    def test_partial_deleting_destructor_variant_rejected(self):
+        candidate=bytearray(self.source)
+        at,original=vp.LEGACY_DELETE_SITES[0]
+        candidate[at:at+len(original)]=b'\x90'*len(original)
+        with self.assertRaises(ValueError):vp.transform(candidate)
+
     def test_complete_previous_release_migrates(self):
         for recipe in vp.manifest()['legacy_edits']:
             with self.subTest(sites=len(recipe)):

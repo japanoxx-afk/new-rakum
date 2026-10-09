@@ -9,6 +9,15 @@ import tempfile
 import panel_guard_patch
 import resource_amount_patch
 
+# Exact compatibility variant supplied by B PC (SHA256 8ad112d1...daa95).
+# Preserve its three deleting-destructor guards; normalize validation copy only.
+# This does not establish that the old guards fix the original heap corruption.
+LEGACY_DELETE_SITES = (
+    (0x1e94e, bytes.fromhex('8b4dfc51e829eb0b0083c404')),
+    (0x1f6ce, bytes.fromhex('8b4dfc51e8a9dd0b0083c404')),
+    (0x2234e, bytes.fromhex('8b4dfc51e829b10b0083c404')),
+)
+
 def manifest():
     root=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parent))
     return json.loads((root/'viewport_release.json').read_text(encoding='utf-8'))
@@ -43,6 +52,15 @@ def transform(data,enabled=True):
     if normalized[0xd7b96:0xd7b9b] not in (bytes.fromhex('b905000000'),bytes.fromhex('b903000000')):
         raise ValueError('알 수 없는 명령 전송 간격')
     normalized[0xd7b97]=5
+    delete_states=[]
+    for offset,original in LEGACY_DELETE_SITES:
+        value=normalized[offset:offset+len(original)]
+        if value not in (original,b'\x90'*len(original)):
+            raise ValueError('알 수 없는 객체 해제 패치')
+        delete_states.append(value!=original)
+        normalized[offset:offset+len(original)]=original
+    if len(set(delete_states))!=1:
+        raise ValueError('불완전한 객체 해제 호환 패치')
     if hashlib.sha256(normalized).hexdigest()!=spec['source_hash']:
         raise ValueError('검증되지 않은 게임 파일입니다. 고해상도 패치를 적용하지 않았습니다.\n'
                          '파일 SHA256: '+hashlib.sha256(data).hexdigest()+'\n'
