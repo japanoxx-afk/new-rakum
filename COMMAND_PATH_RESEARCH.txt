@@ -1,0 +1,50 @@
+Command-path investigation, 2026-10-09 (not a latency fix or release)
+
+Known 1.000d code, current launcher 0.9027. No game process running at initial
+inspection. No installed executable, turn count or simulation timing changed.
+
+4D7A80 Game_Multi:
+  4D7ABA sets sync manager+48 to 4 (existing configurable buffer).
+  4D7AC0 WND_GetMessage drains message queue, not just one message per frame.
+  4D7B63 Mouse_Proc and 4D7B68 KeyBD_Proc run each outer iteration.
+  4D7B8F..9F tests B412B4 % 5 == 0. Only that branch calls GMPKSend_SyncData
+  at 4D7BA1. Thus command batch construction is once per five outer frames.
+  4D7BBB..DB compares local slot+62 with latency+48 before receive/consume.
+  4D7BE3 calls 44A840 then 4D7BEE calls 449AB0 (slot synchronization check).
+  4D7C3A..86 enforces elapsed-frame timer B412B8. No timing change proposed.
+
+4494C0 command enqueue:
+  allocates node and payload; copies current command from manager+44;
+  stores ordering stamp 1069E94; inserts sorted queue (manager+4 is head).
+4496C0 batch construction:
+  checks paused flag manager+10; copies packet, assigns manager+38 sequence,
+  increments sequence, drains ALL queued commands and appends checksum;
+  calls local 449210 and sends remote packets. Calling this again on clicks
+  would advance sequence/close a batch early, NOT merely flush a socket.
+  Therefore an immediate-send patch would change simulation schedule.
+449210 accepts numbered packet into 32-slot ring. A packet revision mechanism
+would require review of duplicate/out-of-order handling and all peers.
+44A840 calls UDP receive 449D80, builds active/ready masks and dispatches
+CMD processing at 44AA66 via 448300. This is distinct from visual feedback.
+
+Conclusions so far:
+  User's 1-turn responsiveness / multiplayer slowdown is consistent with
+  insufficient packet safety buffer, not proof of a TCP queue bottleneck.
+  Do not silently change modulo-5, buffer=4, tick limiter, sequence numbers,
+  or repeat same-turn sends. No demonstrated unnecessary 0.5-second wait found.
+  Rendering changes do not eliminate the explicit lockstep command buffer.
+  Need real frame, batch, queue and consumer counter timing before selecting
+  an optimization. Sampling is not a breakpoint trace and may miss short-lived
+  queue nodes; batch construction is not on-wire or visible unit-action time.
+
+Added command_path_diagnostics.py:
+  OpenProcess query+read rights only, executable identity/whole-hash validation;
+  no process suspension, hooks, memory writes, key collection or payload exports.
+  Sample manager batch counter, configured buffer, slot counters, queue presence
+  and ordering stamp for max 60 seconds. Treat transition/read errors as misses.
+  Generated JSON permits real timing analysis without claiming packet timestamps.
+  Tests verify all eight slot offsets and interval aggregation; two tests pass.
+
+Next: user opens 4-turn practice battle, select unit, repeated move commands.
+Capture and measure; then decide whether safe phase/queue optimization exists.
+Do not label diagnostic tooling as a shipped command-response improvement.
