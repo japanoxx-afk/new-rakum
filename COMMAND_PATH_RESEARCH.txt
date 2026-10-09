@@ -48,3 +48,25 @@ Added command_path_diagnostics.py:
 Next: user opens 4-turn practice battle, select unit, repeated move commands.
 Capture and measure; then decide whether safe phase/queue optimization exists.
 Do not label diagnostic tooling as a shipped command-response improvement.
+
+Live observation after user opened battle (20 seconds, PID 30920):
+  680 changed-state samples, zero read misses. Latency=4 throughout.
+  Batch construction interval median 163.814ms, min 152.139ms, max 169.875ms.
+  Next batch sequence - consumed sequence = 4 in 610 samples, briefly 5 in
+  70 samples (construction/consumption are separate writes, not atomic).
+  Thus the latest sealed batch trails consumption by about three batches.
+  Three median batch periods = 491.442ms, consistent with reported ~0.5s.
+  Five sampled queue episodes: estimated queue-to-batch / queue-to-consumer:
+     130.24 / 630.86 ms
+      66.04 / 566.27 ms
+      32.65 / 528.34 ms
+     102.87 / 595.99 ms
+      32.51 / 531.88 ms
+  The target batch is inferred from current next-sequence, NOT matched against
+  command payload. These are queue/counter estimates, not exact mouse-to-visible
+  action measurements. Frame cadence ~33ms; no evidence of long input stalls.
+  Four-turn fixed pipeline, not redundant network/sleep waiting, dominates.
+  Removing its delay while preserving the same execution schedule is impossible.
+  Need prediction/rollback or a changed command schedule to hide/reduce that
+  fundamental delay; neither is a safe small launcher patch. No game code change
+  or new launcher release made from this observation.

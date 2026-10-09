@@ -31,11 +31,21 @@ def summarize(samples):
                 delta=(row['batch_sequence']-last['batch_sequence']) & 0xffffffff
                 if delta==1:intervals.append(row['ms']-last['ms'])
             last=row
-    return dict(samples=len(samples),batch_interval_median_ms=statistics.median(intervals) if intervals else None,
+    episodes=[]
+    for i,row in enumerate(samples):
+        if not row.get('command_pending') or (i and samples[i-1].get('command_pending')):continue
+        target=row['batch_sequence']
+        sealed=next((s for s in samples[i+1:] if s['batch_sequence']>target),None)
+        consumed=next((s for s in samples[i+1:] if s.get('player_sequence_counters',[0,0])[1]>=target),None)
+        episodes.append(dict(target_batch_candidate=target,
+            queue_to_batch_ms=round(sealed['ms']-row['ms'],3) if sealed else None,
+            queue_to_consumer_ms=round(consumed['ms']-row['ms'],3) if consumed else None))
+    return dict(samples=len(samples),queue_episode_estimates=episodes,
+        batch_interval_median_ms=statistics.median(intervals) if intervals else None,
         batch_interval_min_ms=min(intervals) if intervals else None,
         batch_interval_max_ms=max(intervals) if intervals else None,
         latency_values=sorted({r['latency_turns'] for r in samples}),
-        warning='Batch construction intervals only; not click-to-action or on-wire latency.')
+        warning='Sampling estimates only, not click-to-action or on-wire latency; target inferred, payload not matched.')
 
 def capture(pid,seconds):
     api=ctypes.WinDLL('kernel32',use_last_error=True)

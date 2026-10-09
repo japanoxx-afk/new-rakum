@@ -24,4 +24,13 @@ class CommandDiagnosticsTests(unittest.TestCase):
         self.assertEqual(result['latency_values'],[4])
         self.assertIn('not click-to-action',result['warning'])
 
+    def test_queue_estimate_separates_batch_wait_from_consumption(self):
+        rows=[dict(ms=ms,batch_sequence=seq,latency_turns=4,command_pending=pending,
+                   player_sequence_counters=[seq,consumed])
+              for ms,seq,pending,consumed in ((0,10,False,6),(40,10,True,6),
+                  (100,11,False,7),(200,12,False,8),(300,13,False,9),(400,14,False,10))]
+        event=summarize(rows)['queue_episode_estimates'][0]
+        self.assertEqual(event['queue_to_batch_ms'],60)
+        self.assertEqual(event['queue_to_consumer_ms'],360)
+
 if __name__=='__main__':unittest.main()
