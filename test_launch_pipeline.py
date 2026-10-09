@@ -29,15 +29,22 @@ class PipelineTests(unittest.TestCase):
             radmin_only=Mock(get=lambda:False), info_var=Mock(), after=Mock(),
             _launch_prepared_game=Mock())
 
-    def test_waits_for_server_before_launch_and_keeps_vpn(self):
+    def test_multiplayer_never_touches_server_and_keeps_vpn(self):
         app=self.app();app.server.restart.return_value=(True,'ok')
         launcher.App._set_host_and_launch(app,'26.1.2.3',True)
-        app._launch_prepared_game.assert_not_called()
+        app._launch_prepared_game.assert_called_once_with('26.1.2.3',True)
+        app.server.restart.assert_not_called()
+        app.server.start.assert_not_called()
+        app.server.stop.assert_not_called()
+        app.after.assert_not_called()
+
+    def test_singleplayer_still_prepares_local_server(self):
+        app=self.app();app.server.restart.return_value=(True,'ok')
+        launcher.App._set_host_and_launch(app,'127.0.0.1',False)
+        app.server.restart.assert_called_once()
         with patch.object(launcher,'is_server_running',return_value=True):
             app.after.call_args.args[1]()
-        app._launch_prepared_game.assert_called_once_with('26.1.2.3',True)
-        app.server.restart.assert_called_once()
-        self.assertFalse(app._launch_pending)
+        app._launch_prepared_game.assert_called_once_with('127.0.0.1',False)
 
     def test_failed_server_never_launches(self):
         app=self.app();app.server.restart.return_value=(False,'failed')

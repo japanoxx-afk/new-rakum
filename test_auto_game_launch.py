@@ -17,7 +17,7 @@ class AutoLaunchTests(unittest.TestCase):
                 (folder/name).write_bytes(pathlib.Path(launcher.DEFAULT_GAME_DIR,name).read_bytes())
             app = Mock()
             app.gamedir_var.get.return_value = str(folder / launcher.GAME_EXE)
-            app.cfg = {}
+            app.cfg = {'command_cadence_99ms': True}
             app.base_dir = root
             app.radmin_only.get.return_value = False
             # This operates on a temporary copy, independent of a user's live game.
@@ -25,6 +25,8 @@ class AutoLaunchTests(unittest.TestCase):
                 launcher.App._prepare_game_launch(app)
                 save.assert_called_once()
             self.assertEqual(app.cfg['game_dir'], str(folder))
+            self.assertFalse(app.cfg['command_cadence_99ms'])
+            self.assertEqual(game.read_bytes()[0xd7b97],5)
             self.assertTrue(peer_address_patch.state(game.read_bytes()))
             self.assertEqual(game.read_bytes()[0xeb420:0xeb420+len(peer_address_patch.CODE)], peer_address_patch.CODE)
 
