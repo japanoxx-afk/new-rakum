@@ -13,6 +13,8 @@ class AutoLaunchTests(unittest.TestCase):
             (folder / launcher.GAME_EXE).touch()
             game = folder / launcher.PATCH_EXE
             game.write_bytes(peer_address_patch.transform(source, False))
+            for name in ('iCARUS.dll','GameCtrl.dll','ddraw.dll'):
+                (folder/name).write_bytes(pathlib.Path(launcher.DEFAULT_GAME_DIR,name).read_bytes())
             app = Mock()
             app.gamedir_var.get.return_value = str(folder / launcher.GAME_EXE)
             app.cfg = {}

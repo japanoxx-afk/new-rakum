@@ -50,10 +50,34 @@ class PreferencesTests(unittest.TestCase):
         app.saved_ip_var.get.return_value = '26.1.2.3'
         app.cfg = {'last_server_ip': '26.1.2.3'}
         app._save_server_ip.return_value = True
-        with patch.object(launcher, 'fix_radmin_priority', return_value=(True, '')), patch.object(launcher, 'is_server_running', return_value=False):
+        with patch.object(launcher, 'fix_radmin_priority', return_value=(True, '')), patch.object(launcher, 'is_server_running', return_value=True):
             launcher.App._on_multi_play(app)
         app._ask_server_ip_and_launch.assert_not_called()
         app._set_host_and_launch.assert_called_once_with('26.1.2.3', multiplayer=True)
+
+    @unittest.skipUnless(os.environ.get('RHAKMU_TEST_EXE'), 'requires built executable')
+    def test_real_previous_launcher_server_recovered(self):
+        self.assertFalse(launcher.is_server_running(), 'Do not test against an existing server')
+        with tempfile.TemporaryDirectory() as root:
+            exe=str(Path(root,'RhakMuLauncher_v0.9024.exe'))
+            shutil.copyfile(os.environ['RHAKMU_TEST_EXE'],exe)
+            old=launcher.ServerManager(root);new=launcher.ServerManager(root)
+            with patch.object(launcher.sys,'frozen',True,create=True),patch.object(launcher.sys,'executable',exe):
+                try:
+                    self.assertTrue(old.start()[0])
+                    deadline=time.monotonic()+15
+                    while not launcher.is_server_running(timeout=0.1) and time.monotonic()<deadline:time.sleep(0.1)
+                    self.assertTrue(launcher.is_server_running())
+                    ok,msg=new.restart();self.assertTrue(ok,msg)
+                    deadline=time.monotonic()+15
+                    while not launcher.is_server_running(timeout=0.1) and time.monotonic()<deadline:time.sleep(0.1)
+                    self.assertTrue(launcher.is_server_running())
+                    self.assertIsNotNone(old.proc.poll())
+                    self.assertTrue(new.stop()[0])
+                    self.assertFalse(launcher.is_server_running())
+                finally:
+                    if new.running:new.stop()
+                    if old.running:old.stop()
 
     @unittest.skipUnless(os.environ.get('RHAKMU_TEST_EXE'), 'requires built executable')
     def test_real_frozen_server_start_stop_restart(self):

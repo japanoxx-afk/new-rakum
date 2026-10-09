@@ -14,10 +14,14 @@ import subprocess
 import sys
 import ipaddress
 import tempfile
+import time
+import threading
+import queue
 import tkinter as tk
 import sync_port_patch
 import peer_address_patch
 import panel_guard_patch
+import viewport_patch
 from release_notes import NOTES
 from hosts_entries import replace_entries
 from display_settings import WindowModeManager, RENDERERS
@@ -34,7 +38,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9022"
+APP_VERSION = "0.9024"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -245,7 +249,7 @@ def check_for_update():
         latest = data.get("launcher_version", APP_VERSION)
         url = data.get("launcher_url", "")
         size = int(data.get("launcher_size", 0))
-        if latest > APP_VERSION:
+        if launcher_update.version_key(latest) > launcher_update.version_key(APP_VERSION):
             return latest, url, size
     except Exception:
         pass
@@ -376,11 +380,6 @@ class ServerManager:
         if is_server_running():
             return False, "다른 서버가 이미 실행 중입니다. 기존 서버를 종료한 뒤 시작하세요."
 
-        try:
-            HostsManager.apply_ip(SERVER_LOOPBACK, DEFAULT_DOMAINS)
-        except OSError:
-            pass
-
         args = [sys.executable, '--server'] if getattr(sys, 'frozen', False) else [sys.executable, os.path.abspath(__file__), '--server']
         try:
             self.proc = subprocess.Popen(
@@ -395,7 +394,7 @@ class ServerManager:
 
     def stop(self):
         if not self.proc or self.proc.poll() is not None:
-            return False, "실행 중인 서버가 없습니다."
+            return self.stop_previous()
         # One-file PyInstaller has a bootloader parent and a worker child.
         # Terminate only our process tree, not unrelated Python/game servers.
         if os.name == 'nt':
@@ -414,8 +413,39 @@ class ServerManager:
         return True, "서버를 종료했습니다."
 
     def restart(self):
-        self.stop()
+        if self.running or is_server_running():
+            ok, msg = self.stop()
+            if not ok:
+                return False, msg
         return self.start()
+
+    def stop_previous(self):
+        # Recover servers left by an earlier launcher in this same folder.
+        # Do not terminate an arbitrary listener or unrelated Python process.
+        folder = str(pathlib.Path(self.base_dir).resolve()).replace("'", "''")
+        source = os.path.abspath(__file__).replace("'", "''")
+        script = """
+        $ErrorActionPreference='Stop'
+        $owned=@(Get-CimInstance Win32_Process | Where-Object {
+            $_.CommandLine -match '(?:^|\\s)--server(?:\\s|$)' -and (
+                ($_.Name -match '^RhakMuLauncher(?:_v[0-9.]+)?\\.exe$' -and
+                 [IO.Path]::GetDirectoryName($_.ExecutablePath) -eq 'FOLDER') -or
+                ($_.Name -match '^python(?:w)?\\.exe$' -and $_.CommandLine.Contains('SOURCE')))
+        })
+        if (-not $owned.Count) { throw '이 런처가 관리하는 서버를 찾지 못했습니다. 다른 서버 프로그램을 확인하세요.' }
+        $ids=@($owned.ProcessId)
+        foreach($p in $owned) {
+            if ($p.ParentProcessId -notin $ids) {
+                & taskkill.exe /PID $p.ProcessId /T /F | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw '이전 서버 종료 실패' }
+            }
+        }
+        """.replace('FOLDER', folder).replace('SOURCE', source)
+        rc, out = _run_ps(script)
+        if rc:
+            return False, out.strip()
+        self.proc = None
+        return True, '이전 런처 서버를 종료했습니다.'
 
     @property
     def running(self):
@@ -793,8 +823,7 @@ class App(tk.Tk):
         text.configure(state='disabled')
 
     def _on_check_launcher_update(self):
-        if self.server.running:
-            messagebox.showinfo('런처 업데이트', '먼저 서버 종료 버튼을 누른 뒤 업데이트하세요.')
+        if getattr(self, '_update_pending', False):
             return
         import urllib.request
         self.update_status_var.set("버전 확인 중...")
@@ -813,19 +842,38 @@ class App(tk.Tk):
         if not latest:
             messagebox.showinfo("런처 업데이트", "버전 정보를 읽을 수 없습니다.")
             return
-        if latest <= APP_VERSION:
+        if launcher_update.version_key(latest) <= launcher_update.version_key(APP_VERSION):
             messagebox.showinfo("런처 업데이트", f"이미 최신 버전입니다.\n현재 v{APP_VERSION}")
             return
         if not messagebox.askyesno("새 버전 있음",
-                f"새 런처 버전이 있습니다.\n\n현재  v{APP_VERSION}\n최신  v{latest}\n\n지금 업데이트하시겠습니까?"):
+                f"새 런처 버전이 있습니다.\n\n현재  v{APP_VERSION}\n최신  v{latest}\n\n관리 서버를 종료하고 업데이트하시겠습니까?"):
             return
-        ok, err = do_self_update(url, size)
-        if ok:
-            messagebox.showinfo("런처 업데이트", "다운로드 완료. 런처를 재시작합니다.")
-            self.destroy()
-            sys.exit()
-        else:
-            messagebox.showerror("런처 업데이트 실패", err)
+        rc, out = _run_ps("if (Get-Process Rhakmu,Launcher -ErrorAction SilentlyContinue) { 'RUNNING' }")
+        if rc or 'RUNNING' in out:
+            messagebox.showinfo('런처 업데이트', '게임을 종료한 뒤 업데이트하세요. 게임 중에는 서버를 종료하지 않습니다.')
+            return
+        if self.server.running or is_server_running():
+            ok, err = self.server.stop()
+            if not ok:
+                messagebox.showerror('서버 종료 실패', err)
+                return
+        self.update_status_var.set('다운로드 및 새 런처 실행 검사 중…')
+        self._update_pending = True
+        results = queue.Queue()
+        threading.Thread(target=lambda: results.put(do_self_update(url, size)), daemon=True).start()
+        def finish():
+            try:
+                ok, err = results.get_nowait()
+            except queue.Empty:
+                self.after(200, finish)
+                return
+            self.update_status_var.set('')
+            self._update_pending = False
+            if ok:
+                self.destroy()
+            else:
+                messagebox.showerror('런처 업데이트 실패', err)
+        self.after(200, finish)
 
     def _update_status(self):
         if self.server.running:
@@ -962,6 +1010,30 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror('게임 실행 중단', str(e))
             return
+        if getattr(self, '_launch_pending', False):
+            return
+        if multiplayer and self.radmin_only.get() and not ip.startswith('26.'):
+            messagebox.showwarning('라드민 전용', '서버의 라드민 26.x 주소를 입력하세요.')
+            return
+        ok, msg = self.server.restart()
+        if not ok:
+            messagebox.showerror('서버 준비 실패', msg)
+            return
+        self._launch_pending = True
+        self.info_var.set('서버 시작 완료를 기다리고 있습니다…')
+        deadline = time.monotonic() + 20
+        def ready():
+            if is_server_running(timeout=0.05):
+                self._launch_pending = False
+                self._launch_prepared_game(ip, multiplayer)
+            elif not self.server.running or time.monotonic() >= deadline:
+                self._launch_pending = False
+                messagebox.showerror('서버 준비 실패', '서버가 준비되지 않아 게임 실행을 중단했습니다. 서버 로그를 확인하세요.')
+            else:
+                self.after(200, ready)
+        self.after(200, ready)
+
+    def _launch_prepared_game(self, ip, multiplayer=False):
         game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
         exe = os.path.join(game_dir, GAME_EXE)
         if not os.path.isfile(exe):
@@ -1012,6 +1084,7 @@ class App(tk.Tk):
         sync_port_patch.apply(exe, True)
         peer_address_patch.apply(exe, True)
         panel_guard_patch.apply(exe, True)
+        viewport_patch.apply(exe, self.cfg.get('viewport_1280', True))
         verified = exe.read_bytes()
         if not panel_guard_patch.state(verified) or not sync_port_patch.state(verified) or verified[0xeb420:0xeb420+len(peer_address_patch.CODE)] != peer_address_patch.CODE:
             raise RuntimeError('왕건 방식 주소 응답 패치 검증 실패. 게임을 실행하지 않았습니다.')
@@ -1021,7 +1094,20 @@ class App(tk.Tk):
         self.gamedir_var.set(str(path))
         self.winmode.game_dir = str(path)
         self.latency = LatencyPatch(str(path))
-        self.info_var.set('왕건 방식 주소 응답 패치 확인 완료 — 게임 실행')
+        mode='1280×720' if self.cfg.get('viewport_1280',True) else '원본'
+        self.info_var.set(f'주소 응답·패널 보호 확인 완료 / 내부 해상도 {mode} — 게임 실행')
+
+    def _on_viewport_apply(self):
+        old=dict(self.cfg)
+        self.cfg['viewport_1280']=bool(self.viewport_var.get())
+        try:
+            self._prepare_game_launch()
+        except Exception as exc:
+            self.cfg=old
+            messagebox.showerror('내부 해상도 적용 실패',str(exc));return
+        messagebox.showinfo('내부 해상도',
+            '1280×720 적용 완료. 다음 전투 진입 시 자동 전환됩니다.' if self.cfg['viewport_1280'] else
+            '원본 내부 해상도로 복원했습니다. 다음 게임 실행부터 적용됩니다.')
 
     def _on_game_play(self):
         # Use the saved multiplayer destination when available; otherwise local.
@@ -1031,9 +1117,6 @@ class App(tk.Tk):
             self._on_single_play()
 
     def _on_single_play(self):
-        # 싱글: 내 PC 서버(127.0.0.1)로 접속. 서버가 꺼져 있으면 자동으로 켠다.
-        if not is_server_running():
-            self.server.start()
         self._set_host_and_launch("127.0.0.1")
 
     def _on_multi_play(self):
@@ -1045,10 +1128,7 @@ class App(tk.Tk):
                 "(이대로 진행해도 대전은 시도됩니다.)")
         elif msg:
             self._set_status(msg) if hasattr(self, "_set_status") else None
-        # 멀티: 로컬 서버가 떠 있으면(=이 PC가 호스트) 127.0.0.1로 바로 실행.
-        if is_server_running():
-            self._set_host_and_launch("127.0.0.1", multiplayer=True)
-            return
+        # A running local server must NEVER override the selected VPN address.
         # Reuse the saved address without another dialog.
         if self.saved_ip_var.get().strip():
             if self._save_server_ip(notify=False):
@@ -1259,6 +1339,13 @@ class App(tk.Tk):
         # ── 창모드 ──
         mode_frame = ttk.LabelFrame(frame, text="디스플레이 모드", padding=12)
         mode_frame.pack(fill="x", pady=(0, 10))
+        self.viewport_var=tk.BooleanVar(value=self.cfg.get('viewport_1280',True))
+        ttk.Checkbutton(mode_frame,text='내부 해상도 1280×720 (전투 시야 확장)',
+                        variable=self.viewport_var).pack(anchor='w')
+        ttk.Button(mode_frame,text='내부 해상도 적용 / 해제',command=self._on_viewport_apply).pack(anchor='w',pady=4)
+        ttk.Label(mode_frame,text='기본 켜짐 · 게임 실행 전 자동 적용 · 해제 시 원본 복원\n'
+                  '메뉴·로비는 1024×768 유지. 장시간/멀티플레이 안정성은 추가 검증 중입니다.',
+                  foreground='gray',wraplength=510).pack(anchor='w',pady=4)
         try:
             settings = self.winmode.read_settings()
         except (OSError, UnicodeError) as exc:
@@ -1277,7 +1364,7 @@ class App(tk.Tk):
         self.res_var = tk.StringVar(value=current_res)
         ttk.Combobox(res_row, textvariable=self.res_var, values=RESOLUTIONS, width=14).pack(side="left", padx=(6, 0))
         ttk.Label(mode_frame, text='0x0 = 게임이 요청한 원본 크기. 위 값은 화면 확대 크기입니다.\n'
-                  '내부 지도 확장(1280×720 / 1920×1080)은 개발 중이며 아직 적용되지 않습니다.',
+                  '실제 지도 시야는 위 내부 해상도 옵션으로 변경합니다. 1920×1080 내부 해상도는 미지원입니다.',
                   foreground='gray', wraplength=510).pack(anchor='w', pady=4)
         render_row = ttk.Frame(mode_frame)
         render_row.pack(fill='x')
@@ -1406,6 +1493,8 @@ class App(tk.Tk):
 
 if __name__ == "__main__":
     if '--update-probe' in sys.argv:
+        if viewport_patch.manifest().get('version')!=7:
+            raise RuntimeError('고해상도 패치 데이터 누락')
         result_path = sys.argv[sys.argv.index('--update-probe') + 1]
         probe_app = App()
         probe_app.withdraw()

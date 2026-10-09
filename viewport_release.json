@@ -1,0 +1,531 @@
+{
+  "schema": 1,
+  "version": 7,
+  "legacy_edits": [
+    [
+      {
+        "va": "0x45aebf",
+        "before": "68000300006800040000",
+        "after": "68d00200006800050000",
+        "reason": "in-game high-resolution option request"
+      },
+      {
+        "va": "0x4237f8",
+        "before": "68580200006820030000",
+        "after": "68d00200006800050000",
+        "reason": "battle entry resolution, not lobby/logo/result scenes"
+      },
+      {
+        "va": "0x423821",
+        "before": "68580200006820030000",
+        "after": "68d00200006800050000",
+        "reason": "battle entry resolution, not lobby/logo/result scenes"
+      },
+      {
+        "va": "0x4dc3fa",
+        "before": "8b55fcc782b0000000700000000fbf05e2a506012db90000008b4dfc8981b40000000fbf15e0a5060183ea718b45fc8990b80000000fbf0de2a5060183e9018b55fc898abc000000c70504a6060100000000c7050ca6060100040000c70508a6060100000000c70510a60601000300008b45fcc7400401000000",
+        "after": "8b55fc0fbf022d20030000d1f88982b000000066a3a01e5000051f0300008982b80000000fbf42022db90000008982b400000005b80000008982bc0000002d5702000066a3a21e500031c0a304a60601a308a606010fbf02a30ca606010fbf4202a310a60601c742040100000090909090909090909090909090",
+        "reason": "dynamic full clip, centered HUD container and shared child origin"
+      },
+      {
+        "va": "0x4ebe40",
+        "before": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "after": "66813de0a506010005754466813de2a50601d0027539e8a5f8ffff8b45080fbf083b0d90a606017c213b0d98a606017f190fbf48023b0d94a606017c0d3b0d9ca606017f05e99d6ff7ffe9916ff7ff8b45080fbf08e9066ff7ff",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x4eb700",
+        "before": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "after": "9c60be781c8000b90f0000000fbf1da01e50000fbf15a21e50008b0601d88946108b460401d08946148b460801d88946188b460c01d089461c83c620e2dc619dc3",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x4eb800",
+        "before": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "after": "9c608db9d800000031f60fbf04b5a8f64f000fbf1da01e500001d80fbf14b5aaf64f000fbf1da21e500001da890789570483c02883c22889470889570c83c7104683fe0a7cc4619dc3",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x4eba00",
+        "before": "000000000000000000000000000000",
+        "after": "8b4dfce8f8fdffff5f5e5b89ec5dc3",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x4ebb00",
+        "before": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "after": "9c60833dec6876000074680fbf1dc4686e000fbf15c6686e000fbf35c8686e000fbf3dca686e0085db784885d2784485f67e4085ff7e3c81fe000200007d3481ff000200007d2c8d04330fbf0de0a5060139c87f1e8d043a0fbf0de2a5060139c87f1056575668cc686e005253ff1588c54e00619d5f5e5b89ec5dc3",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x4ebc00",
+        "before": "0000000000000000000000000000000000000000",
+        "after": "0fbf540102031590a6060183ea7052e9648bf7ff",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x4ebd00",
+        "before": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "after": "9c600fbf593e2b59080fbf51402b510c8b71308b793439fe73198b068b480801d9668948408b480c01d16689484283c604ebe3619dc3",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x4ebe00",
+        "before": "00000000000000000000000000000000",
+        "after": "e8fbfeffff5589e583ec44e986e1f6ff",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x4eb900",
+        "before": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "after": "66813de0a50601000575343dd0020000752d5383c01fc1f8050fbe15cd12b4000fbf1c55da12b4000fbf15d612b40029da5b85d2790231d239d07e0289d0c32d980000009983e21f01d0c1f805c3",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x4eb980",
+        "before": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "after": "9983e21f01d0c1f80566813de0a506010005753166813de2a50601d0027526530fbe15cd12b4000fbf1c55d812b4000fbf15d412b40029da5b85d2790231d239d07e0289d0c3",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x4ebc40",
+        "before": "00000000000000000000000000000000000000000000000000000000000000000000000000",
+        "after": "0fbf15e2a506010fbf0d5811b400c1e10529ca8b4df0663b51027e040fbf5102e97aecfdff",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x4ebc80",
+        "before": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "after": "9c6066813de0a506010005752166813de2a50601d00275166a0068d002000068000500006a006a00ff1580c44e00619d5589e583ec58e9dbe9fdff",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x4ebf00",
+        "before": "00000000000000",
+        "after": "b880c44e00eb29",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x4ebf10",
+        "before": "00000000000000",
+        "after": "b884c44e00eb19",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x4ebf20",
+        "before": "00000000000000",
+        "after": "b838c54e00eb09",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x4ebf30",
+        "before": "000000000000000000000000000000000000000000000000000000000000",
+        "after": "0fbf15e2a506012b54240885d27e0c3b5424107d0489542410ff20c21400",
+        "reason": "viewport UI helper in verified zero padding"
+      },
+      {
+        "va": "0x45bab0",
+        "before": "558bec83ec44535657894dfc5f5e5b8be55dc3",
+        "after": "e94bfd08009090909090909090909090909090",
+        "reason": "refresh command images AND hit rectangles on resolution change"
+      },
+      {
+        "va": "0x45bc0e",
+        "before": "5f5e5b8be55dc3",
+        "after": "e9edfd08009090",
+        "reason": "initialize command rectangles using current HUD origin, not startup coordinates"
+      },
+      {
+        "va": "0x4d664c",
+        "before": "5f5e5b8be55dc3",
+        "after": "e9af5401009090",
+        "reason": "restore software cursor background after presenting each full frame"
+      },
+      {
+        "va": "0x464772",
+        "before": "668b54010252",
+        "after": "e98974080090",
+        "reason": "attach left 112px decoration to centered panel instead of screen edge"
+      },
+      {
+        "va": "0x459f90",
+        "before": "558bec83ec44",
+        "after": "e96b1e090090",
+        "reason": "align main-menu child images and hitboxes with their parent before drawing"
+      },
+      {
+        "va": "0x462d9a",
+        "before": "8b45080fbf08",
+        "after": "e9a190080090",
+        "reason": "use current HUD input bounds and refresh tooltip rectangles, no stale/doubled origin"
+      },
+      {
+        "va": "0x461b58",
+        "before": "03d1",
+        "after": "9090",
+        "reason": "remove duplicated HUD origin from menu/alliance button creation"
+      },
+      {
+        "va": "0x461b84",
+        "before": "03c8",
+        "after": "9090",
+        "reason": "remove duplicated HUD origin from menu/alliance button creation"
+      },
+      {
+        "va": "0x461c8d",
+        "before": "03d1",
+        "after": "9090",
+        "reason": "remove duplicated HUD origin from menu/alliance button creation"
+      },
+      {
+        "va": "0x461cb9",
+        "before": "03c8",
+        "after": "9090",
+        "reason": "remove duplicated HUD origin from menu/alliance button creation"
+      },
+      {
+        "va": "0x4ca6c2",
+        "before": "2d980000009983e21f03c2c1f805",
+        "after": "e839120200909090909090909090",
+        "reason": "full-height terrain/fog rows, bounded by map edge"
+      },
+      {
+        "va": "0x4caf72",
+        "before": "2d980000009983e21f03c2c1f805",
+        "after": "e889090200909090909090909090",
+        "reason": "full-height terrain/fog rows, bounded by map edge"
+      },
+      {
+        "va": "0x4ca703",
+        "before": "9983e21f03c2c1f805",
+        "after": "e87812020090909090",
+        "reason": "terrain/fog columns bounded by map edge"
+      },
+      {
+        "va": "0x4cafb3",
+        "before": "9983e21f03c2c1f805",
+        "after": "e8c809020090909090",
+        "reason": "terrain/fog columns bounded by map edge"
+      },
+      {
+        "va": "0x4ca8d8",
+        "before": "8b4df00fbf5102",
+        "after": "e9631302009090",
+        "reason": "clip terrain scanlines before memcpy at last partial tile"
+      },
+      {
+        "va": "0x4ca690",
+        "before": "558bec83ec58",
+        "after": "e9eb15020090",
+        "reason": "refresh world background before terrain, objects, fog and HUD"
+      },
+      {
+        "va": "0x4cb026",
+        "before": "ff1580c44e00",
+        "after": "e8d50e020090",
+        "reason": "clip fog rows to actual surface height"
+      },
+      {
+        "va": "0x4cb0e2",
+        "before": "ff1584c44e00",
+        "after": "e8290e020090",
+        "reason": "clip fog rows to actual surface height"
+      },
+      {
+        "va": "0x4cb150",
+        "before": "ff1538c54e00",
+        "after": "e8cb0d020090",
+        "reason": "clip fog rows to actual surface height"
+      },
+      {
+        "va": "0x4cb216",
+        "before": "ff1584c44e00",
+        "after": "e8f50c020090",
+        "reason": "clip fog rows to actual surface height"
+      },
+      {
+        "va": "0x4cb2d1",
+        "before": "ff1584c44e00",
+        "after": "e83a0c020090",
+        "reason": "clip fog rows to actual surface height"
+      }
+    ]
+  ],
+  "source_hash": "ef006b8b3a5319279e4313e6faed873ca655082643cb79535d81f05804306d16",
+  "dll_hashes": {
+    "iCARUS.dll": "1783757a0091d18cbf53a65e5c42bc07a4ef245020bf7a7716865fa520969b2e",
+    "GameCtrl.dll": "97a69db96bdf1271b7c902446f6f6d91d53b3e751be0ec1a492b28bce7072e88"
+  },
+  "edits": [
+    {
+      "va": "0x45aebf",
+      "before": "68000300006800040000",
+      "after": "68d00200006800050000",
+      "reason": "in-game high-resolution option request"
+    },
+    {
+      "va": "0x4237f8",
+      "before": "68580200006820030000",
+      "after": "68d00200006800050000",
+      "reason": "battle entry resolution, not lobby/logo/result scenes"
+    },
+    {
+      "va": "0x423821",
+      "before": "68580200006820030000",
+      "after": "68d00200006800050000",
+      "reason": "battle entry resolution, not lobby/logo/result scenes"
+    },
+    {
+      "va": "0x4dc3fa",
+      "before": "8b55fcc782b0000000700000000fbf05e2a506012db90000008b4dfc8981b40000000fbf15e0a5060183ea718b45fc8990b80000000fbf0de2a5060183e9018b55fc898abc000000c70504a6060100000000c7050ca6060100040000c70508a6060100000000c70510a60601000300008b45fcc7400401000000",
+      "after": "8b55fc0fbf022d20030000d1f88982b000000066a3a01e5000051f0300008982b80000000fbf42022db90000008982b400000005b80000008982bc0000002d5702000066a3a21e500031c0a304a60601a308a606010fbf02a30ca606010fbf4202a310a60601c742040100000090909090909090909090909090",
+      "reason": "dynamic full clip, centered HUD container and shared child origin"
+    },
+    {
+      "va": "0x4eb850",
+      "before": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "after": "9c60e8d96ff6ffe87471f6ffe8cf71f6ffe82a72f6ffe88572f6ffe8e072f6ffe83b73f6ffe89673f6ffe8f173f6ffe86c74f6ffe81775f6ffe8c275f6ffe81d76f6ffe81878f6ffe83379f6ffe88e79f6ffe8597af6ffe8b47af6ffe80f7bf6ff619d5f5e5b89ec5dc3",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4ebf80",
+      "before": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "after": "a1e4a5060166813de0a506010005752866813de2a50601d002751db8180300008b4dfc6689818400000066c78186000000faffe95366f6ffe91466f6ff",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4ebe40",
+      "before": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "after": "66813de0a506010005754466813de2a50601d0027539e8a5f8ffff8b45080fbf083b0d90a606017c213b0d98a606017f190fbf48023b0d94a606017c0d3b0d9ca606017f05e99d6ff7ffe9916ff7ff8b45080fbf08e9066ff7ff",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4eb700",
+      "before": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "after": "9c60be781c8000b90f0000000fbf1da01e50000fbf15a21e50008b0601d88946108b460401d08946148b460801d88946188b460c01d089461c83c620e2dc619dc3",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4eb800",
+      "before": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "after": "9c608db9d800000031f60fbf04b5a8f64f000fbf1da01e500001d80fbf14b5aaf64f000fbf1da21e500001da890789570483c02883c22889470889570c83c7104683fe0a7cc4619dc3",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4eba00",
+      "before": "000000000000000000000000000000",
+      "after": "8b4dfce8f8fdffff5f5e5b89ec5dc3",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4ebb00",
+      "before": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "after": "9c60833dec6876000074680fbf1dc4686e000fbf15c6686e000fbf35c8686e000fbf3dca686e0085db784885d2784485f67e4085ff7e3c81fe000200007d3481ff000200007d2c8d04330fbf0de0a5060139c87f1e8d043a0fbf0de2a5060139c87f1056575668cc686e005253ff1588c54e00619d5f5e5b89ec5dc3",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4ebc00",
+      "before": "0000000000000000000000000000000000000000",
+      "after": "0fbf540102031590a6060183ea7052e9648bf7ff",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4ebd00",
+      "before": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "after": "9c600fbf593e2b59080fbf51402b510c8b71308b793439fe73198b068b480801d9668948408b480c01d16689484283c604ebe3619dc3",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4ebe00",
+      "before": "00000000000000000000000000000000",
+      "after": "e8fbfeffff5589e583ec44e986e1f6ff",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4eb900",
+      "before": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "after": "66813de0a50601000575343dd0020000752d5383c01fc1f8050fbe15cd12b4000fbf1c55da12b4000fbf15d612b40029da5b85d2790231d239d07e0289d0c32d980000009983e21f01d0c1f805c3",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4eb980",
+      "before": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "after": "9983e21f01d0c1f80566813de0a506010005753166813de2a50601d0027526530fbe15cd12b4000fbf1c55d812b4000fbf15d412b40029da5b85d2790231d239d07e0289d0c3",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4ebc40",
+      "before": "00000000000000000000000000000000000000000000000000000000000000000000000000",
+      "after": "0fbf15e2a506010fbf0d5811b400c1e10529ca8b4df0663b51027e040fbf5102e97aecfdff",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4ebc80",
+      "before": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "after": "9c6066813de0a506010005752166813de2a50601d00275166a0068d002000068000500006a006a00ff1580c44e00619d5589e583ec58e9dbe9fdff",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4ebf00",
+      "before": "00000000000000",
+      "after": "b880c44e00eb29",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4ebf10",
+      "before": "00000000000000",
+      "after": "b884c44e00eb19",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4ebf20",
+      "before": "00000000000000",
+      "after": "b838c54e00eb09",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x4ebf30",
+      "before": "000000000000000000000000000000000000000000000000000000000000",
+      "after": "0fbf15e2a506012b54240885d27e0c3b5424107d0489542410ff20c21400",
+      "reason": "viewport UI helper in verified zero padding"
+    },
+    {
+      "va": "0x45bab0",
+      "before": "558bec83ec44535657894dfc5f5e5b8be55dc3",
+      "after": "e94bfd08009090909090909090909090909090",
+      "reason": "refresh command images AND hit rectangles on resolution change"
+    },
+    {
+      "va": "0x45bc0e",
+      "before": "5f5e5b8be55dc3",
+      "after": "e9edfd08009090",
+      "reason": "initialize command rectangles using current HUD origin, not startup coordinates"
+    },
+    {
+      "va": "0x4d664c",
+      "before": "5f5e5b8be55dc3",
+      "after": "e9af5401009090",
+      "reason": "restore software cursor background after presenting each full frame"
+    },
+    {
+      "va": "0x464772",
+      "before": "668b54010252",
+      "after": "e98974080090",
+      "reason": "attach left 112px decoration to centered panel instead of screen edge"
+    },
+    {
+      "va": "0x459f90",
+      "before": "558bec83ec44",
+      "after": "e96b1e090090",
+      "reason": "align main-menu child images and hitboxes with their parent before drawing"
+    },
+    {
+      "va": "0x462d9a",
+      "before": "8b45080fbf08",
+      "after": "e9a190080090",
+      "reason": "use current HUD input bounds and refresh tooltip rectangles, no stale/doubled origin"
+    },
+    {
+      "va": "0x465886",
+      "before": "5f5e5b8be55dc3",
+      "after": "e9c55f08009090",
+      "reason": "refresh portrait, HP and information coordinates after HUD origin changes"
+    },
+    {
+      "va": "0x4525cc",
+      "before": "a1e4a50601",
+      "after": "e9af990900",
+      "reason": "anchor resource control to right edge and rebuild native hover rectangles"
+    },
+    {
+      "va": "0x461b58",
+      "before": "03d1",
+      "after": "9090",
+      "reason": "remove duplicated HUD origin from menu/alliance button creation"
+    },
+    {
+      "va": "0x461b84",
+      "before": "03c8",
+      "after": "9090",
+      "reason": "remove duplicated HUD origin from menu/alliance button creation"
+    },
+    {
+      "va": "0x461c8d",
+      "before": "03d1",
+      "after": "9090",
+      "reason": "remove duplicated HUD origin from menu/alliance button creation"
+    },
+    {
+      "va": "0x461cb9",
+      "before": "03c8",
+      "after": "9090",
+      "reason": "remove duplicated HUD origin from menu/alliance button creation"
+    },
+    {
+      "va": "0x4ca6c2",
+      "before": "2d980000009983e21f03c2c1f805",
+      "after": "e839120200909090909090909090",
+      "reason": "full-height terrain/fog rows, bounded by map edge"
+    },
+    {
+      "va": "0x4caf72",
+      "before": "2d980000009983e21f03c2c1f805",
+      "after": "e889090200909090909090909090",
+      "reason": "full-height terrain/fog rows, bounded by map edge"
+    },
+    {
+      "va": "0x4ca703",
+      "before": "9983e21f03c2c1f805",
+      "after": "e87812020090909090",
+      "reason": "terrain/fog columns bounded by map edge"
+    },
+    {
+      "va": "0x4cafb3",
+      "before": "9983e21f03c2c1f805",
+      "after": "e8c809020090909090",
+      "reason": "terrain/fog columns bounded by map edge"
+    },
+    {
+      "va": "0x4ca8d8",
+      "before": "8b4df00fbf5102",
+      "after": "e9631302009090",
+      "reason": "clip terrain scanlines before memcpy at last partial tile"
+    },
+    {
+      "va": "0x4ca690",
+      "before": "558bec83ec58",
+      "after": "e9eb15020090",
+      "reason": "refresh world background before terrain, objects, fog and HUD"
+    },
+    {
+      "va": "0x4cb026",
+      "before": "ff1580c44e00",
+      "after": "e8d50e020090",
+      "reason": "clip fog rows to actual surface height"
+    },
+    {
+      "va": "0x4cb0e2",
+      "before": "ff1584c44e00",
+      "after": "e8290e020090",
+      "reason": "clip fog rows to actual surface height"
+    },
+    {
+      "va": "0x4cb150",
+      "before": "ff1538c54e00",
+      "after": "e8cb0d020090",
+      "reason": "clip fog rows to actual surface height"
+    },
+    {
+      "va": "0x4cb216",
+      "before": "ff1584c44e00",
+      "after": "e8f50c020090",
+      "reason": "clip fog rows to actual surface height"
+    },
+    {
+      "va": "0x4cb2d1",
+      "before": "ff1584c44e00",
+      "after": "e83a0c020090",
+      "reason": "clip fog rows to actual surface height"
+    }
+  ]
+}

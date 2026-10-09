@@ -33,7 +33,8 @@ HIGHMODE_CODE = bytes.fromhex(
 def transform(source, width=1280, height=720):
     if (width, height) != (1280, 720):
         raise ValueError('Only the first 1280x720 research stage is enabled')
-    if hashlib.sha256(source).hexdigest() != SOURCE_HASHES['Rhakmu.exe']:
+    if hashlib.sha256(source).hexdigest() not in (SOURCE_HASHES['Rhakmu.exe'],
+            '2d42b08cf13e05ead67e3122f13e71598ac7b76e06b6248d5b6da3be0c1ea3b9'):
         raise ValueError('Unknown executable SHA-256; refusing to patch')
     data = bytearray(source)
     edits = []
@@ -62,11 +63,16 @@ def transform(source, width=1280, height=720):
     replace(0x4dc3fa, HIGHMODE_ORIGINAL,
             HIGHMODE_CODE + b'\x90' * (len(HIGHMODE_ORIGINAL)-len(HIGHMODE_CODE)),
             'dynamic full clip, centered HUD container and shared child origin')
-    from viewport_helpers import helpers, RECTS, INIT_RETURN, CURSOR_RETURN, LEFT_DECORATION
+    from viewport_helpers import helpers, RECTS, INIT_RETURN, CURSOR_RETURN, LEFT_DECORATION, MENU_DRAW, PANEL_GATE, INFO_LAYOUT, RESOURCE_ANCHOR
     # The existing network patch already maps the entire .text raw allocation.
     if source[0x208:0x20c] != struct.pack('<I', 0xeb000):
         raise ValueError('Unexpected .text virtual size; helper addresses are not safe')
-    for va, code in helpers().items():
+    import viewport_terrain as terrain
+    helper_code = {**helpers(), **terrain.helpers()}
+    regions = sorted((va, va+len(code)) for va,code in helper_code.items())
+    if any(end > next_start for (_,end),(next_start,_) in zip(regions,regions[1:])):
+        raise ValueError('Overlapping helper allocations')
+    for va, code in helper_code.items():
         if len(code) > 256:
             raise ValueError('Helper exceeds its reserved region')
         replace(va, bytes(len(code)), code, 'viewport UI helper in verified zero padding')
@@ -82,6 +88,40 @@ def transform(source, width=1280, height=720):
          'restore software cursor background after presenting each full frame')
     jump(0x464772, LEFT_DECORATION, bytes.fromhex('668b54010252'),
          'attach left 112px decoration to centered panel instead of screen edge')
+    jump(0x459f90, MENU_DRAW, bytes.fromhex('558bec83ec44'),
+         'align main-menu child images and hitboxes with their parent before drawing')
+    jump(0x462d9a, PANEL_GATE, bytes.fromhex('8b45080fbf08'),
+         'use current HUD input bounds and refresh tooltip rectangles, no stale/doubled origin')
+    jump(0x465886, INFO_LAYOUT, bytes.fromhex('5f5e5b8be55dc3'),
+         'refresh portrait, HP and information coordinates after HUD origin changes')
+    jump(0x4525cc, RESOURCE_ANCHOR, bytes.fromhex('a1e4a50601'),
+         'anchor resource control to right edge and rebuild native hover rectangles')
+    # CPannelMgr adds the origin before Create, but CPannelButton::Create and
+    # ChangeRes already add it. Keep immutable faction-local coordinates here.
+    for va, instruction in ((0x461b58, '03d1'), (0x461b84, '03c8'),
+                            (0x461c8d, '03d1'), (0x461cb9, '03c8')):
+        replace(va, bytes.fromhex(instruction), b'\x90\x90',
+                'remove duplicated HUD origin from menu/alliance button creation')
+    def call_helper(va, target, original, reason):
+        replace(va, original, b'\xe8'+struct.pack('<i',target-va-5)+b'\x90'*(len(original)-5),reason)
+
+    for va in (0x4ca6c2,0x4caf72):
+        call_helper(va,terrain.ROWS,bytes.fromhex('2d980000009983e21f03c2c1f805'),
+                    'full-height terrain/fog rows, bounded by map edge')
+    for va in (0x4ca703,0x4cafb3):
+        call_helper(va,terrain.COLUMNS,bytes.fromhex('9983e21f03c2c1f805'),
+                    'terrain/fog columns bounded by map edge')
+    jump(0x4ca8d8,terrain.SCANLINE,bytes.fromhex('8b4df00fbf5102'),
+         'clip terrain scanlines before memcpy at last partial tile')
+    jump(0x4ca690,terrain.CLEAR,bytes.fromhex('558bec83ec58'),
+         'refresh world background before terrain, objects, fog and HUD')
+    for va,iat,target in ((0x4cb026,0x4ec480,terrain.FILL),
+                          (0x4cb0e2,0x4ec484,terrain.REDUCE),
+                          (0x4cb150,0x4ec538,terrain.HALF),
+                          (0x4cb216,0x4ec484,terrain.REDUCE),
+                          (0x4cb2d1,0x4ec484,terrain.REDUCE)):
+        call_helper(va,target,b'\xff\x15'+struct.pack('<I',iat),
+                    'clip fog rows to actual surface height')
     return bytes(data), edits
 
 
@@ -110,7 +150,7 @@ def build(source_dir, destination):
     (destination / 'ddraw.ini').write_text(ini, encoding='utf-8')
     report = dict(diagnostic_only=True, source_hashes=SOURCE_HASHES, edits=edits,
                   output_sha256=hashlib.sha256(output).hexdigest(),
-                  unverified=['HUD children', 'terrain partial bottom tile', 'all object collectors',
+                  unverified=['in-game full-height terrain/fog appearance', 'HUD children', 'all object collectors',
                               'cursor', 'audio', 'IME', 'performance', 'multiplayer'])
     (destination / 'viewport-manifest.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     return destination

@@ -12,6 +12,9 @@ function RestoreAdapters {
     if (Test-Path -LiteralPath $state) {
         $saved = @(Get-Content -LiteralPath $state -Raw | ConvertFrom-Json)
         foreach ($guid in $saved) {
+            # Windows PowerShell 5 represents a JSON [] pipeline as a null item.
+            # No Hamachi adapters were changed in that session: nothing to restore.
+            if (-not "$guid") { continue }
             $a = Get-NetAdapter | Where-Object { "$($_.InterfaceGuid)" -eq "$guid" }
             if (-not $a) { throw "Saved adapter missing: $guid" }
             if ($a.Status -eq 'Disabled') { $a | Enable-NetAdapter -Confirm:$false }
@@ -24,7 +27,10 @@ try {
     if (-not $locked) { throw 'Another Radmin game session is active.' }
     if (Get-Process Rhakmu,Launcher -ErrorAction SilentlyContinue) { throw 'Close the game and game launcher first.' }
     if ($Restore) { RestoreAdapters; Report 'RESTORED'; exit 0 }
-    if ((Test-Path -LiteralPath $state) -or (Test-Path -LiteralPath (Join-Path $StateDir 'address.json'))) { throw 'Previous state exists. Use Restore first.' }
+    if ((Test-Path -LiteralPath $state) -or (Test-Path -LiteralPath (Join-Path $StateDir 'address.json'))) {
+        Report 'RECOVERING'
+        RestoreAdapters
+    }
     $rad = @(Get-NetAdapter | Where-Object { $_.Status -eq 'Up' -and ($_.Name -match 'Radmin' -or $_.InterfaceDescription -match 'Radmin|Famatech') })
     if (-not $rad -or -not ($rad | Get-NetIPAddress -AddressFamily IPv4 | Where-Object IPAddress -like '26.*')) { throw 'Connected Radmin adapter not found.' }
     $radIPs = @($rad | Get-NetIPAddress -AddressFamily IPv4 | Where-Object IPAddress -like '26.*' | Select-Object -ExpandProperty IPAddress -Unique)

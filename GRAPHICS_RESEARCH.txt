@@ -1,5 +1,28 @@
 RhakMu graphics investigation — 2026-10-09
-STATUS: incomplete research, not a playable expanded-viewport release.
+STATUS: launcher 0.9023 integrates 1280x720 with reversible opt-out;
+real long-session / multiplayer validation remains incomplete.
+
+0.9023 input repair and launcher integration
+  CPannelMgr::Process at 462D9A adds HUD origin to cached absolute panel bounds.
+  Lobby-created bounds (112,593,911,767) plus battle origin (240,120) exclude
+  the now-correctly rendered menu/alliance icons. Native regression reproduces
+  rejection for both icons in all three factions. New 1280x720-only gate uses
+  current classSCREEN HUD rect directly. Other resolutions replay original code.
+  Fifteen tooltip rectangles (5 regions * 3 factions) at 801C78..801E58 hold
+  immutable low-mode RECT then high-mode RECT. Refresh latter from former plus
+  current 501EA0/A2 origin before hit processing. No cumulative translation.
+  Native CPannelButton::ProcessCtrl tests confirm hover ID, press latch and
+  release click ID for menu 0x36 / alliance 0x37 in all three factions.
+  New code in verified padding EB700 and EBE40, no networking cave overlap.
+  viewport_release.json contains reviewed instruction deltas, built offline;
+  frozen launcher needs neither Keystone nor game assets. Source hash check
+  normalizes known panel guard, 1..4 turn latency and resource quantity changes
+  only for verification; preserves their actual values and all network bytes.
+  Game/DLL allowlist, running-process refusal, backup, atomic replacement,
+  repeated apply and disable/restore tested. Default enabled on game launch;
+  Settings provides explicit opt-out and restoration. No engine files changed
+  merely by launching/updating the launcher. Full actual gameplay remains a
+  follow-up validation; unit tests are not proof of long-session stability.
 
 Scope and reference
   Source: this repository (new-rakum), not the older rakmu repository.
@@ -116,3 +139,62 @@ UI crash repair — viewport-1280-ui-v3
   Automated: 35 tests total, 34 passed / 1 optional integration skipped.
   Actual in-game result is NOT yet verified. Bottom side terrain coverage,
   other independent UI coordinates, all effects and multiplayer remain pending.
+
+UI v3 user regression / v4 coordinate-only candidate
+  User screenshot confirms displaced main-menu children and two HUD buttons.
+  Main-menu LoadData centers its base X at 459CAA and creates child base X as
+  that centered value plus the asset-local offset (459EAC). Button Create then
+  adds HUD X again, while Main ChangeRes independently centers only background X.
+  Before Main DrawCtrl, derive child displayed coordinates from parent displayed
+  minus parent base plus child base. Preserve immutable bases and all other
+  button classes. The same displayed fields feed ProcessCtrl hit testing.
+  CPannelMgr separately pre-adds HUD X/Y before creating IDs 0x36 and 0x37 at
+  461B8C/461CC1. Remove those four duplicate additions, leaving faction-local
+  base coordinates for Button Create/ChangeRes to translate exactly once.
+  Unicorn tests cover all three faction coordinate tables, repeated parent
+  movements without drift, and original draw-prologue stack/register behavior.
+  Helpers EBD00/EBE00 are guarded zero padding; networking bytes unchanged.
+  Side terrain remains UNFIXED: Draw_Tile 4CA6C2 and Draw_Fog 4CAF72 both subtract
+  152 then truncate row count /32 (544px at 720px height). Simply increasing
+  rows is unsafe: tile scanline memcpy at 4CA924 and fog FillScr at 4CB026 do not
+  clip the final 16px row. Expanded rows also need map-edge and object coverage.
+  No black-band workaround or live-process memory patch applied. No production
+  update published. Current v3 process is not replaced or terminated.
+
+Full-height terrain/fog — viewport-1280-ui-v5
+  User confirmed v4 main-menu alignment, but black side bands and transparent
+  HUD gaps still retained old content. Runtime v4: 1280x720 RGB565, pitch 2560,
+  camera (126,27), map (166,68). Root cause: both terrain and fog draw only 17
+  whole rows / 544 pixels, leaving 176 screen rows without background refresh.
+  At 1280x720, use ceil(height/32)=23 rows, bounded by map height minus camera Y.
+  Bound columns by map width minus camera X; retain original loops in 800x600
+  and 1024x768. Clip each terrain template scanline to actual remaining screen
+  height before its raw memcpy. Clip all five fog call sites (fill, RLE reduce,
+  and half-color rectangle) to 16 rows at screen Y=704.
+  Clear high-resolution world surface before Draw_Tile, then draw terrain,
+  objects, fog, HUD, and cursor in original order. This is not a black-band
+  overlay: map pixels are redrawn through Y=719. Off-map/unexplored areas remain
+  black intentionally. HUD asset opaque panels remain opaque; transparent holes
+  reveal the newly drawn background.
+  Tests execute the complete patched terrain loop with synthetic tile resources,
+  full fog loop, and all three REAL iCARUS fog implementations. Framebuffer ends
+  at an unmapped page: bottom-row overruns fail immediately. Check last pixel,
+  map edges, row/column limits, original modes, and fog stdcall stack cleanup.
+  Checked-zero helper intervals are validated for overlap before applying.
+  Still unverified: actual v5 battle appearance, world object/decorations culling
+  below the old viewport boundary, all factions, performance, multiplayer.
+  Installed game and release manifest remain unchanged. Do not treat unit tests
+  as proof of real gameplay stability or completed high-resolution support.
+
+Official launcher integration / viewport release v7 (0.9024)
+  Data-only allowlisted manifest, reversible backups and game-closed guard.
+  Record complete v6 layout for safe migration; reject incomplete mixed patches.
+  CPannelMgr Process uses current screen HUD bounds, not stale/doubled origins.
+  Refresh all 15 faction tooltip rectangles; native hover/press/release tested.
+  CPannelMgr ChangeRes epilogue refreshes 19 native information coordinate
+  initializers. Portrait/HP tables otherwise retain startup (112,168) origin
+  after battle changes it to (240,120). No object state is reconstructed.
+  Resource ChangeRes anchors control at (1280-488,-6) and uses original native
+  rectangle rebuilding so icons at local Y=6 sit at screen top and hitboxes follow.
+  Native x86 tests validate round-trip coordinate changes and framebuffer bounds.
+  Real gameplay visuals, long sessions and multiplayer still require user testing.

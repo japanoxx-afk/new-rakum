@@ -8,6 +8,12 @@ import subprocess
 import tempfile
 import urllib.request
 import urllib.parse
+import time
+
+def version_key(value):
+    if not re.fullmatch(r'[0-9]+(?:\.[0-9]+)*', str(value)):
+        raise ValueError('Invalid launcher version')
+    return tuple(int(part) for part in str(value).split('.'))
 
 def install(url, size, current, version):
     name = Path(urllib.parse.urlparse(url).path).name
@@ -21,7 +27,8 @@ def install(url, size, current, version):
     os.close(fd)
     probe = Path(tmp + '.check.json')
     try:
-        with urllib.request.urlopen(url, timeout=30) as response, open(tmp, 'wb') as out:
+        fresh_url = url + ('&' if '?' in url else '?') + 'download=' + str(time.time_ns())
+        with urllib.request.urlopen(fresh_url, timeout=30) as response, open(tmp, 'wb') as out:
             count = 0
             while block := response.read(1024 * 1024):
                 count += len(block)

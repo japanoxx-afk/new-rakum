@@ -1,0 +1,63 @@
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+import viewport_patch as vp
+import viewport_probe
+import panel_guard_patch
+import resource_amount_patch as amount
+
+SOURCE=Path(r'C:\Program Files (x86)\TriggerSoft\RhakMu\Rhakmu.exe')
+
+class ViewportReleaseTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):cls.source=vp.transform(SOURCE.read_bytes(),False)
+
+    def test_complete_previous_release_migrates(self):
+        old=bytearray(self.source)
+        for edit in vp.manifest()['legacy_edits'][0]:
+            at=int(edit['va'],16)-0x400000;code=bytes.fromhex(edit['after'])
+            old[at:at+len(code)]=code
+        self.assertEqual(vp.transform(old),vp.transform(self.source))
+        self.assertEqual(vp.transform(old,False),self.source)
+
+    def test_manifest_matches_builder_and_reversible(self):
+        output=vp.transform(self.source)
+        self.assertEqual(output,viewport_probe.transform(self.source)[0])
+        self.assertEqual(vp.transform(output),output)
+        self.assertEqual(vp.transform(output,False),self.source)
+        self.assertEqual(output[0xeb420:0xeb700],self.source[0xeb420:0xeb700])
+
+    def test_preserves_latency_quantity_and_panel_options(self):
+        for turns in range(1,5):
+            for quantity in (amount.OLD,amount.NEW):
+                data=bytearray(self.source);data[0xd7abe]=turns
+                data[amount.OFFSET:amount.OFFSET+len(quantity)]=quantity
+                for enabled in (True,False):
+                    candidate=bytearray(data)
+                    for offset,before,after in panel_guard_patch.SITES:
+                        candidate[offset:offset+len(before)]=after if enabled else before
+                    self.assertEqual(vp.transform(vp.transform(candidate),False),candidate)
+
+    def test_unknown_and_partial_rejected(self):
+        for at in (0x1000,0x237f8,0xeb700):
+            bad=bytearray(self.source);bad[at]^=1
+            with self.assertRaises(ValueError):vp.transform(bad)
+        bad=bytearray(vp.transform(self.source))
+        bad[0x62d9a:0x62da0]=self.source[0x62d9a:0x62da0]
+        with self.assertRaises(ValueError):vp.transform(bad)
+
+    def test_atomic_apply_backup_restore_and_running_block(self):
+        with tempfile.TemporaryDirectory() as root:
+            root=Path(root);exe=root/'Rhakmu.exe';exe.write_bytes(self.source)
+            for name in ('iCARUS.dll','GameCtrl.dll','ddraw.dll'):
+                (root/name).write_bytes((SOURCE.parent/name).read_bytes())
+            with patch.object(vp,'ensure_closed',side_effect=RuntimeError('running')):
+                with self.assertRaises(RuntimeError):vp.apply(exe)
+            self.assertEqual(exe.read_bytes(),self.source)
+            with patch.object(vp,'ensure_closed'):
+                vp.apply(exe);vp.apply(exe);vp.apply(exe,False)
+            self.assertEqual(exe.read_bytes(),self.source)
+            self.assertTrue(any(p.read_bytes()==self.source for p in root.glob('*.bak_viewport_*')))
+
+if __name__=='__main__':unittest.main()

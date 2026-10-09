@@ -2,6 +2,7 @@ import hashlib
 from pathlib import Path
 import unittest
 import viewport_probe
+import viewport_patch
 
 
 class ViewportProbeTests(unittest.TestCase):
@@ -36,9 +37,7 @@ class ViewportProbeTests(unittest.TestCase):
         path = Path(r'C:\Program Files (x86)\TriggerSoft\RhakMu\Rhakmu.exe')
         if not path.exists():
             self.skipTest('Local reference executable unavailable')
-        source = path.read_bytes()
-        if hashlib.sha256(source).hexdigest() != viewport_probe.SOURCE_HASHES['Rhakmu.exe']:
-            self.skipTest('Local reference executable changed')
+        source = viewport_patch.transform(path.read_bytes(),False)
         output, edits = viewport_probe.transform(source)
         self.assertEqual(len(output), len(source))
         restored = bytearray(output)
