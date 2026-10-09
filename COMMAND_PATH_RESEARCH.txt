@@ -25,7 +25,8 @@ inspection. No installed executable, turn count or simulation timing changed.
 449210 accepts numbered packet into 32-slot ring. A packet revision mechanism
 would require review of duplicate/out-of-order handling and all peers.
 44A840 calls UDP receive 449D80, builds active/ready masks and dispatches
-CMD processing at 44AA66 via 448300. This is distinct from visual feedback.
+44AA66 calls the empty base stub 448300; actual command processing is at
+44AABC via GMPKRecv_Handling (4407E0). This is distinct from visual feedback.
 
 Conclusions so far:
   User's 1-turn responsiveness / multiplayer slowdown is consistent with
@@ -67,6 +68,25 @@ Live observation after user opened battle (20 seconds, PID 30920):
   action measurements. Frame cadence ~33ms; no evidence of long input stalls.
   Four-turn fixed pipeline, not redundant network/sleep waiting, dominates.
   Removing its delay while preserving the same execution schedule is impossible.
-  Need prediction/rollback or a changed command schedule to hide/reduce that
-  fundamental delay; neither is a safe small launcher patch. No game code change
-  or new launcher release made from this observation.
+  Changing batch cadence is another hypothesis, separate from prediction/rollback.
+  No formal launcher release made from this observation.
+
+Cross-project comparison and offline experiment:
+  Changpogo's documented user-confirmed 75ms improvement separates communication
+  cadence from simulation credit. Its scheduler cannot be copied into RhakMu.
+  RhakMu Game_Multi calls world/unit processing (4A1860 / 43D970) before the
+  modulo-five branch, every outer frame. Sync marker 2000 at 44091D stores the
+  comparison value, decrements queued-sync count and clears the ready mask;
+  it does not itself execute a world tick. Therefore shorter command batches
+  deserve testing without changing outer-frame pacing or configured buffer=4.
+  command_cadence_trial.py changes only MOV ECX,5 to MOV ECX,3 at 4D7B96.
+  Nominal cadence 165 -> 99ms; three buffered intervals 495 -> 297ms.
+  These are theoretical cadence estimates, NOT measured improvement.
+  Native-branch emulation verifies both cadences, unchanged buffer gating and
+  continued checksum-check call. Three tests pass. Only one byte changes.
+  All peers MUST use the same cadence. Shorter time coverage of the four-batch
+  buffer could cause stalls on high-jitter links, despite unchanged turn count.
+  Sync marker generation also calls 4C9C10 more often; its effect and cross-peer
+  checksum determinism still require gameplay validation. No claim of identical
+  gameplay/random sequence, real-world speed or multiplayer safety is made.
+  This is an offline opt-in trial, never automatically applied by the launcher.
