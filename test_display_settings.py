@@ -6,6 +6,37 @@ from display_settings import WindowModeManager, read_section, update_section
 
 
 class DisplayTests(unittest.TestCase):
+    def test_response_profile_preserves_simulation_and_other_profiles(self):
+        with tempfile.TemporaryDirectory() as root:
+            path=Path(root,'ddraw.ini');Path(root,'ddraw.dll').touch()
+            original=b'[ddraw]\nvsync=true\nmaxfps=30\nmaxgameticks=25\nlimiter_type=3\n[other]\nvsync=true\n'
+            path.write_bytes(original)
+            ok,msg=WindowModeManager(root).apply_settings(True,1280,720,shader='Bilinear',renderer='direct3d9',low_latency=True)
+            self.assertTrue(ok,msg)
+            v=read_section(path.read_text())
+            self.assertEqual((v['vsync'],v['maxfps'],v['d3d9_filter']),('false','-1','1'))
+            self.assertEqual((v['maxgameticks'],v['limiter_type']),('25','3'))
+            self.assertEqual(read_section(path.read_text(),'other')['vsync'],'true')
+            self.assertEqual(next(Path(root).glob('*.bak_*')).read_bytes(),original)
+
+    def test_response_profile_refuses_override_and_running_game(self):
+        with tempfile.TemporaryDirectory() as root:
+            path=Path(root,'ddraw.ini');Path(root,'ddraw.dll').touch()
+            original=b'[ddraw]\n[rhakmu]\nvsync=true\n';path.write_bytes(original)
+            self.assertFalse(WindowModeManager(root).apply_settings(True,0,0,shader='Bilinear',low_latency=True)[0])
+            self.assertEqual(path.read_bytes(),original)
+        from unittest.mock import Mock
+        import launcher
+        app=Mock()
+        with patch.object(launcher,'_run_ps',return_value=(0,'RUNNING')),patch.object(launcher.messagebox,'showwarning'),patch.object(launcher,'WindowModeManager') as manager:
+            launcher.App._on_response_profile(app)
+        manager.assert_not_called()
+        app.gamedir_var.get.return_value='C:/not-a-game'
+        with patch.object(launcher,'_run_ps',return_value=(0,'')),patch.object(launcher.messagebox,'showwarning'),patch.object(launcher,'LatencyPatch') as latency,patch.object(launcher,'WindowModeManager') as manager:
+            latency.return_value.current.return_value=2
+            launcher.App._on_response_profile(app)
+        manager.assert_not_called()
+        latency.return_value.apply.assert_not_called()
     def test_section_isolation_and_insertion(self):
         original = '; comment\r\n[ddraw]\r\nwidth=800\r\n[other]\r\nwidth=42\r\n'
         updated = update_section(original, {'width': 1280, 'height': 720})

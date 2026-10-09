@@ -96,7 +96,7 @@ class WindowModeManager:
         return result
 
     def apply_settings(self, windowed, width, height, shader='', maintas=True,
-                       renderer='auto', confine=True):
+                       renderer='auto', confine=True, low_latency=False):
         try:
             if (width, height) != (0, 0) and not (320 <= width <= 7680 and 200 <= height <= 4320):
                 raise ValueError('출력 크기는 320×200~7680×4320 또는 원본(0x0)이어야 합니다.')
@@ -114,12 +114,14 @@ class WindowModeManager:
             override = read_section(text, 'rhakmu')
             edited_keys = {'width', 'height', 'windowed', 'fullscreen', 'maintas',
                            'shader', 'renderer', 'devmode', 'd3d9_filter', 'aspect_ratio'}
+            if low_latency:edited_keys.update(('vsync','maxfps'))
             if edited_keys.intersection(override):
                 raise ValueError('[rhakmu] 개별 출력 설정이 있습니다. 충돌 방지를 위해 적용을 중단합니다.')
             values = dict(width=width, height=height, windowed=str(bool(windowed)).lower(),
                           fullscreen=str(not windowed).lower(), maintas=str(bool(maintas)).lower(),
                           aspect_ratio='', renderer=renderer, shader=shader,
                           d3d9_filter=FILTERS[shader], devmode=str(not confine).lower(), adjmouse='true')
+            if low_latency:values.update(vsync='false',maxfps=-1)
             changed = update_section(text, values).encode('utf-8')
             backup = path.with_name('ddraw.ini.bak_' + hashlib.sha256(original).hexdigest()[:16])
             if backup.exists() and backup.read_bytes() != original:

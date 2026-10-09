@@ -8,8 +8,8 @@ def build(source,destination):
     patched,edits=transform(Path(source).read_bytes())
     previous=json.loads(Path(destination).read_text(encoding='utf-8')) if Path(destination).exists() else {}
     legacy=previous.get('legacy_edits',[])
-    if previous.get('version') in (6,7,8):legacy=[previous['edits'],*legacy]
-    payload=dict(schema=1,version=9,legacy_edits=legacy,source_hash=SOURCE_HASHES['Rhakmu.exe'],
+    if previous.get('version') in (6,7,8,9):legacy=[previous['edits'],*legacy]
+    payload=dict(schema=1,version=10,legacy_edits=legacy,source_hash=SOURCE_HASHES['Rhakmu.exe'],
                  dll_hashes={k:v for k,v in SOURCE_HASHES.items() if k!='Rhakmu.exe'},edits=edits)
     Path(destination).write_text(json.dumps(payload,indent=2),encoding='utf-8')
     return hashlib.sha256(patched).hexdigest()

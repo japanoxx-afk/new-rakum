@@ -12,6 +12,7 @@ TOOLTIP_RECTS = 0x4eb700
 INFO_LAYOUT = 0x4eb850
 RESOURCE_ANCHOR = 0x4ebf80
 OBJECT_TOOLTIP = 0x4ebfc0
+EXIT_MENU_DRAW = 0x4eb7c0
 INFO_INITIALIZERS = (0x452830, 0x4529d0, 0x452a30, 0x452a90, 0x452af0,
     0x452b50, 0x452bb0, 0x452c10, 0x452c70, 0x452cf0, 0x452da0,
     0x452e50, 0x452eb0, 0x4530b0, 0x4531d0, 0x453230, 0x453300,
@@ -239,7 +240,8 @@ def helpers():
         sub esp, 0x44
         jmp 0x459f96
     ''', MENU_DRAW)
-    return {OBJECT_TOOLTIP: object_tooltip, INFO_LAYOUT: info_layout, RESOURCE_ANCHOR: resource_anchor,
+    exit_menu_draw = assemble(f'call {MENU_CHILDREN}; push ebp; mov ebp,esp; sub esp,0x44; jmp 0x4594b6', EXIT_MENU_DRAW)
+    return {EXIT_MENU_DRAW: exit_menu_draw, OBJECT_TOOLTIP: object_tooltip, INFO_LAYOUT: info_layout, RESOURCE_ANCHOR: resource_anchor,
             PANEL_GATE: panel_gate, TOOLTIP_RECTS: tooltip_rects,
             RECTS: rectangles, INIT_RETURN: init_return,
             CURSOR_RETURN: cursor, LEFT_DECORATION: left,

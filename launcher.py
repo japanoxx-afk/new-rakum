@@ -38,7 +38,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9026"
+APP_VERSION = "0.9027"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1303,7 +1303,7 @@ class App(tk.Tk):
         ttk.Button(path_frame, text="찾기", command=self._on_browse_game, width=6).pack(side="left")
 
         # ── 반응속도 (레이턴시) ──
-        lat_frame = ttk.LabelFrame(frame, text="반응속도 개선 (클릭 지연 줄이기)", padding=12)
+        lat_frame = ttk.LabelFrame(frame, text="명령 지연 (멀티플레이 권장: 4턴)", padding=12)
         lat_frame.pack(fill="x", pady=(0, 10))
         cur = self.latency.current()
         cur_txt = f"현재 지연: {cur}턴" if cur is not None else "현재 지연: (확인 불가)"
@@ -1316,7 +1316,7 @@ class App(tk.Tk):
         ttk.Button(lat_btns, text="안정 (3턴)", command=lambda: self._on_latency(3), width=11).pack(side="left", padx=(0, 4))
         ttk.Button(lat_btns, text="원래대로 (4턴)", command=lambda: self._on_latency(4), width=13).pack(side="left")
         ttk.Label(lat_frame,
-                  text="1턴=가장 빠름(근거리/AI)  2턴=인터넷 권장  3턴=핑 높을 때  4턴=원래값\n"
+                  text="멀티플레이는 안정성이 확인된 4턴 권장. 1~3턴은 실험값이며 정지가 늘 수 있습니다.\n"
                        "멀티는 함께하는 모든 PC가 같은 값이어야 합니다.  ※ 게임을 끈 상태에서 적용.",
                   foreground="gray").pack(anchor="w", pady=(6, 0))
 
@@ -1390,6 +1390,10 @@ class App(tk.Tk):
                      state="readonly").pack(anchor="w", pady=(0, 6))
 
         ttk.Button(frame, text="디스플레이 설정 적용", command=self._on_apply_winmode, width=20).pack(anchor="w", pady=(4, 0))
+        ttk.Button(frame, text="표시 지연 완화 (4턴 유지)", command=self._on_response_profile).pack(anchor="w", pady=(8, 0))
+        ttk.Label(frame, text="수직동기화 끄기 + 모니터 주사율 + Bilinear 필터. 화질/화면 찢어짐 차이가 있을 수 있습니다.\n"
+                  "명령 턴·게임 속도·네트워크 프로토콜은 변경하지 않습니다. 효과는 PC에 따라 다릅니다.",
+                  foreground='gray').pack(anchor='w')
 
         if not self.winmode.available:
             ttk.Label(frame, text="※ ddraw.ini를 찾을 수 없습니다. 게임 경로를 확인하세요.",
@@ -1453,6 +1457,27 @@ class App(tk.Tk):
         else:
             messagebox.showerror("반응속도", msg)
 
+    def _on_response_profile(self):
+        rc,out=_run_ps("if (Get-Process Rhakmu,Launcher -ErrorAction SilentlyContinue) { Write-Output 'RUNNING' }")
+        if rc!=0 or 'RUNNING' in out:
+            messagebox.showwarning('게임 실행 중','게임을 종료한 뒤 적용하세요.')
+            return
+        game_dir=self.gamedir_var.get().strip().strip('"')
+        if os.path.isfile(game_dir):game_dir=os.path.dirname(game_dir)
+        if LatencyPatch(game_dir).current()!=4:
+            messagebox.showwarning('4턴 확인','먼저 명령 지연을 원래대로 (4턴) 적용하세요. 표시 설정은 변경하지 않았습니다.')
+            return
+        manager=WindowModeManager(game_dir)
+        settings=manager.read_settings()
+        ok,msg=manager.apply_settings(settings['windowed'],settings['width'],settings['height'],
+            shader='Bilinear',maintas=settings['maintas'],renderer='direct3d9',
+            confine=settings['confine'],low_latency=True)
+        if ok:
+            self.shader_var.set('기본 (Bilinear)')
+            self.renderer_var.set('direct3d9')
+            messagebox.showinfo('표시 지연 완화',msg+'\n4턴 명령 지연은 유지됩니다. 실제 응답 개선량은 아직 미측정입니다.')
+        else:messagebox.showerror('설정 실패',msg)
+
     def _on_apply_winmode(self):
         rc, out = _run_ps("if (Get-Process Rhakmu,Launcher -ErrorAction SilentlyContinue) { Write-Output 'RUNNING' }")
         if rc != 0 or 'RUNNING' in out:
@@ -1493,7 +1518,7 @@ class App(tk.Tk):
 
 if __name__ == "__main__":
     if '--update-probe' in sys.argv:
-        if viewport_patch.manifest().get('version')!=9:
+        if viewport_patch.manifest().get('version')!=10:
             raise RuntimeError('고해상도 패치 데이터 누락')
         result_path = sys.argv[sys.argv.index('--update-probe') + 1]
         probe_app = App()

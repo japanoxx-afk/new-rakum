@@ -91,6 +91,9 @@ def transform(source, width=1280, height=720):
          'attach left 112px decoration to centered panel instead of screen edge')
     jump(0x459f90, MENU_DRAW, bytes.fromhex('558bec83ec44'),
          'align main-menu child images and hitboxes with their parent before drawing')
+    from viewport_helpers import EXIT_MENU_DRAW
+    jump(0x4594b0, EXIT_MENU_DRAW, bytes.fromhex('558bec83ec44'),
+         'align End Game submenu child images and hitboxes with centered parent')
     jump(0x462d9a, PANEL_GATE, bytes.fromhex('8b45080fbf08'),
          'use current HUD input bounds and refresh tooltip rectangles, no stale/doubled origin')
     jump(0x465886, INFO_LAYOUT, bytes.fromhex('5f5e5b8be55dc3'),

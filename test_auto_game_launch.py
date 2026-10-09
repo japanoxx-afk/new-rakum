@@ -20,7 +20,8 @@ class AutoLaunchTests(unittest.TestCase):
             app.cfg = {}
             app.base_dir = root
             app.radmin_only.get.return_value = False
-            with patch.object(launcher, '_run_ps', return_value=(0, '')), patch.object(launcher, 'save_config') as save:
+            # This operates on a temporary copy, independent of a user's live game.
+            with patch.object(launcher, '_run_ps', return_value=(0, '')), patch.object(launcher.viewport_patch,'ensure_closed'), patch.object(launcher, 'save_config') as save:
                 launcher.App._prepare_game_launch(app)
                 save.assert_called_once()
             self.assertEqual(app.cfg['game_dir'], str(folder))

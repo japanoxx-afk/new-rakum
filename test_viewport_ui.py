@@ -223,6 +223,24 @@ class ViewportUITests(unittest.TestCase):
         self.assertEqual(vm.reg_read(UC_X86_REG_ESP),STACK-4-0x44)
         self.assertEqual(struct.unpack('<I',vm.mem_read(STACK-4,4))[0],1234)
 
+    def test_end_game_submenu_draw_aligns_all_children_without_drift(self):
+        vm=machine(self.patched)
+        vector=OBJECT+0x100
+        children=[OBJECT+0x200+i*0x100 for i in range(3)]
+        vm.mem_write(OBJECT+8,struct.pack('<ii',495,25))
+        vm.mem_write(OBJECT+0x30,struct.pack('<II',vector,vector+12))
+        vm.mem_write(vector,struct.pack('<3I',*children))
+        for i,child in enumerate(children):
+            vm.mem_write(child+8,struct.pack('<ii',535,205+i*50))
+        for x,y in ((495,145),(367,193),(495,145),(495,145)):
+            vm.mem_write(OBJECT+0x3e,struct.pack('<hh',x,y))
+            vm.reg_write(UC_X86_REG_ECX,OBJECT)
+            vm.reg_write(UC_X86_REG_ESP,STACK)
+            vm.emu_start(0x4594b0,0x4594b6,count=1000)
+            for i,child in enumerate(children):
+                self.assertEqual(struct.unpack('<hh',vm.mem_read(child+0x40,4)),(x+40,y+180+i*50))
+            self.assertEqual(vm.reg_read(UC_X86_REG_EBP),STACK-4)
+
     def test_faction_buttons_pass_local_coordinates_to_create(self):
         for faction in range(3):
             for start, end, table in ((0x461b30,0x461b8c,0x4ff778),

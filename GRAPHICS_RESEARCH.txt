@@ -214,3 +214,27 @@ Viewport release v8 (0.9025)
   binaries rejected. 59 regression tests passed (2 optional frozen-server tests
   skipped because the user's game/server remain running). New visual behavior
   still requires testing after closing the game and launching with 0.9025.
+
+Viewport v10 / 0.9027
+  CMenuExit Draw 4594B0 is separate from CMenuMain Draw 459F90. The existing
+  child-coordinate helper never ran for End Game. Both use base +8/+C, screen
+  +3E/+40 and child vector +30/+34. Apply same immutable-base translation via
+  verified-zero helper 4EB7C0. Test all three submenu buttons, repeated draws,
+  resolution round trip and native prologue; child display and hit coordinates
+  remain aligned. Visual gameplay confirmation pending user test.
+
+Response investigation
+  Keep user-validated lockstep 4-turn buffer; do not speed simulation ticks.
+  Engine timing import scan found timeGetTime, GetTickCount and QPC, no Sleep
+  import. A blanket Sleep/timer patch is not justified by this evidence.
+  New opt-in display profile leaves maxgameticks, limiter_type, executable
+  command delay, other profiles and network logic untouched. Set vsync=false,
+  maxfps=-1, Direct3D9 Bilinear. Backup original INI, reject active game or
+  [rhakmu] override; require existing 4-turn setting before applying.
+  Official wrapper config documents vsync input lag, independent render FPS
+  versus maxgameticks, and supported D3D9 filters:
+  https://github.com/FunkyFr3sh/cnc-ddraw/blob/master/src/config.c
+  Current local INI already had vsync=false/maxfps=-1. Only rendering filter
+  load may change there. No measured latency reduction claimed. A faster unit
+  action without reducing safety buffer needs measured command capture/send
+  phase work or prediction/rollback, not an unverified turn/tick constant edit.
