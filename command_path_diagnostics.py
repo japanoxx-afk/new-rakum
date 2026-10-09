@@ -67,7 +67,16 @@ def capture(pid,seconds):
         if not api.QueryFullProcessImageNameW(handle,0,name,ctypes.byref(n)):raise ctypes.WinError(ctypes.get_last_error())
         exe=Path(name.value)
         if exe.name.lower()!='rhakmu.exe':raise ValueError('Select only Rhakmu.exe')
-        viewport_patch.transform(exe.read_bytes(),False) # known whole-file validation
+        blob=exe.read_bytes()
+        cadence_frames=5
+        # Accept only the exact offline trial after restoring its sole changed
+        # scheduler byte for the existing whole-file allowlist validation.
+        if blob[0xd7b96:0xd7b9b]==bytes.fromhex('b903000000'):
+            normalized=bytearray(blob)
+            normalized[0xd7b97]=5
+            blob=bytes(normalized)
+            cadence_frames=3
+        viewport_patch.transform(blob,False) # known whole-file validation
         samples=[];start=time.perf_counter();last_key=None;misses=0
         while time.perf_counter()-start<seconds:
             try:
@@ -88,7 +97,7 @@ def capture(pid,seconds):
                     samples.append(row);last_key=key
             except (OSError,ValueError):misses+=1
             time.sleep(0.005)
-        return dict(schema=1,read_only=True,pid=pid,seconds=seconds,misses=misses,
+        return dict(schema=1,read_only=True,pid=pid,seconds=seconds,misses=misses,cadence_frames=cadence_frames,
                     summary=summarize(samples),samples=samples)
     finally:api.CloseHandle(handle)
 

@@ -90,3 +90,15 @@ Cross-project comparison and offline experiment:
   checksum determinism still require gameplay validation. No claim of identical
   gameplay/random sequence, real-world speed or multiplayer safety is made.
   This is an offline opt-in trial, never automatically applied by the launcher.
+
+Live trial observation:
+  Two read-only captures (20s and 25s) show median batch intervals 99.6245ms
+  and 100.200ms, with configured buffer=4 throughout. The first capture advances
+  606 outer frames in ~20s (~30.3fps), matching the original observed cadence.
+  Thus the intended batch cadence change is confirmed in the running engine;
+  this is not merely a display setting. No pending queue episodes were sampled
+  in either capture, so no command queue-to-consumer or click-to-action latency
+  improvement can be reported yet. Multiplayer stability remains untested.
+  Diagnostics now accepts the exact trial scheduler bytes by restoring that
+  byte in a validation copy before the existing whole-image allowlist check.
+  It does not accept arbitrary modified binaries or write process memory.
