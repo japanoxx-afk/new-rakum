@@ -53,6 +53,7 @@ class ViewportUITests(unittest.TestCase):
         vm=machine(self.patched)
         snapshots=[]
         for x,y in ((112,168),(240,120),(112,168)):
+            vm.mem_write(0x106a5e4,struct.pack('<I',1))
             vm.mem_write(0x501ea0,struct.pack('<hh',x,y))
             vm.reg_write(UC_X86_REG_EBP,STACK+16)
             vm.reg_write(UC_X86_REG_ESP,STACK)
@@ -62,24 +63,44 @@ class ViewportUITests(unittest.TestCase):
             self.assertEqual(struct.unpack('<4I',vm.mem_read(0x4ff500,16)),
                              (x+359,y+520,x+387,y+555))
             self.assertEqual(struct.unpack('<2h',vm.mem_read(0x4ff554,4)),(x+401,y+484))
+            self.assertEqual(struct.unpack('<8h',vm.mem_read(0x801c40,16)),
+                             (360,557,360+x,557+y,450,557,450+x,557+y))
+            self.assertEqual(struct.unpack('<I',vm.mem_read(0x106a5e4,4))[0],1)
             snapshots.append(bytes(vm.mem_read(0x4ff500,0x180)))
         self.assertEqual(snapshots[0],snapshots[2])
         self.assertNotEqual(snapshots[0],snapshots[1])
 
     def test_resource_anchor_and_native_mouse_rectangles(self):
-        for width,height,x,y in ((1280,720,240,120),(1024,768,112,168),(800,600,0,0)):
+        for width,height,x,y in ((1280,720,240,120),(1024,768,112,168),(800,600,0,0),(1024,768,240,120)):
             vm=machine(self.patched)
             vm.mem_write(0x106a5e0,struct.pack('<hhI',width,height,int(width>800)))
             vm.mem_write(0x501e9c,struct.pack('<4h',0,0,x,y))
             vm.mem_write(OBJECT+8,struct.pack('<2i',287,-168))
             call(vm,0x4525c0)
-            expected_x=792 if width==1280 else 287+x
-            expected_y=-6 if width==1280 else y-168
+            expected_x=792 if (x,y)==(240,120) else 287+x
+            expected_y=-6 if (x,y)==(240,120) else y-168
             self.assertEqual(struct.unpack('<hh',vm.mem_read(OBJECT+0x84,4)),(expected_x,expected_y))
             for i in range(5):
                 dx,dy=struct.unpack('<2i',vm.mem_read(0x4ff438+i*8,8))
                 self.assertEqual(struct.unpack('<4i',vm.mem_read(OBJECT+0x34+i*16,16)),
                                  (expected_x+dx,expected_y+dy,expected_x+dx+20,expected_y+dy+16))
+
+    def test_production_tooltip_tracks_current_panel_without_scaling_size(self):
+        for width,height in ((1280,720),(1024,768),(800,600)):
+            vm=machine(self.patched);frame=STACK+0x100
+            vm.mem_write(0x106a5e0,struct.pack('<hh',width,height))
+            vm.mem_write(0x106a690,struct.pack('<I',(width-800)//2))
+            for repeat in range(2):
+                vm.mem_write(frame-0x14,struct.pack('<I',10))
+                vm.mem_write(frame-0xc,struct.pack('<I',200))
+                vm.mem_write(frame-0x10,struct.pack('<I',height-185-80))
+                vm.mem_write(frame-8,struct.pack('<I',height-185))
+                vm.mem_write(frame+8,struct.pack('<I',OBJECT))
+                vm.reg_write(UC_X86_REG_EBP,frame)
+                vm.emu_start(0x46b59b,0x46b5b5,count=1000)
+                offset=240 if width==1280 else 0
+                self.assertEqual(struct.unpack('<4I',vm.mem_read(OBJECT,16)),
+                                 (10+offset,height-265,200+offset,height-185))
 
     def test_hud_gate_reproduces_missing_hover_and_accepts_visible_buttons(self):
         for data,inside in ((self.original,False),(self.patched,True)):

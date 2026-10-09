@@ -198,3 +198,19 @@ Official launcher integration / viewport release v7 (0.9024)
   rectangle rebuilding so icons at local Y=6 sit at screen top and hitboxes follow.
   Native x86 tests validate round-trip coordinate changes and framebuffer bounds.
   Real gameplay visuals, long sessions and multiplayer still require user testing.
+
+Viewport release v8 (0.9025)
+  Live selected normal unit: attack/armor table 0x801c40 held high coordinates
+  (840,797)/(930,797), outside the 720px framebuffer. Initializers 452cf0 and
+  452da0 construct both resolution tables and assume startup mode 0. Calling
+  them in mode 1 added HUD origin twice. Run only these two with temporary mode
+  0, preserving the mode and registers; corrected coordinates (600,677)/(690,677).
+  Native coordinate tests cover repeated resolution changes without drift.
+  Object tooltip RECT return path 46b59b now adds current HUD X origin only in
+  1280x720 battle mode, retaining native text-driven height and bottom position.
+  Resource ChangeRes runs before screen size globals update: select its anchor
+  from already-updated HUD origin (240,120), not stale screen dimensions.
+  Complete v6/v7 signatures normalize before v8 migration; altered or partial
+  binaries rejected. 59 regression tests passed (2 optional frozen-server tests
+  skipped because the user's game/server remain running). New visual behavior
+  still requires testing after closing the game and launching with 0.9025.

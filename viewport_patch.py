@@ -14,24 +14,21 @@ def manifest():
     return json.loads((root/'viewport_release.json').read_text(encoding='utf-8'))
 
 def transform(data,enabled=True):
-    spec=manifest();result=bytearray(data);flags=[]
+    spec=manifest();result=bytearray(data)
     if len(data)!=1069098:raise ValueError('고해상도: 지원하지 않는 실행 파일 크기')
-    for edit in spec['edits']:
-        offset=int(edit['va'],16)-0x400000
-        before,after=bytes.fromhex(edit['before']),bytes.fromhex(edit['after'])
-        actual=data[offset:offset+len(before)]
-        if actual not in (before,after):raise ValueError(f'고해상도 코드 충돌: {offset:#x}')
-        flags.append(actual==after)
-        result[offset:offset+len(before)]=before
-    if len(set(flags))!=1:
-        # Accept only complete, recorded prior releases, never arbitrary mixtures.
+    def matches(blob, edits, key):
+        return all(blob[int(e['va'],16)-0x400000:int(e['va'],16)-0x400000+len(bytes.fromhex(e[key]))]
+                   ==bytes.fromhex(e[key]) for e in edits)
+    if not matches(data,spec['edits'],'before'):
         accepted=False
-        for legacy in spec.get('legacy_edits',[]):
-            candidate=bytearray(result)
-            for edit in legacy:
-                offset=int(edit['va'],16)-0x400000;after=bytes.fromhex(edit['after'])
-                candidate[offset:offset+len(after)]=after
-            if candidate==data:accepted=True;break
+        for layout in [spec['edits'],*spec.get('legacy_edits',[])]:
+            if not matches(data,layout,'after'):continue
+            candidate=bytearray(data)
+            for edit in layout:
+                offset=int(edit['va'],16)-0x400000;before=bytes.fromhex(edit['before'])
+                candidate[offset:offset+len(before)]=before
+            if matches(candidate,spec['edits'],'before'):
+                result=candidate;accepted=True;break
         if not accepted:raise ValueError('불완전한 고해상도 패치입니다. 원본 백업을 사용하세요.')
     normalized=bytearray(result)
     panel_guard_patch.state(normalized)

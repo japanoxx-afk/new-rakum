@@ -11,6 +11,7 @@ PANEL_GATE = 0x4ebe40
 TOOLTIP_RECTS = 0x4eb700
 INFO_LAYOUT = 0x4eb850
 RESOURCE_ANCHOR = 0x4ebf80
+OBJECT_TOOLTIP = 0x4ebfc0
 INFO_INITIALIZERS = (0x452830, 0x4529d0, 0x452a30, 0x452a90, 0x452af0,
     0x452b50, 0x452bb0, 0x452c10, 0x452c70, 0x452cf0, 0x452da0,
     0x452e50, 0x452eb0, 0x4530b0, 0x4531d0, 0x453230, 0x453300,
@@ -24,14 +25,20 @@ def assemble(source, address):
 def helpers():
     # These native initializers only refresh coordinate tables. They must run
     # again after Main_SetWindowRect changes the shared HUD origin.
+    # Two icon initializers were designed to run during mode-0 static startup:
+    # they build BOTH low and high tables, so calling them in mode 1 adds the
+    # current origin twice. Temporarily select the immutable low origin for just
+    # these two initializers, then restore mode without affecting the game state.
     info_layout = assemble('pushfd; pushad; ' +
-        '; '.join(f'call {address}' for address in INFO_INITIALIZERS) +
-        '; popad; popfd; pop edi; pop esi; pop ebx; mov esp, ebp; pop ebp; ret', INFO_LAYOUT)
+        '; '.join(f'call {address}' for address in INFO_INITIALIZERS if address not in (0x452cf0,0x452da0)) +
+        '; push dword ptr [0x106a5e4]; mov dword ptr [0x106a5e4], 0;' +
+        'call 0x452cf0; call 0x452da0; pop dword ptr [0x106a5e4];' +
+        'popad; popfd; pop edi; pop esi; pop ebx; mov esp, ebp; pop ebp; ret', INFO_LAYOUT)
     resource_anchor = assemble('''
         mov eax, [0x106a5e4]
-        cmp word ptr [0x106a5e0], 1280
+        cmp word ptr [0x501ea0], 240
         jne original_x
-        cmp word ptr [0x106a5e2], 720
+        cmp word ptr [0x501ea2], 120
         jne original_x
         mov eax, 792
         mov ecx, [ebp-4]
@@ -41,6 +48,19 @@ def helpers():
     original_x:
         jmp 0x4525d1
     ''', RESOURCE_ANCHOR)
+    object_tooltip = assemble('''
+        cmp word ptr [0x106a5e0], 1280
+        jne unchanged
+        cmp word ptr [0x106a5e2], 720
+        jne unchanged
+        mov eax, [0x106a690]
+        add [ebp-0x14], eax
+        add [ebp-0xc], eax
+    unchanged:
+        mov ecx, [ebp+8]
+        mov edx, [ebp-0x14]
+        jmp 0x46b5a1
+    ''', OBJECT_TOOLTIP)
     tooltip_rects = assemble('''
         pushfd
         pushad
@@ -219,7 +239,7 @@ def helpers():
         sub esp, 0x44
         jmp 0x459f96
     ''', MENU_DRAW)
-    return {INFO_LAYOUT: info_layout, RESOURCE_ANCHOR: resource_anchor,
+    return {OBJECT_TOOLTIP: object_tooltip, INFO_LAYOUT: info_layout, RESOURCE_ANCHOR: resource_anchor,
             PANEL_GATE: panel_gate, TOOLTIP_RECTS: tooltip_rects,
             RECTS: rectangles, INIT_RETURN: init_return,
             CURSOR_RETURN: cursor, LEFT_DECORATION: left,

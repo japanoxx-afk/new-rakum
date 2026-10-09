@@ -63,7 +63,7 @@ def transform(source, width=1280, height=720):
     replace(0x4dc3fa, HIGHMODE_ORIGINAL,
             HIGHMODE_CODE + b'\x90' * (len(HIGHMODE_ORIGINAL)-len(HIGHMODE_CODE)),
             'dynamic full clip, centered HUD container and shared child origin')
-    from viewport_helpers import helpers, RECTS, INIT_RETURN, CURSOR_RETURN, LEFT_DECORATION, MENU_DRAW, PANEL_GATE, INFO_LAYOUT, RESOURCE_ANCHOR
+    from viewport_helpers import helpers, RECTS, INIT_RETURN, CURSOR_RETURN, LEFT_DECORATION, MENU_DRAW, PANEL_GATE, INFO_LAYOUT, RESOURCE_ANCHOR, OBJECT_TOOLTIP
     # The existing network patch already maps the entire .text raw allocation.
     if source[0x208:0x20c] != struct.pack('<I', 0xeb000):
         raise ValueError('Unexpected .text virtual size; helper addresses are not safe')
@@ -96,6 +96,8 @@ def transform(source, width=1280, height=720):
          'refresh portrait, HP and information coordinates after HUD origin changes')
     jump(0x4525cc, RESOURCE_ANCHOR, bytes.fromhex('a1e4a50601'),
          'anchor resource control to right edge and rebuild native hover rectangles')
+    jump(0x46b59b, OBJECT_TOOLTIP, bytes.fromhex('8b4d088b55ec'),
+         'anchor production description above the current command panel, not screen left')
     # CPannelMgr adds the origin before Create, but CPannelButton::Create and
     # ChangeRes already add it. Keep immutable faction-local coordinates here.
     for va, instruction in ((0x461b58, '03d1'), (0x461b84, '03c8'),

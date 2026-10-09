@@ -14,12 +14,16 @@ class ViewportReleaseTests(unittest.TestCase):
     def setUpClass(cls):cls.source=vp.transform(SOURCE.read_bytes(),False)
 
     def test_complete_previous_release_migrates(self):
-        old=bytearray(self.source)
-        for edit in vp.manifest()['legacy_edits'][0]:
-            at=int(edit['va'],16)-0x400000;code=bytes.fromhex(edit['after'])
-            old[at:at+len(code)]=code
-        self.assertEqual(vp.transform(old),vp.transform(self.source))
-        self.assertEqual(vp.transform(old,False),self.source)
+        for recipe in vp.manifest()['legacy_edits']:
+            with self.subTest(sites=len(recipe)):
+                old=bytearray(self.source)
+                for edit in recipe:
+                    at=int(edit['va'],16)-0x400000;code=bytes.fromhex(edit['after'])
+                    old[at:at+len(code)]=code
+                self.assertEqual(vp.transform(old),vp.transform(self.source))
+                self.assertEqual(vp.transform(old,False),self.source)
+                old[0x1000]^=1
+                with self.assertRaises(ValueError):vp.transform(old)
 
     def test_manifest_matches_builder_and_reversible(self):
         output=vp.transform(self.source)
