@@ -22,6 +22,7 @@ import sync_port_patch
 import peer_address_patch
 import panel_guard_patch
 import viewport_patch
+import minimap_patch
 import command_cadence_trial
 import command_cadence_installer
 from release_notes import NOTES
@@ -40,7 +41,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9032"
+APP_VERSION = "0.9033"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -61,6 +62,7 @@ DDRAW_INI = "ddraw.ini"
 # 게임 버전은 런타임 글로벌로 계산돼 정적으로 못 읽으므로 Rhakmu.exe 크기로 식별
 GAME_VERSIONS = {
     1069098: "1.000d",
+    1105920: "1.000d (지형·자원 미리보기)",
     1065002: "1.000a",
 }
 RESOLUTIONS = [
@@ -656,6 +658,7 @@ class App(tk.Tk):
             return
         try:
             path = os.path.join(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE)
+            minimap_patch.apply(path, False)
             if enabled:
                 peer_address_patch.state(pathlib.Path(path).read_bytes())
                 sync_port_patch.apply(path, True)
@@ -675,7 +678,9 @@ class App(tk.Tk):
             messagebox.showwarning("동기화 포트", "게임을 완전히 종료한 후 다시 적용하세요.")
             return
         try:
-            result = sync_port_patch.apply(os.path.join(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE), enabled)
+            path = os.path.join(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE)
+            minimap_patch.apply(path, False)
+            result = sync_port_patch.apply(path, enabled)
             messagebox.showinfo("동기화 포트", result)
         except Exception as e:
             messagebox.showerror("동기화 포트", str(e))
@@ -697,7 +702,7 @@ class App(tk.Tk):
                            "peer_ip": self.capture_peer.get().strip(), "started": datetime.datetime.now().isoformat(),
                            "lobby_ip": HostsManager.read_current_ip([GAME_HOST])}, f, ensure_ascii=False, indent=2)
             try:
-                game_data = pathlib.Path(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE).read_bytes()
+                game_data = minimap_patch.underlying(pathlib.Path(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE).read_bytes())
                 patch_status = {'peer_address': peer_address_patch.state(game_data), 'sync_port': sync_port_patch.state(game_data),
                                 'peer_reply_8814': game_data[0xeb420:0xeb420+len(peer_address_patch.CODE)] == peer_address_patch.CODE,
                                 'game_path': str(pathlib.Path(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE)),
@@ -998,6 +1003,7 @@ class App(tk.Tk):
                 if rc != 0 or 'RUNNING' in out:
                     raise RuntimeError('게임을 완전히 종료한 뒤 다시 실행하세요.')
                 game_exe = os.path.join(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE)
+                minimap_patch.apply(game_exe, False)
                 # Validate both sites before changing either; preserve user patches.
                 game_data = pathlib.Path(game_exe).read_bytes()
                 peer_address_patch.state(game_data)
@@ -1092,26 +1098,12 @@ class App(tk.Tk):
         path = path.resolve()
         if not (path / GAME_EXE).is_file() or not (path / PATCH_EXE).is_file():
             raise ValueError('해당 경로에 Launcher.exe와 Rhakmu.exe가 있어야 합니다.')
-        rc, out = _run_ps("if (Get-Process Rhakmu,Launcher -ErrorAction SilentlyContinue) { Write-Output 'RUNNING' }")
-        if rc != 0 or 'RUNNING' in out:
-            raise RuntimeError('게임을 완전히 종료한 뒤 실행하세요. 실행 중에는 패치하지 않습니다.')
         exe = path / PATCH_EXE
-        data = exe.read_bytes()
-        peer_address_patch.state(data)
-        sync_port_patch.state(data)
-        panel_guard_patch.state(data)
-        sync_port_patch.apply(exe, True)
-        peer_address_patch.apply(exe, True)
-        panel_guard_patch.apply(exe, True)
-        viewport_patch.apply(exe, self.cfg.get('viewport_1280', True))
-        # Withdraw failed multiplayer experiment, even when old config is true.
-        cadence_was_enabled = exe.read_bytes()[0xd7b97] == 3
-        if cadence_was_enabled:
-            ok, msg = LatencyPatch(str(path)).apply(4)
-            if not ok: raise RuntimeError(msg)
-        command_cadence_installer.apply(exe, False)
+        minimap_patch.ensure_closed(exe)
+        # Build and validate the complete result in memory; one atomic replacement.
+        minimap_patch.prepare(exe, self.cfg.get('viewport_1280', True))
         self.cfg['command_cadence_99ms'] = False
-        verified = exe.read_bytes()
+        verified = minimap_patch.underlying(exe.read_bytes())
         if not panel_guard_patch.state(verified) or not sync_port_patch.state(verified) or verified[0xeb420:0xeb420+len(peer_address_patch.CODE)] != peer_address_patch.CODE:
             raise RuntimeError('왕건 방식 주소 응답 패치 검증 실패. 게임을 실행하지 않았습니다.')
         cfg = {**self.cfg, 'game_dir': str(path)}
@@ -1121,7 +1113,7 @@ class App(tk.Tk):
         self.winmode.game_dir = str(path)
         self.latency = LatencyPatch(str(path))
         mode='1280×720' if self.cfg.get('viewport_1280',True) else '원본'
-        self.info_var.set(f'주소 응답·패널 보호 확인 완료 / 내부 해상도 {mode} — 게임 실행')
+        self.info_var.set(f'지형·금·물 미리보기 / 내부 해상도 {mode} — 게임 실행')
 
     def _on_viewport_apply(self):
         old=dict(self.cfg)
@@ -1563,6 +1555,8 @@ if __name__ == "__main__":
     if '--update-probe' in sys.argv:
         if viewport_patch.manifest().get('version')!=10:
             raise RuntimeError('고해상도 패치 데이터 누락')
+        if minimap_patch.manifest().get('version')!=1:
+            raise RuntimeError('지형·자원 미리보기 패치 데이터 누락')
         result_path = sys.argv[sys.argv.index('--update-probe') + 1]
         probe_app = App()
         probe_app.withdraw()

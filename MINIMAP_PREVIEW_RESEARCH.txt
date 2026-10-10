@@ -1,0 +1,119 @@
+RhakMu minimap preview investigation / terrain-only offline implementation
+
+Verified against this game's Rhakmu.000 symbols and known 1.000d instructions.
+No WangGun addresses, object IDs or patch bytes used.
+
+CPannelMiniMap global 801FE0; native minimap is 128x128 RGB16.
+Create 4673C0 builds and caches static terrain (GetSurfaceData 468520).
+Buffers in minimap object: +2C static terrain, +802C explored terrain,
++1002C frame compositing pixels. InitViewMap 467740 copies 32768 bytes.
+At 467754 the prototype changes only ADD EAX,802C -> ADD EAX,2C.
+It reuses the native cached terrain, not a per-frame world-map traversal.
+No temporary simulation/fog-buffer mutation, hence no restoration branch needed.
+Unknown images rejected by the existing complete normalized SHA256 allowlist.
+Separate output file only, exclusive creation; source/install remains unchanged.
+
+Visibility and objects:
+UpdateViewMap 469030 traverses the native gold linked list then native units.
+Gold-list head B412DE, decoration storage 766970, record stride32, next+0A,
+coordinates +14/+16, remaining resource +1C. HarvestGold 43A580 decrements
+remaining amount and changes depleted classification via SetMapAttr 43A3F0.
+Decoration_Setting routes attribute byte 53 to the gold chain, 63 to the
+water chain. AddStairs 439DF0 uses separate linked lists B412E2.
+The gold draw branch currently checks per-player decoration visibility +10.
+PutDecoration 4694E0 draws native 3x3 marker, taking RGB16 color argument.
+Enemy structures: 4690FE..469118 retains native visibility bitfield check.
+Enemy characters: 469166..4691A2 retains current visibility grid 999DD0;
+additional native shared-vision/fog tests at 4691C5..469240 are unchanged.
+No object visibility branch is modified by the terrain-only prototype.
+
+Resolution routes:
+Native shared InitViewMap call 49B93F precedes view/fog updates and
+UpdateViewMap call 49BE70. The terrain copy itself has no screen-resolution
+condition. Original 1024x768 and supported 1280x720 binaries pass allowlisting.
+Actual draw at both resolutions and later fog-overlay behavior need live tests.
+
+Implemented: reversible offline terrain copy-source patch, native x86 copy test,
+whole-file rejection, no unrelated byte edits, original/highres transform tests.
+Not implemented: yellow gold marker reveal, blue entrance marker reveal,
+depletion-aware refresh hook. Do not guess decoration IDs from colors/sprites.
+Need verify stairs vs water vs entrance taxonomy and linked-list mutation paths,
+and prove no object leakage before adding object markers or installing trial.
+User wording includes entrance and water; those are not silently treated alike.
+No installed game change, launcher integration, commit of game binaries or release.
+
+V2 trial (2026-10-11, user confirms resources are gold and water, not entrances):
+Draw_Tile at 4CA75A skips terrain tiles when rendering canopy nibble is F.
+V2 removes this rendering-only skip, without changing canopy/view tables.
+Draw_WarFog full-black rectangles at 4CB026 and 4CB150 are replaced by
+clipped half-bright framebuffer shading, using the existing RGB half mask
+from iCARUS+38 (same mask used in native minimap explored shading).
+Frame pointer +70 and row-offset table +74 are verified in Draw_Tile.
+This intentionally changes unexplored world terrain presentation to shaded
+terrain, as requested; actual unit/structure visibility paths remain unchanged.
+
+UpdateViewMap's old gold-only rendering block is replaced by our cached
+gold/water ID rendering. Classification +12 must be 53 or 63. Gold +1C
+must be positive. Water remains marked at zero because native water regenerates.
+Gold color is FFE0 for RGB565 or 7FE0 for RGB555, selected using the verified
+native half-mask; water is 001F. Unsupported half masks do not draw gold.
+Private resource IDs are collected once per Create/new-map and filtered during
+updates; no repeated full-map/full-object traversal. Dynamically created resource
+sites during scripted scenarios are not yet supported by cache invalidation.
+V2 appends separate RX code/RW private cache sections, preserving all existing
+code caves; exact reconstruction validates restoration and rejects tampering.
+Create and UpdateViewMap hooks preserve registers/flags and simulation records.
+
+5 automated tests pass: original/highres guard+restoration, native minimap copy,
+resource types/depletion/cache, framebuffer clipping and unchanged fog tables.
+Live visual correctness, enemy hiding after loss of sight, multiplayer/replay
+remain unverified. Separate trial folders only; no installed patch or release.
+
+V3 trial: user screenshot showed residual black stepped canopy boundaries.
+The full-tile black calls alone were replaced in V2; partial canopy RLE at
+4CB0E2 still used native full-strength darkness. V3 wraps that call only:
+save clipped framebuffer rectangle in private 32x32 scratch, call the native
+RLE renderer (highres keeps its clipping wrapper), blend output with original
+at 50% intensity. Native smooth contour/gradient is retained without assuming
+RLE alpha ranges. Unchanged pixels remain bit-identical; viewport clipping,
+register/stack restoration tested. No fog tables/visibility records modified.
+7 tests pass including original/highres roundtrip and mocked native gradient
+retention. Live screenshot verification remains pending. V2 trials retained.
+
+V4: V3 live screenshot still shows stepped full-tile vs partial-tile boundaries.
+Replace Draw_WarFog rendering entry only (4CAF40) with continuous coverage:
+read native 957D90 render masks; high nibble takes precedence just as native
+4CB191..4CB1EB, otherwise use low nibble. Per-viewport coverage grid uses
+four-corner mask popcount, 3x3 Gaussian vertex filtering and bilinear pixel
+interpolation. Shader shades framebuffer only, RGB565/RGB555 separately;
+never writes current visibility, exploration, fog tables or unit structures.
+Maximum opacity 50%; exact sight decisions are unchanged. Newly unseen
+terrain and previously visited terrain both use the same current-fog shader.
+No WangGun bytes or addresses reused. Work is limited to visible viewport,
+not entire map/object traversal. Separate RX shader + RW coverage grid.
+Original resolution excludes native bottom HUD rows; highres draws full
+terrain height underneath the later HUD pass, following existing viewport path.
+V4 tests validate brightness continuity across tile boundaries, RGB565/555,
+original/highres roundtrip, tampering rejection, framebuffer-only writes and
+unchanged native fog masks. Live aesthetics, multiplayer and frame-time impact
+are still pending; this trial replaces the old art-based fog contour, so it is
+not described as pixel-identical to native fog or to WangGun's renderer.
+
+V5: user confirmed V4 shading works, requests world gold/water sprites in fog.
+Object_MakeDrawList 43E520 has separate hidden-cell path 43E60D and visible
+path 43E7A4. Hook hidden-cell path only; retrieve native decoration ID from
+FE5E0A indexed by current layer and existing viewport tile loop. Attribute 53
+with positive +1C or 63 alone may be inserted into native decoration draw list
+(heads B41164/B41168, type1, record renderer links +0C/+0E), matching existing
+native queue insertion. No global object scan, no vision-bit changes. If native
+canopy/decoration visibility would already enqueue it, defer to native logic.
+Private 1500-byte per-frame dedup bitmap reset at draw-list entry prevents
+duplicate/self-loop for the first resource in an empty list. Bitmap at V4 raw
+grid+1800 lies outside the maximum 35x128 raw coverage footprint.
+Resume the original hidden-cell logic after insertion, so enemy/fog-building
+handling remains unchanged. Native Draw_Decoration and its clipping, sprite
+state, occupancy/occlusion checks are not bypassed. V4 smooth shading retained.
+Resource amount, +10 visibility mask, map attributes, fog/current sight tables
+are not written by new hook. Only native temporary renderer links are updated.
+Tests cover gold/water/nonresource/depleted selection, duplicate prevention,
+original/highres restoration. Actual world sprite output remains to be tested.
