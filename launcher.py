@@ -29,6 +29,7 @@ from release_notes import NOTES
 from hosts_entries import replace_entries
 from display_settings import WindowModeManager, RENDERERS
 import launcher_update
+import map_editor_web
 from tkinter import ttk, messagebox
 
 # server.py는 런타임 exec로 실행되므로 PyInstaller가 의존성을 자동 감지 못 한다.
@@ -41,7 +42,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9033"
+APP_VERSION = "0.9034"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -594,6 +595,7 @@ class App(tk.Tk):
         self._build_client_tab(notebook)
         self._build_history_tab(notebook)
         self._build_settings_tab(notebook)
+        self._build_map_editor_tab(notebook)
         self._build_capture_tab(notebook)
         self.protocol("WM_DELETE_WINDOW", self._close_launcher)
 
@@ -614,6 +616,91 @@ class App(tk.Tk):
 
         self._refresh_patch_status()
         self._update_status()
+
+    # ------------------------------------------------------------ map editor
+    def _editor_game_dir(self):
+        path = pathlib.Path(self.gamedir_var.get().strip().strip('"')).expanduser()
+        if path.is_file():
+            path = path.parent
+        if not (path / 'Data').is_dir():
+            raise ValueError('게임 설치 폴더(Data 폴더가 있는 곳)를 먼저 지정하세요.')
+        return path
+
+    def _build_map_editor_tab(self, notebook):
+        self.map_editor = map_editor_web.EditorServer(get_resource_dir())
+        frame = ttk.Frame(notebook, padding=14)
+        notebook.add(frame, text="  맵 에디터  ")
+        ttk.Label(frame, text="라크무 맵 에디터", font=("맑은 고딕", 12, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="브라우저에서 열립니다. 게임 폴더의 Data\\Maps 맵 목록을 바로 열고 저장합니다.\n"
+                              "저장하면 기존 파일은 .bak 으로 백업됩니다. 새로 만든 맵은 Download 폴더에 저장하세요.",
+                  foreground="gray").pack(anchor="w", pady=(2, 8))
+        row = ttk.Frame(frame); row.pack(anchor="w")
+        ttk.Button(row, text="🗺 맵 에디터 열기", command=self._on_open_map_editor, width=20).pack(side="left")
+        ttk.Button(row, text="맵 폴더 열기", command=self._on_open_maps_folder, width=14).pack(side="left", padx=6)
+        self.map_editor_var = tk.StringVar(value="에디터 서버: 꺼짐")
+        ttk.Label(frame, textvariable=self.map_editor_var).pack(anchor="w", pady=(6, 0))
+
+        mod = ttk.LabelFrame(frame, text="상하대칭 언덕 입구 타일 모드", padding=12)
+        mod.pack(fill="x", pady=(16, 0))
+        ttk.Label(mod, text="에디터의 '(상하대칭)' 언덕 입구를 게임에서 보이게 하는 타일입니다 (Data\\tile).\n"
+                            "이 입구를 쓴 맵은 함께 하는 모든 PC에 모드가 설치되어 있어야 합니다.\n"
+                            "원본 FDB 는 변경하지 않으며, 제거하면 원래 상태로 돌아갑니다.",
+                  foreground="gray").pack(anchor="w")
+        mrow = ttk.Frame(mod); mrow.pack(anchor="w", pady=(8, 0))
+        ttk.Button(mrow, text="모드 설치 / 갱신", command=self._on_install_tile_mod, width=16).pack(side="left")
+        ttk.Button(mrow, text="모드 제거", command=self._on_uninstall_tile_mod, width=12).pack(side="left", padx=6)
+        self.tile_mod_var = tk.StringVar()
+        ttk.Label(mod, textvariable=self.tile_mod_var).pack(anchor="w", pady=(6, 0))
+        self._refresh_tile_mod_status()
+
+    def _refresh_tile_mod_status(self):
+        try:
+            ok = map_editor_web.mod_installed(self._editor_game_dir())
+            self.tile_mod_var.set("상태: 설치됨" if ok else "상태: 설치 안 됨")
+        except ValueError as e:
+            self.tile_mod_var.set(f"상태: {e}")
+
+    def _on_open_map_editor(self):
+        try:
+            url = self.map_editor.open(self._editor_game_dir())
+            self.map_editor_var.set(f"에디터 서버: 실행 중 ({url})")
+        except OSError as e:
+            if getattr(e, "errno", None) in (98, 10048):
+                messagebox.showerror("맵 에디터", f"포트 {map_editor_web.PORT} 를 다른 프로그램이 사용 중입니다.\n"
+                                                 "'맵에디터 실행.bat' 창이 열려 있으면 닫고 다시 시도하세요.")
+            else:
+                messagebox.showerror("맵 에디터", str(e))
+        except ValueError as e:
+            messagebox.showerror("맵 에디터", str(e))
+
+    def _on_open_maps_folder(self):
+        try:
+            d = self._editor_game_dir() / "Data" / "Maps"
+            os.startfile(str(d))
+        except (ValueError, OSError) as e:
+            messagebox.showerror("맵 폴더", str(e))
+
+    def _on_install_tile_mod(self):
+        try:
+            game = self._editor_game_dir()
+            map_editor_web.install_mod(game, get_resource_dir())
+            messagebox.showinfo("타일 모드", "상하대칭 언덕 입구 타일 모드를 설치했습니다.")
+        except PermissionError:
+            messagebox.showerror("타일 모드", "권한이 없습니다. 런처를 관리자 권한으로 실행하세요.")
+        except (ValueError, OSError, RuntimeError) as e:
+            messagebox.showerror("타일 모드", str(e))
+        self._refresh_tile_mod_status()
+
+    def _on_uninstall_tile_mod(self):
+        if not messagebox.askyesno("타일 모드", "타일 모드를 제거할까요?\n상하대칭 언덕 입구를 쓴 맵은 입구가 보이지 않게 됩니다."):
+            return
+        try:
+            map_editor_web.uninstall_mod(self._editor_game_dir())
+        except PermissionError:
+            messagebox.showerror("타일 모드", "권한이 없습니다. 런처를 관리자 권한으로 실행하세요.")
+        except (ValueError, OSError) as e:
+            messagebox.showerror("타일 모드", str(e))
+        self._refresh_tile_mod_status()
 
     def _build_capture_tab(self, notebook):
         self.capture_process = None
@@ -765,6 +852,7 @@ class App(tk.Tk):
             if not ok:
                 messagebox.showerror('서버', msg)
                 return
+        self.map_editor.stop()
         self.destroy()
 
     # ── 서버 탭 ──

@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>라크무 맵 에디터</title>
+<style>
+:root{--bg:#1d1b18;--panel:#2a2621;--panel2:#332e28;--line:#4a4239;--txt:#e9e1d3;--dim:#a99d8a;--acc:#d9a441;--acc2:#7fb069;--bad:#e05a47}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font:13px/1.4 "Malgun Gothic","맑은 고딕",system-ui,sans-serif;overflow:hidden}
+button,select,input{font:inherit;color:var(--txt);background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:3px 8px}
+button{cursor:pointer}button:hover{border-color:var(--acc)}button.on{background:#5a4520;border-color:var(--acc);color:#fff}
+button:disabled{opacity:.45;cursor:default}
+input[type=number]{width:70px}
+#app{display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:1fr 300px;height:100%}
+#menubar{grid-column:1/3;display:flex;gap:4px;align-items:center;padding:5px 8px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+#menubar .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
+#menubar .title{font-weight:bold;color:var(--acc);margin-right:8px;letter-spacing:.5px}
+#view{position:relative;overflow:hidden;background:#000}
+#cv{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;image-rendering:auto}
+#side{background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+#tools{flex:1;overflow:auto;padding:8px}
+.grp{margin-bottom:10px;border:1px solid var(--line);border-radius:6px;background:var(--panel2)}
+.grp>h3{margin:0;padding:5px 8px;font-size:12px;color:var(--acc);border-bottom:1px solid var(--line);cursor:pointer;user-select:none;display:flex;justify-content:space-between}
+.grp>h3::after{content:"▾";color:var(--dim)}.grp.closed>h3::after{content:"▸"}
+.grp.closed>.body{display:none}
+.grp .body{padding:6px 8px}
+.btns{display:flex;flex-wrap:wrap;gap:4px}
+.btns button{padding:2px 7px;font-size:12px}
+.row{display:flex;align-items:center;gap:6px;margin:4px 0}
+.row label{color:var(--dim);min-width:52px}
+#minimapBox{border-top:1px solid var(--line);padding:6px;background:#15130f}
+#minimap{width:100%;height:220px;display:block;cursor:pointer;background:#000}
+#status{grid-column:1/3;padding:3px 10px;background:var(--panel);border-top:1px solid var(--line);color:var(--dim);display:flex;gap:18px;white-space:nowrap;overflow:hidden}
+#status b{color:var(--txt);font-weight:normal}
+#palette{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;max-height:260px;overflow:auto;margin-top:6px}
+.easy{display:grid;grid-template-columns:repeat(2,1fr);gap:4px;margin-bottom:6px}
+.easy button{display:flex;align-items:center;gap:6px;padding:3px 5px;text-align:left;font-size:12px}
+.easy button canvas{width:44px;height:22px;flex:none;background:#000;border-radius:2px}
+.easy button small{display:block;color:var(--dim);font-size:10.5px;line-height:1.1}
+.subhead{margin:8px 0 4px;color:var(--acc);font-size:12px;border-top:1px solid var(--line);padding-top:6px}
+.objgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:4px}
+.objgrid button{display:flex;flex-direction:column;align-items:center;padding:3px 2px;font-size:11px;line-height:1.2}
+.objgrid button canvas{width:72px;height:48px;background:#161310;border-radius:3px;margin-bottom:2px}
+#palette canvas{width:100%;background:#000;border:1px solid transparent;cursor:pointer}
+#palette canvas.sel{border-color:var(--acc)}
+#palette .num{font-size:10px;color:var(--dim);text-align:center}
+.hint{color:var(--dim);font-size:11.5px;margin-top:4px}
+.swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle;border:1px solid #0008}
+dialog{background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:0;max-width:94vw}
+dialog::backdrop{background:#0009}
+dialog header{padding:10px 14px;border-bottom:1px solid var(--line);font-weight:bold;color:var(--acc)}
+dialog .content{padding:12px 14px;max-height:70vh;overflow:auto}
+dialog footer{padding:10px 14px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
+table.grid{border-collapse:collapse}table.grid td,table.grid th{border:1px solid var(--line);padding:3px 6px}table.grid th{color:var(--dim);font-weight:normal;background:var(--panel2)}
+table.grid input[type=number]{width:64px}
+#welcome{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+#welcome .card{pointer-events:auto;background:#2a2621ee;border:1px solid var(--line);border-radius:10px;padding:22px 26px;max-width:560px}
+#welcome h2{margin:0 0 6px;color:var(--acc)}
+#welcome p{color:var(--dim);margin:6px 0}
+#welcome .btns{margin-top:12px}
+#maplist{max-height:180px;overflow:auto;margin-top:6px}
+#srvMaps div{padding:2px 6px;cursor:pointer;border-radius:3px;font-size:12px}#srvMaps div:hover{background:#4a3c22}#srvMaps div.cur{color:var(--acc)}
+#maplist div{padding:2px 6px;cursor:pointer;border-radius:3px}#maplist div:hover{background:#4a3c22}
+#toast{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:#000c;border:1px solid var(--line);padding:6px 14px;border-radius:6px;display:none;pointer-events:none}
+.kbd{font-family:Consolas,monospace;background:#0004;border:1px solid var(--line);border-radius:3px;padding:0 4px;font-size:11px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="menubar">
+    <span class="title">라크무 맵 에디터 <small style="color:var(--dim);font-weight:normal">v5</small></span>
+    <button id="bNew" title="새 맵 (Ctrl+N)">새 맵</button>
+    <button id="bOpen" title="맵 열기 (Ctrl+O)">열기</button>
+    <button id="bSave" title="저장 (Ctrl+S)">저장</button>
+    <button id="bSaveAs" title="다른 이름으로 저장">다른 이름으로</button>
+    <span class="sep"></span>
+    <button id="bUndo" title="실행 취소 (Ctrl+Z)">↶ 취소</button>
+    <button id="bRedo" title="다시 실행 (Ctrl+Y)">↷ 다시</button>
+    <span class="sep"></span>
+    <button id="bPlayers" title="플레이어 설정">플레이어 설정</button>
+    <button id="bTeams" title="팀 이름">팀 설정</button>
+    <button id="bProps" title="맵 속성 (타일셋, 크기, 인원)">맵 속성</button>
+    <span class="sep"></span>
+    <button id="bZoomOut" title="축소 (-)">－</button>
+    <span id="zoomLbl" style="min-width:44px;text-align:center">50%</span>
+    <button id="bZoomIn" title="확대 (+)">＋</button>
+    <button id="bGrid" title="타일 격자 (G)">격자</button>
+    <button id="bCellGrid" title="셀(32px) 격자">셀 격자</button>
+    <button id="bMarks" title="섹션7 표식 표시">기타 표식</button>
+    <span class="sep"></span>
+    <span id="dataLbl" style="color:var(--dim)">타일 불러오는 중…</span>
+    <span class="sep"></span>
+    <span id="modeLbl" style="color:var(--dim)"></span>
+  </div>
+  <div id="view">
+    <canvas id="cv"></canvas>
+    <div id="welcome" style="display:none">
+      <div class="card">
+        <h2>라크무 맵 에디터</h2>
+        <p>라크무(RhakMu) .rkm 맵을 열고, 지형을 칠하고, 자원·장식물·시작 위치를 배치하고, 다시 저장합니다.</p>
+        <p>타일 그래픽은 에디터 옆 <span class="kbd">tiles</span> 폴더에서 자동으로 불러옵니다.<br>
+           라크무 폴더를 연결하면 <span class="kbd">Data\Maps</span> 맵 목록에서 바로 열고 저장할 수 있습니다 (선택 사항).</p>
+        <div class="btns">
+          <button id="wFolder">라크무 폴더 연결</button>
+          <button id="wReconnect" style="display:none">이전 폴더 다시 연결</button>
+          <button id="wFiles">FDB/IDX 파일 선택</button>
+          <button id="wNew">새 맵 만들기</button>
+          <button id="wOpen">맵 파일 열기</button>
+        </div>
+        <div id="maplist"></div>
+      </div>
+    </div>
+    <div id="toast"></div>
+  </div>
+  <div id="side">
+    <div id="tools">
+      <div class="grp" id="gMaps" style="display:none"><h3>맵 목록 (Data\Maps)</h3><div class="body">
+        <div class="row"><button id="bRefreshMaps">새로고침</button><span class="hint" id="mapsFolder"></span></div>
+        <div id="srvMaps" style="max-height:200px;overflow:auto"></div>
+        <div class="hint">클릭하면 열립니다. 저장하면 이 폴더에 바로 저장되고, 덮어쓸 때는 .bak 백업이 남습니다.</div>
+      </div></div>
+      <div class="grp" id="gSel"><h3>선택 / 이동</h3><div class="body">
+        <div class="btns"><button data-tool="select">선택·이동</button><button data-tool="erase">지우개</button><button data-tool="pan">화면 이동</button></div>
+        <div id="selInfo" class="hint">오브젝트를 클릭해 선택, 드래그로 이동, <span class="kbd">Del</span>로 삭제</div>
+      </div></div>
+      <div class="grp" id="gTerrain"><h3>지형 그리기</h3><div class="body">
+        <div class="easy" id="easyBtns"></div>
+        <div class="row"><label>모양</label><div class="btns" id="shapeBtns">
+          <button data-shape="circle" title="둥근 붓 (드래그로 자유롭게)">● 붓</button><button data-shape="rect" title="드래그한 사각형 영역 채우기">■ 사각형</button><button data-shape="line" title="드래그한 직선을 따라 그리기 (강·길)">╱ 직선</button></div></div>
+        <div class="row"><label>크기</label><input type="range" id="brushSize" min="1" max="16" value="3"><span id="brushSizeLbl">3</span></div>
+        <div class="hint">언덕을 칠하면 절벽이, 물을 칠하면 물가가 자동으로 둘러집니다. 언덕 위에 <b>높은 언덕</b>을 칠하면 2단 고지대가 됩니다.</div>
+        <div class="subhead">언덕길 · 다리 · 폭포</div>
+        <div class="objgrid" id="subBtns"></div>
+        <div class="row"><button data-tool="ramp" title="언덕 가장자리를 클릭하면 방향에 맞는 언덕길을 골라 놓습니다">⛰ 자동 언덕길</button></div>
+        <div class="hint">2층 언덕 입구는 평지↔언덕(1단), 3층은 언덕(1단)↔높은 언덕(2단) 사이 절벽에 놓습니다. 다리는 물 위, 폭포는 고지대 물 가장자리에 놓습니다.<br><b>(상하대칭)</b> 입구는 언덕의 윗쪽 절벽용이며, 게임 폴더에 상하대칭 모드(Data\tile)가 설치되어 있어야 게임에서 보입니다.</div>
+        <details style="margin-top:6px"><summary class="hint" style="cursor:pointer">고급: 원본 브러시 9종</summary><div class="btns" id="brushBtns" style="margin-top:4px"></div></details>
+      </div></div>
+      <div class="grp closed" id="gTile"><h3>타일 직접 배치</h3><div class="body">
+        <div class="btns"><button data-tool="tile">타일 찍기</button><button data-tool="pick">스포이드</button></div>
+        <div id="tileInfo" class="hint">선택 타일: -</div>
+        <div id="palette"></div>
+      </div></div>
+      <div class="grp" id="gStart"><h3>시작 위치</h3><div class="body">
+        <div class="btns" id="startBtns"></div>
+        <div class="hint">플레이어를 고르고 맵을 클릭하면 시작 위치가 옮겨집니다. 사각형은 본진 자리이며, 빨간색이면 물·절벽이 걸린 것입니다.</div>
+        <button id="bFixStarts" style="margin-top:4px">시작 위치 자동 보정</button>
+      </div></div>
+      <div class="grp" id="gRes"><h3>자원</h3><div class="body">
+        <div class="objgrid" id="resBtns"></div>
+        <div class="row"><label>매장량</label><input type="number" id="resAmount" value="5000" min="0" step="500"></div>
+      </div></div>
+      <div class="grp" id="gDeco"><h3>장식물 · 나무</h3><div class="body">
+        <div class="objgrid" id="decoBtns"></div>
+      </div></div>
+      <div class="grp" id="gLayers"><h3>표시</h3><div class="body">
+        <div class="row"><label><input type="checkbox" id="lyObj" checked> 오브젝트</label><label><input type="checkbox" id="lyStart" checked> 시작 위치</label></div>
+        <div class="row"><label><input type="checkbox" id="lyMapEdge" checked> 맵 경계</label></div>
+      </div></div>
+    </div>
+    <div id="minimapBox"><canvas id="minimap" width="288" height="220"></canvas></div>
+  </div>
+  <div id="status">
+    <span>맵 <b id="stMap">-</b></span><span>셀 <b id="stCell">-</b></span><span>타일 <b id="stTile">-</b></span><span>지형 <b id="stTerr">-</b></span><span id="stMsg"></span>
+  </div>
+</div>
+
+<dialog id="dlgNew"><header>새 맵</header><div class="content">
+  <div class="row"><label>이름</label><input id="nName" value="New Map" style="width:220px"></div>
+  <div class="row"><label>타일셋</label><select id="nTs"></select></div>
+  <div class="row"><label>크기</label><select id="nSize">
+    <option value="72x104">72 × 104 (2인 소형)</option><option value="104x104">104 × 104</option><option value="136x136" selected>136 × 136 (4인)</option>
+    <option value="170x170">170 × 170 (6인)</option><option value="200x200">200 × 200 (8인)</option><option value="192x128">192 × 128</option><option value="custom">직접 입력</option></select>
+    <input type="number" id="nW" value="136" step="8" min="40" max="256" style="display:none"> <input type="number" id="nH" value="136" step="2" min="40" max="256" style="display:none"></div>
+  <div class="row"><label>인원</label><select id="nPl"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select></div>
+  <div class="row"><label>바탕 지형</label><select id="nBase"></select></div>
+</div><footer><button value="cancel" formmethod="dialog" onclick="this.closest('dialog').close()">취소</button><button id="nOk">만들기</button></footer></dialog>
+
+<dialog id="dlgPlayers"><header>플레이어 설정</header><div class="content"><table class="grid" id="plTable"></table>
+<div class="hint">X/Y는 셀 단위(32px). 자원 1~3은 원본 맵 기본값 300 / 500 / 50 순서로 저장되는 시작 자원입니다.</div></div>
+<footer><button onclick="this.closest('dialog').close()">닫기</button></footer></dialog>
+
+<dialog id="dlgTeams"><header>팀 이름</header><div class="content" id="teamBody"></div>
+<footer><button onclick="this.closest('dialog').close()">닫기</button></footer></dialog>
+
+<dialog id="dlgProps"><header>맵 속성</header><div class="content">
+  <div class="row"><label>이름</label><input id="pName" style="width:220px"></div>
+  <div class="row"><label>타일셋</label><select id="pTs"></select></div>
+  <div class="row"><label>크기</label><input type="number" id="pW" step="8" min="40" max="256"> × <input type="number" id="pH" step="2" min="40" max="256"> <span class="hint">셀</span></div>
+  <div class="row"><label>최대 인원</label><select id="pPl"><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select></div>
+  <div class="hint">크기를 줄이면 오른쪽/아래가 잘립니다. 늘린 부분은 2번 지형(땅)으로 채워집니다.<br>파일 이름의 [숫자]는 저장 시 최대 인원으로 맞춰집니다.</div>
+</div><footer><button onclick="this.closest('dialog').close()">취소</button><button id="pOk">적용</button></footer></dialog>
+
+<input type="file" id="fileRkm" accept=".rkm" style="display:none">
+<input type="file" id="fileData" accept=".fdb,.idx,.FDB,.IDX" multiple style="display:none">
+<script>
+/*__CORE__*/
+</script>
+<script>
+/*__APP__*/
+</script>
+</body>
+</html>
