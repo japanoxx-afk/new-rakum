@@ -68,3 +68,4 @@ if __name__=='__main__':
         import os
         jobs=((9,False),(8,True),(3,'under'))
         run(n,p,jobs,generic='savage')
+    import runpy; runpy.run_path('/home/claude/re/ramp9/blockfix.py')

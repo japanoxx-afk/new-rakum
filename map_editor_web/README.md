@@ -18,8 +18,9 @@
 - `Data\tile` 의 개별 파일이 `Data000.FDB` 보다 우선하므로 원본은 그대로 두고 파일만 추가한다.
 - BRG 항목 8–11 = 2–5 를 상하대칭한 입구. 타일 수(JTL u16@16)는 파일에서 읽으므로 실행 파일 수정 없음.
 - 이 입구를 쓴 맵은 함께 하는 모든 PC 에 모드가 있어야 한다. 런처에서 설치/제거 가능.
-- 통행 불가 칸(BRG 셀 byte 3)은 아직 예전 기둥 위치 기준이다.
+- 통행 불가 칸(BRG 셀 byte 3)은 새 기둥 6개 위치로 옮겼다 (`tools/ramp9/blockfix.py`). 계단 통로는 열려 있다.
 
 ## 테스트
 `python -m unittest test_map_editor_web`
 - `tools/` 스크립트는 작업 당시 경로(`/home/claude/re`) 기준이라, 다시 돌릴 때는 원본 JTL/BRG/S16 경로를 맞춰야 한다.
+- exe 는 `.github/workflows/build-launcher.yml` 이 Windows 에서 빌드해 브랜치에 커밋하고 `version.json` 을 갱신한다.
