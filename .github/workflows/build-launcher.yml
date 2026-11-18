@@ -9,6 +9,8 @@ on:
       - 'map_editor_web.py'
       - 'ui_theme.py'
       - 'map_preview.py'
+      - 'rally_gold_patch.py'
+      - 'minimap_patch.py'
       - 'map_preview_tiles/**'
       - 'release_notes.py'
       - 'map_editor_web/**'
@@ -30,9 +32,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install PyInstaller
-        run: python -m pip install --upgrade pip pyinstaller sv-ttk
+        run: python -m pip install --upgrade pip pyinstaller sv-ttk pefile unicorn
       - name: Tests
-        run: python -m unittest test_map_editor_web test_map_preview -v
+        run: python -m unittest test_map_editor_web test_map_preview test_rally_gold_patch -v
       - name: Build
         shell: pwsh
         run: |

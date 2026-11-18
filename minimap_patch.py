@@ -27,8 +27,8 @@ def underlying(data):
     raise ValueError('미니맵 패치가 불완전하거나 알 수 없는 변경이 있습니다.')
 
 def transform(data,enabled=True):
-    import viewport_patch
-    source=underlying(data)
+    import viewport_patch,rally_gold_patch
+    source=rally_gold_patch.strip(underlying(data))
     # Validate every underlying byte, preserving all known independent settings.
     viewport_patch.transform(source,False)
     if not enabled:return source
@@ -64,9 +64,9 @@ def replace(path,original,changed):
 def apply(path,enabled=True):
     path=Path(path);data=path.read_bytes();replace(path,data,transform(data,enabled))
 
-def prepare(path,highres):
-    import viewport_patch,peer_address_patch,sync_port_patch,panel_guard_patch
-    path=Path(path);original=path.read_bytes();data=underlying(original)
+def prepare(path,highres,rally_gold=True):
+    import viewport_patch,peer_address_patch,sync_port_patch,panel_guard_patch,rally_gold_patch
+    path=Path(path);original=path.read_bytes();data=rally_gold_patch.strip(underlying(original))
     peer_address_patch.state(data);sync_port_patch.state(data);panel_guard_patch.state(data)
     result=bytearray(data)
     result[sync_port_patch.OFFSET:sync_port_patch.OFFSET+len(sync_port_patch.PATCHED)]=sync_port_patch.PATCHED
@@ -81,4 +81,5 @@ def prepare(path,highres):
         if not (path.parent/'ddraw.dll').is_file():raise ValueError('ddraw.dll이 필요합니다.')
     data=viewport_patch.transform(bytes(result),highres)
     data=transform(data)
+    data=rally_gold_patch.apply(data,rally_gold)   # 마지막: 다른 패치 검증은 원본 기준
     replace(path,original,data)
