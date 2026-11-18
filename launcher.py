@@ -43,7 +43,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9035"
+APP_VERSION = "0.9036"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -646,10 +646,10 @@ class App(tk.Tk):
         self.map_editor = map_editor_web.EditorServer(get_resource_dir())
         frame = ttk.Frame(notebook, padding=14)
         notebook.add(frame, text="  맵 에디터  ")
-        ttk.Label(frame, text="라크무 맵 에디터", font=("맑은 고딕", 12, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="라크무 맵 에디터", style="Title.TLabel").pack(anchor="w")
         ttk.Label(frame, text="브라우저에서 열립니다. 게임 폴더의 Data\\Maps 맵 목록을 바로 열고 저장합니다.\n"
                               "저장하면 기존 파일은 .bak 으로 백업됩니다. 새로 만든 맵은 Download 폴더에 저장하세요.",
-                  foreground="gray").pack(anchor="w", pady=(2, 8))
+                  style="Muted.TLabel").pack(anchor="w", pady=(2, 8))
         row = ttk.Frame(frame); row.pack(anchor="w")
         ttk.Button(row, text="🗺 맵 에디터 열기", command=self._on_open_map_editor, width=20).pack(side="left")
         ttk.Button(row, text="맵 폴더 열기", command=self._on_open_maps_folder, width=14).pack(side="left", padx=6)
@@ -661,7 +661,7 @@ class App(tk.Tk):
         ttk.Label(mod, text="에디터의 '(상하대칭)' 언덕 입구를 게임에서 보이게 하는 타일입니다 (Data\\tile).\n"
                             "이 입구를 쓴 맵은 함께 하는 모든 PC에 모드가 설치되어 있어야 합니다.\n"
                             "원본 FDB 는 변경하지 않으며, 제거하면 원래 상태로 돌아갑니다.",
-                  foreground="gray").pack(anchor="w")
+                  style="Muted.TLabel").pack(anchor="w")
         mrow = ttk.Frame(mod); mrow.pack(anchor="w", pady=(8, 0))
         ttk.Button(mrow, text="모드 설치 / 갱신", command=self._on_install_tile_mod, width=16).pack(side="left")
         ttk.Button(mrow, text="모드 제거", command=self._on_uninstall_tile_mod, width=12).pack(side="left", padx=6)
@@ -723,7 +723,7 @@ class App(tk.Tk):
         self.capture_dir = None
         frame = ttk.Frame(notebook, padding=16)
         notebook.add(frame, text="통신 진단")
-        ttk.Label(frame, text="게임 시작 동기화 기록", font=("맑은 고딕", 12, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="게임 시작 동기화 기록", style="Title.TLabel").pack(anchor="w")
         ttk.Label(frame, text="양쪽 PC에서 기록 시작 → 기록 중 표시 확인 → 게임 시작\n"
                   "로비로 돌아오면 기록 종료를 누르세요. 120초 후 자동 종료됩니다.\n"
                   "하마치 성공 기록도 같은 방법으로 남겨 비교할 수 있습니다.",
@@ -886,14 +886,14 @@ class App(tk.Tk):
         canvas.bind('<Configure>', lambda e: canvas.itemconfigure(window, width=e.width))
         self.connection_parent = frame
 
-        ttk.Label(frame, text="라크무 서버 관리", font=("맑은 고딕", 12, "bold")).pack(
+        ttk.Label(frame, text="라크무 서버 관리", style="Title.TLabel").pack(
             anchor="w", pady=(0, 4)
         )
         ttk.Label(frame, text=f"런처 v{APP_VERSION}   |   서버 v{get_server_version()}",
-                  foreground="gray").pack(anchor="w", pady=(0, 10))
+                  style="Muted.TLabel").pack(anchor="w", pady=(0, 10))
 
         self.status_var = tk.StringVar(value="서버 상태: 꺼짐")
-        ttk.Label(frame, textvariable=self.status_var, font=("맑은 고딕", 10)).pack(
+        ttk.Label(frame, textvariable=self.status_var, style="Body.TLabel").pack(
             anchor="w", pady=(0, 12)
         )
 
@@ -905,7 +905,7 @@ class App(tk.Tk):
         self.btn_restart.pack(side="left", padx=(0, 8))
         self.btn_stop = ttk.Button(btn_frame, text="서버 종료", command=self._on_stop, width=14)
         self.btn_stop.pack(side="left")
-        ttk.Label(frame, text='별도 창 없이 실행됩니다. 런처를 닫으면 서버도 종료됩니다.', foreground='gray').pack(anchor='w', pady=6)
+        ttk.Label(frame, text='별도 창 없이 실행됩니다. 런처를 닫으면 서버도 종료됩니다.', style='Muted.TLabel').pack(anchor='w', pady=6)
         self.server_log = tk.Text(frame, height=4, wrap='word', state='disabled')
         self.server_log.pack(fill='both', expand=True)
 
@@ -914,7 +914,7 @@ class App(tk.Tk):
         ttk.Button(update_frame, text="통합 업데이트 (런처·서버)", command=self._on_check_launcher_update, width=25).pack(side="left")
         ttk.Button(update_frame, text="패치노트", command=self._show_patch_notes, width=10).pack(side="left", padx=6)
         self.update_status_var = tk.StringVar()
-        ttk.Label(update_frame, textvariable=self.update_status_var, foreground="gray").pack(side="left", padx=(8, 0))
+        ttk.Label(update_frame, textvariable=self.update_status_var, style="Muted.TLabel").pack(side="left", padx=(8, 0))
 
         ttk.Separator(frame, orient="horizontal").pack(fill="x", pady=16)
 
@@ -925,7 +925,7 @@ class App(tk.Tk):
             if os.path.isfile(script):
                 ttk.Label(frame, text=f"{SERVER_SCRIPT} 감지됨", foreground="green").pack(anchor="w")
             else:
-                ttk.Label(frame, text=f"※ {SERVER_SCRIPT}를 같은 폴더에 넣어주세요.", foreground="gray").pack(anchor="w")
+                ttk.Label(frame, text=f"※ {SERVER_SCRIPT}를 같은 폴더에 넣어주세요.", style="Muted.TLabel").pack(anchor="w")
 
     def _on_start(self):
         ok, msg = self.server.restart()
@@ -1045,7 +1045,7 @@ class App(tk.Tk):
         frame = ttk.LabelFrame(self.connection_parent, text='서버 접속 설정', padding=8)
         frame.pack(fill='x', pady=8)
 
-        ttk.Label(frame, text="접속 정보 (hosts)", font=("맑은 고딕", 12, "bold")).pack(anchor="w", pady=(0, 4))
+        ttk.Label(frame, text="접속 정보 (hosts)", style="Title.TLabel").pack(anchor="w", pady=(0, 4))
         self.cur_ip_var = tk.StringVar()
         ip_row = ttk.Frame(frame)
         ip_row.pack(fill='x', pady=6)
@@ -1056,7 +1056,7 @@ class App(tk.Tk):
         ip_entry.bind('<Return>', lambda e: self._save_server_ip())
         ip_entry.bind('<FocusOut>', self._commit_ip_input)
         ttk.Button(ip_row, text='저장·적용', command=self._save_server_ip).pack(side='left', padx=6)
-        ttk.Label(frame, text='IP 입력 후 Enter 또는 다른 항목 클릭 시 hosts에 반영됩니다.', foreground='gray').pack(anchor='w')
+        ttk.Label(frame, text='IP 입력 후 Enter 또는 다른 항목 클릭 시 hosts에 반영됩니다.', style='Muted.TLabel').pack(anchor='w')
         self.radmin_only = tk.BooleanVar(value=self.cfg.get('radmin_only', True))
         ttk.Checkbutton(frame, text="라드민 전용 모드 (게임 IP 고정 + 하마치 일시 중지)",
                         variable=self.radmin_only).pack(anchor="w")
@@ -1064,7 +1064,7 @@ class App(tk.Tk):
         ttk.Button(frame, text="게임 IP / 하마치 상태 복구", command=lambda: self._radmin_session_start(restore=True)).pack(anchor="w")
         self.radmin_status = tk.StringVar(value="라드민 전용 모드 대기")
         ttk.Label(frame, textvariable=self.radmin_status, wraplength=420).pack(anchor="w")
-        ttk.Label(frame, textvariable=self.cur_ip_var, foreground="gray").pack(anchor="w", pady=(0, 8))
+        ttk.Label(frame, textvariable=self.cur_ip_var, style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
 
         btns = ttk.Frame(frame)
         btns.pack(fill="x")
@@ -1073,7 +1073,7 @@ class App(tk.Tk):
         ttk.Label(frame,
                   text="※ 접속 주소는 아래 '싱글/멀티플레이' 버튼이 자동 설정합니다.\n"
                        "   rhakmugame.hangame.naver.com 줄만 바뀌고 나머지는 보존됩니다.",
-                  foreground="gray").pack(anchor="w", pady=(8, 0))
+                  style="Muted.TLabel").pack(anchor="w", pady=(8, 0))
 
         self._refresh_hosts_view()
 
@@ -1321,9 +1321,9 @@ class App(tk.Tk):
         frame = ttk.Frame(notebook, padding=12)
         notebook.add(frame, text="  전적  ")
 
-        ttk.Label(frame, text="대전 기록", font=("맑은 고딕", 12, "bold")).pack(anchor="w", pady=(0, 6))
+        ttk.Label(frame, text="대전 기록", style="Title.TLabel").pack(anchor="w", pady=(0, 6))
         ttk.Label(frame, text="서버가 게임 시작 시 자동 기록합니다 (서버를 켜둔 PC 기준).",
-                  foreground="gray").pack(anchor="w", pady=(0, 8))
+                  style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
 
         cols = ("time", "map", "players", "result")
         tree = ttk.Treeview(frame, columns=cols, show="headings", height=12)
@@ -1461,10 +1461,10 @@ class App(tk.Tk):
             cadence_current = False
         self.cadence_var = tk.BooleanVar(value=False)
         ttk.Label(lat_frame, text='99ms 옵션 중단: 멀티 속도 저하·동시 종료 보고',
-                        foreground='gray').pack(anchor='w', pady=(8, 0))
+                        style='Muted.TLabel').pack(anchor='w', pady=(8, 0))
         ttk.Button(lat_frame, text='기존 전송 간격으로 원복', command=self._on_cadence_apply).pack(anchor='w', pady=4)
         ttk.Label(lat_frame, text='게임 실행 전 자동 원복합니다. 양쪽 모두 최신 런처를 사용하세요.',
-                  foreground='gray').pack(anchor='w')
+                  style='Muted.TLabel').pack(anchor='w')
         radmin_ip = has_radmin_adapter()
         rad_frame = ttk.LabelFrame(frame, text="라드민 멀티 최적화 (동기화 실패 해결)", padding=12)
         rad_frame.pack(fill="x", pady=(0, 10))
@@ -1473,12 +1473,12 @@ class App(tk.Tk):
         else:
             rad_txt = "라드민(26.x) 어댑터가 감지되지 않았습니다. 라드민 VPN을 켜세요."
         self.rad_status_var = tk.StringVar(value=rad_txt)
-        ttk.Label(rad_frame, textvariable=self.rad_status_var, foreground="gray").pack(anchor="w", pady=(0, 6))
+        ttk.Label(rad_frame, textvariable=self.rad_status_var, style="Muted.TLabel").pack(anchor="w", pady=(0, 6))
         ttk.Button(rad_frame, text="지금 적용", command=self._on_fix_radmin, width=14).pack(anchor="w")
         ttk.Label(rad_frame,
                   text="라드민일 때 게임(DP8)이 잘못된 랜카드 IP로 접속해 동기화가 실패합니다.\n"
                        "라드민 어댑터를 최우선으로 지정해 해결합니다.  ※ 대전하는 두 PC 모두 적용.",
-                  foreground="gray").pack(anchor="w", pady=(6, 0))
+                  style="Muted.TLabel").pack(anchor="w", pady=(6, 0))
 
         # ── 창모드 ──
         mode_frame = ttk.LabelFrame(frame, text="디스플레이 모드", padding=12)
@@ -1489,7 +1489,7 @@ class App(tk.Tk):
         ttk.Button(mode_frame,text='내부 해상도 적용 / 해제',command=self._on_viewport_apply).pack(anchor='w',pady=4)
         ttk.Label(mode_frame,text='기본 켜짐 · 게임 실행 전 자동 적용 · 해제 시 원본 복원\n'
                   '메뉴·로비는 1024×768 유지. 장시간/멀티플레이 안정성은 추가 검증 중입니다.',
-                  foreground='gray',wraplength=510).pack(anchor='w',pady=4)
+                  style='Muted.TLabel',wraplength=510).pack(anchor='w',pady=4)
         try:
             settings = self.winmode.read_settings()
         except (OSError, UnicodeError) as exc:
@@ -1509,7 +1509,7 @@ class App(tk.Tk):
         ttk.Combobox(res_row, textvariable=self.res_var, values=RESOLUTIONS, width=14).pack(side="left", padx=(6, 0))
         ttk.Label(mode_frame, text='0x0 = 게임이 요청한 원본 크기. 위 값은 화면 확대 크기입니다.\n'
                   '실제 지도 시야는 위 내부 해상도 옵션으로 변경합니다. 1920×1080 내부 해상도는 미지원입니다.',
-                  foreground='gray', wraplength=510).pack(anchor='w', pady=4)
+                  style='Muted.TLabel', wraplength=510).pack(anchor='w', pady=4)
         render_row = ttk.Frame(mode_frame)
         render_row.pack(fill='x')
         ttk.Label(render_row, text='렌더러:').pack(side='left')
@@ -1537,7 +1537,7 @@ class App(tk.Tk):
         ttk.Button(frame, text="표시 지연 완화 (3·4턴)", command=self._on_response_profile).pack(anchor="w", pady=(8, 0))
         ttk.Label(frame, text="수직동기화 끄기 + 모니터 주사율 + Bilinear 필터. 화질/화면 찢어짐 차이가 있을 수 있습니다.\n"
                   "명령 턴·게임 속도·네트워크 프로토콜은 변경하지 않습니다. 효과는 PC에 따라 다릅니다.",
-                  foreground='gray').pack(anchor='w')
+                  style='Muted.TLabel').pack(anchor='w')
 
         if not self.winmode.available:
             ttk.Label(frame, text="※ ddraw.ini를 찾을 수 없습니다. 게임 경로를 확인하세요.",
