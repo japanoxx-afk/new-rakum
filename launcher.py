@@ -31,6 +31,7 @@ from display_settings import WindowModeManager, RENDERERS
 import launcher_update
 import map_editor_web
 import ui_theme
+import map_preview
 from tkinter import ttk, messagebox
 
 # server.py는 런타임 exec로 실행되므로 PyInstaller가 의존성을 자동 감지 못 한다.
@@ -43,7 +44,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9035"
+APP_VERSION = "0.9037"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -623,6 +624,7 @@ class App(tk.Tk):
         self._build_client_tab(notebook)
         self._build_history_tab(notebook)
         self._build_settings_tab(notebook)
+        self._build_map_preview_tab(notebook)
         self._build_map_editor_tab(notebook)
         self._build_capture_tab(notebook)
         self.protocol("WM_DELETE_WINDOW", self._close_launcher)
@@ -642,14 +644,143 @@ class App(tk.Tk):
             raise ValueError('게임 설치 폴더(Data 폴더가 있는 곳)를 먼저 지정하세요.')
         return path
 
+    # ------------------------------------------------------------ map preview
+    def _build_map_preview_tab(self, notebook):
+        self._preview_cache = {}
+        self._preview_img = None
+        page = ttk.Frame(notebook, padding=12)
+        notebook.add(page, text="  맵 미리보기  ")
+        self._preview_tab = page
+        left = ttk.Frame(page)
+        left.pack(side="left", fill="y")
+        self.map_filter_var = tk.StringVar()
+        ent = ttk.Entry(left, textvariable=self.map_filter_var, width=28)
+        ent.pack(fill="x")
+        ent.bind("<KeyRelease>", lambda e: self._refresh_map_list())
+        ttk.Label(left, text="맵 이름 검색", style="Muted.TLabel").pack(anchor="w", pady=(2, 6))
+        lf = ttk.Frame(left)
+        lf.pack(fill="both", expand=True)
+        self.map_tree = ttk.Treeview(lf, show="tree", selectmode="browse", height=12)
+        self.map_tree.column("#0", width=230)
+        sb = ttk.Scrollbar(lf, orient="vertical", command=self.map_tree.yview)
+        self.map_tree.configure(yscrollcommand=sb.set)
+        self.map_tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="left", fill="y")
+        self.map_tree.bind("<<TreeviewSelect>>", lambda e: self._on_map_selected())
+        self.map_tree.bind("<Double-1>", lambda e: self._on_open_preview_in_editor())
+        lb = ttk.Frame(left)
+        lb.pack(fill="x", pady=(8, 0))
+        ttk.Button(lb, text="새로고침", command=self._refresh_map_list).pack(side="left", fill="x", expand=True)
+        ttk.Button(lb, text="폴더 열기", command=self._on_open_maps_folder).pack(side="left", fill="x", expand=True, padx=(6, 0))
+
+        right = ttk.Frame(page, padding=(14, 0, 0, 0))
+        right.pack(side="left", fill="both", expand=True)
+        self.preview_title = tk.StringVar(value="맵을 선택하세요")
+        top = ttk.Frame(right)
+        top.pack(fill="x")
+        ttk.Label(top, textvariable=self.preview_title, style="Title.TLabel").pack(side="left")
+        ttk.Button(top, text="에디터에서 열기", command=self._on_open_preview_in_editor).pack(side="right")
+        self.preview_canvas = tk.Canvas(right, width=330, height=330, highlightthickness=1,
+                                        highlightbackground=ui_theme.BORDER, background="#000000")
+        self.preview_canvas.pack(anchor="w", pady=(8, 6))
+        legend = ttk.Frame(right)
+        legend.pack(anchor="w", pady=(0, 8))
+        for color, text in (("#ffd83c", "금광"), ("#46c8ff", "우물"), ("#e050e0", "언덕 입구·다리"), ("#e03c3c", "시작 위치")):
+            c = tk.Canvas(legend, width=12, height=12, highlightthickness=0, background=ui_theme.BG)
+            c.create_rectangle(1, 1, 11, 11, fill=color, outline="#000")
+            c.pack(side="left")
+            ttk.Label(legend, text=text, style="Muted.TLabel").pack(side="left", padx=(4, 12))
+        self.preview_info = tk.StringVar()
+        ttk.Label(right, textvariable=self.preview_info, justify="left", wraplength=420).pack(anchor="w")
+        notebook.bind("<<NotebookTabChanged>>", lambda e: self._on_tab_changed(notebook), add="+")
+
+    def _on_tab_changed(self, notebook):
+        if notebook.select() == str(self._preview_tab) and not self.map_tree.get_children():
+            self._refresh_map_list()
+
+    def _refresh_map_list(self):
+        try:
+            game = self._editor_game_dir()
+        except ValueError as e:
+            self.preview_title.set(str(e))
+            return
+        q = self.map_filter_var.get().strip().lower()
+        sel = self.map_tree.selection()
+        self.map_tree.delete(*self.map_tree.get_children())
+        folders = {}
+        for rel in map_preview.list_maps(game):
+            if q and q not in rel.lower():
+                continue
+            parent = ""
+            if os.sep in rel:
+                folder = rel.rsplit(os.sep, 1)[0]
+                if folder not in folders:
+                    folders[folder] = self.map_tree.insert("", "end", text=folder, open=True)
+                parent = folders[folder]
+            self.map_tree.insert(parent, "end", iid=rel, text=os.path.basename(rel)[:-4])
+        if sel and self.map_tree.exists(sel[0]):
+            self.map_tree.selection_set(sel[0])
+
+    def _on_map_selected(self):
+        sel = self.map_tree.selection()
+        if not sel or not sel[0].lower().endswith(".rkm"):
+            return
+        rel = sel[0]
+        try:
+            path = self._editor_game_dir() / "Data" / "Maps" / rel
+            key = (str(path), path.stat().st_mtime)
+            if key not in self._preview_cache:
+                info = map_preview.load(path)
+                self._preview_cache[key] = (info,) + map_preview.render_rows(info, get_resource_dir(), 330)
+            info, w, h, rows, s = self._preview_cache[key]
+        except (OSError, ValueError, KeyError, IndexError, struct.error) as e:
+            self.preview_title.set(os.path.basename(rel)[:-4])
+            self.preview_info.set(f"미리보기를 만들 수 없습니다: {e}")
+            self.preview_canvas.delete("all")
+            return
+        self.preview_title.set(os.path.basename(rel)[:-4])
+        self.preview_info.set(map_preview.summary(info))
+        img = tk.PhotoImage(width=w, height=h)
+        img.put(" ".join(rows))
+        self._preview_img = img
+        cv = self.preview_canvas
+        cv.delete("all")
+        cv.configure(width=w, height=h)
+        cv.create_image(0, 0, image=img, anchor="nw")
+        for oid, x, y in info.subs:
+            X, Y = map_preview.to_px(info, s, x + 8, y + 4)
+            cv.create_rectangle(X - 3, Y - 3, X + 3, Y + 3, fill="#e050e0", outline="#000")
+        for color, pts in (("#46c8ff", info.wells), ("#ffd83c", info.gold)):
+            for x, y, _ in pts:
+                X, Y = map_preview.to_px(info, s, x + 1, y + 1)
+                cv.create_rectangle(X - 3, Y - 3, X + 3, Y + 3, fill=color, outline="#000")
+        for i, (x, y) in enumerate(info.players):
+            X, Y = map_preview.to_px(info, s, x, y)
+            col = map_preview.PLAYER_COLORS[i % 8]
+            cv.create_rectangle(X - 7, Y - 7, X + 7, Y + 7, fill=col, outline="#000", width=2)
+            cv.create_text(X, Y, text=str(i + 1), fill="#000", font=ui_theme.font(ui_theme.SIZE_CAPTION, "bold"))
+
+    def _on_open_preview_in_editor(self):
+        sel = self.map_tree.selection()
+        if not sel or not sel[0].lower().endswith(".rkm"):
+            messagebox.showinfo("맵 미리보기", "열 맵을 먼저 선택하세요.")
+            return
+        try:
+            url = self.map_editor.start(self._editor_game_dir())
+            import urllib.parse, webbrowser
+            webbrowser.open(url + "?open=" + urllib.parse.quote(sel[0]))
+            self.map_editor_var.set(f"에디터 서버: 실행 중 ({url})")
+        except (OSError, ValueError) as e:
+            messagebox.showerror("맵 에디터", str(e))
+
     def _build_map_editor_tab(self, notebook):
         self.map_editor = map_editor_web.EditorServer(get_resource_dir())
         frame = ttk.Frame(notebook, padding=14)
         notebook.add(frame, text="  맵 에디터  ")
-        ttk.Label(frame, text="라크무 맵 에디터", font=("맑은 고딕", 12, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="라크무 맵 에디터", style="Title.TLabel").pack(anchor="w")
         ttk.Label(frame, text="브라우저에서 열립니다. 게임 폴더의 Data\\Maps 맵 목록을 바로 열고 저장합니다.\n"
                               "저장하면 기존 파일은 .bak 으로 백업됩니다. 새로 만든 맵은 Download 폴더에 저장하세요.",
-                  foreground="gray").pack(anchor="w", pady=(2, 8))
+                  style="Muted.TLabel").pack(anchor="w", pady=(2, 8))
         row = ttk.Frame(frame); row.pack(anchor="w")
         ttk.Button(row, text="🗺 맵 에디터 열기", command=self._on_open_map_editor, width=20).pack(side="left")
         ttk.Button(row, text="맵 폴더 열기", command=self._on_open_maps_folder, width=14).pack(side="left", padx=6)
@@ -661,13 +792,54 @@ class App(tk.Tk):
         ttk.Label(mod, text="에디터의 '(상하대칭)' 언덕 입구를 게임에서 보이게 하는 타일입니다 (Data\\tile).\n"
                             "이 입구를 쓴 맵은 함께 하는 모든 PC에 모드가 설치되어 있어야 합니다.\n"
                             "원본 FDB 는 변경하지 않으며, 제거하면 원래 상태로 돌아갑니다.",
-                  foreground="gray").pack(anchor="w")
+                  style="Muted.TLabel").pack(anchor="w")
         mrow = ttk.Frame(mod); mrow.pack(anchor="w", pady=(8, 0))
         ttk.Button(mrow, text="모드 설치 / 갱신", command=self._on_install_tile_mod, width=16).pack(side="left")
         ttk.Button(mrow, text="모드 제거", command=self._on_uninstall_tile_mod, width=12).pack(side="left", padx=6)
         self.tile_mod_var = tk.StringVar()
         ttk.Label(mod, textvariable=self.tile_mod_var).pack(anchor="w", pady=(6, 0))
+        self.tile_mod_auto_var = tk.BooleanVar(value=self.cfg.get("tile_mod_auto", True))
+        ttk.Checkbutton(mod, text="런처 실행 시 자동 설치·갱신 (기본)", variable=self.tile_mod_auto_var,
+                        command=self._on_tile_mod_auto_toggle).pack(anchor="w", pady=(8, 0))
         self._refresh_tile_mod_status()
+        self.after(400, self._auto_tile_mod)
+
+    def _on_tile_mod_auto_toggle(self):
+        self.cfg["tile_mod_auto"] = bool(self.tile_mod_auto_var.get())
+        save_config(self.base_dir, self.cfg)
+        if self.cfg["tile_mod_auto"]:
+            self._auto_tile_mod()
+
+    def _auto_tile_mod(self):
+        """런처 시작 시 상하대칭 언덕 입구 타일 모드를 기본 설치/갱신 (백그라운드)."""
+        if not self.cfg.get("tile_mod_auto", True):
+            return
+        try:
+            game = self._editor_game_dir()
+        except ValueError:
+            return
+        res = get_resource_dir()
+        box = {}
+
+        def work():
+            try:
+                r = map_editor_web.ensure_mod(game, res)
+                msg = {"installed": "상태: 설치됨 (런처가 자동 설치)", "updated": "상태: 설치됨 (최신 버전으로 갱신)",
+                       "ok": "상태: 설치됨 (최신)"}.get(r)
+            except PermissionError:
+                msg = "상태: 자동 설치 실패 — 권한 없음. 런처를 관리자 권한으로 한 번 실행하세요."
+            except (OSError, RuntimeError) as e:
+                msg = f"상태: 자동 설치 실패 — {e}"
+            box["msg"] = msg or ""
+
+        def poll():  # Tk 는 메인 스레드에서만 갱신
+            if "msg" not in box:
+                self.after(200, poll)
+            elif box["msg"]:
+                self.tile_mod_var.set(box["msg"])
+
+        threading.Thread(target=work, name="tile-mod-auto", daemon=True).start()
+        self.after(200, poll)
 
     def _refresh_tile_mod_status(self):
         try:
@@ -700,6 +872,9 @@ class App(tk.Tk):
         try:
             game = self._editor_game_dir()
             map_editor_web.install_mod(game, get_resource_dir())
+            self.cfg["tile_mod_auto"] = True
+            self.tile_mod_auto_var.set(True)
+            save_config(self.base_dir, self.cfg)
             messagebox.showinfo("타일 모드", "상하대칭 언덕 입구 타일 모드를 설치했습니다.")
         except PermissionError:
             messagebox.showerror("타일 모드", "권한이 없습니다. 런처를 관리자 권한으로 실행하세요.")
@@ -708,8 +883,12 @@ class App(tk.Tk):
         self._refresh_tile_mod_status()
 
     def _on_uninstall_tile_mod(self):
-        if not messagebox.askyesno("타일 모드", "타일 모드를 제거할까요?\n상하대칭 언덕 입구를 쓴 맵은 입구가 보이지 않게 됩니다."):
+        if not messagebox.askyesno("타일 모드", "타일 모드를 제거할까요?\n상하대칭 언덕 입구를 쓴 맵은 입구가 보이지 않게 됩니다.\n"
+                                              "다음 실행부터 자동 설치도 꺼집니다."):
             return
+        self.cfg["tile_mod_auto"] = False
+        self.tile_mod_auto_var.set(False)
+        save_config(self.base_dir, self.cfg)
         try:
             map_editor_web.uninstall_mod(self._editor_game_dir())
         except PermissionError:
@@ -723,7 +902,7 @@ class App(tk.Tk):
         self.capture_dir = None
         frame = ttk.Frame(notebook, padding=16)
         notebook.add(frame, text="통신 진단")
-        ttk.Label(frame, text="게임 시작 동기화 기록", font=("맑은 고딕", 12, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="게임 시작 동기화 기록", style="Title.TLabel").pack(anchor="w")
         ttk.Label(frame, text="양쪽 PC에서 기록 시작 → 기록 중 표시 확인 → 게임 시작\n"
                   "로비로 돌아오면 기록 종료를 누르세요. 120초 후 자동 종료됩니다.\n"
                   "하마치 성공 기록도 같은 방법으로 남겨 비교할 수 있습니다.",
@@ -886,14 +1065,14 @@ class App(tk.Tk):
         canvas.bind('<Configure>', lambda e: canvas.itemconfigure(window, width=e.width))
         self.connection_parent = frame
 
-        ttk.Label(frame, text="라크무 서버 관리", font=("맑은 고딕", 12, "bold")).pack(
+        ttk.Label(frame, text="라크무 서버 관리", style="Title.TLabel").pack(
             anchor="w", pady=(0, 4)
         )
         ttk.Label(frame, text=f"런처 v{APP_VERSION}   |   서버 v{get_server_version()}",
-                  foreground="gray").pack(anchor="w", pady=(0, 10))
+                  style="Muted.TLabel").pack(anchor="w", pady=(0, 10))
 
         self.status_var = tk.StringVar(value="서버 상태: 꺼짐")
-        ttk.Label(frame, textvariable=self.status_var, font=("맑은 고딕", 10)).pack(
+        ttk.Label(frame, textvariable=self.status_var, style="Body.TLabel").pack(
             anchor="w", pady=(0, 12)
         )
 
@@ -905,7 +1084,7 @@ class App(tk.Tk):
         self.btn_restart.pack(side="left", padx=(0, 8))
         self.btn_stop = ttk.Button(btn_frame, text="서버 종료", command=self._on_stop, width=14)
         self.btn_stop.pack(side="left")
-        ttk.Label(frame, text='별도 창 없이 실행됩니다. 런처를 닫으면 서버도 종료됩니다.', foreground='gray').pack(anchor='w', pady=6)
+        ttk.Label(frame, text='별도 창 없이 실행됩니다. 런처를 닫으면 서버도 종료됩니다.', style='Muted.TLabel').pack(anchor='w', pady=6)
         self.server_log = tk.Text(frame, height=4, wrap='word', state='disabled')
         self.server_log.pack(fill='both', expand=True)
 
@@ -914,7 +1093,7 @@ class App(tk.Tk):
         ttk.Button(update_frame, text="통합 업데이트 (런처·서버)", command=self._on_check_launcher_update, width=25).pack(side="left")
         ttk.Button(update_frame, text="패치노트", command=self._show_patch_notes, width=10).pack(side="left", padx=6)
         self.update_status_var = tk.StringVar()
-        ttk.Label(update_frame, textvariable=self.update_status_var, foreground="gray").pack(side="left", padx=(8, 0))
+        ttk.Label(update_frame, textvariable=self.update_status_var, style="Muted.TLabel").pack(side="left", padx=(8, 0))
 
         ttk.Separator(frame, orient="horizontal").pack(fill="x", pady=16)
 
@@ -925,7 +1104,7 @@ class App(tk.Tk):
             if os.path.isfile(script):
                 ttk.Label(frame, text=f"{SERVER_SCRIPT} 감지됨", foreground="green").pack(anchor="w")
             else:
-                ttk.Label(frame, text=f"※ {SERVER_SCRIPT}를 같은 폴더에 넣어주세요.", foreground="gray").pack(anchor="w")
+                ttk.Label(frame, text=f"※ {SERVER_SCRIPT}를 같은 폴더에 넣어주세요.", style="Muted.TLabel").pack(anchor="w")
 
     def _on_start(self):
         ok, msg = self.server.restart()
@@ -1045,7 +1224,7 @@ class App(tk.Tk):
         frame = ttk.LabelFrame(self.connection_parent, text='서버 접속 설정', padding=8)
         frame.pack(fill='x', pady=8)
 
-        ttk.Label(frame, text="접속 정보 (hosts)", font=("맑은 고딕", 12, "bold")).pack(anchor="w", pady=(0, 4))
+        ttk.Label(frame, text="접속 정보 (hosts)", style="Title.TLabel").pack(anchor="w", pady=(0, 4))
         self.cur_ip_var = tk.StringVar()
         ip_row = ttk.Frame(frame)
         ip_row.pack(fill='x', pady=6)
@@ -1056,7 +1235,7 @@ class App(tk.Tk):
         ip_entry.bind('<Return>', lambda e: self._save_server_ip())
         ip_entry.bind('<FocusOut>', self._commit_ip_input)
         ttk.Button(ip_row, text='저장·적용', command=self._save_server_ip).pack(side='left', padx=6)
-        ttk.Label(frame, text='IP 입력 후 Enter 또는 다른 항목 클릭 시 hosts에 반영됩니다.', foreground='gray').pack(anchor='w')
+        ttk.Label(frame, text='IP 입력 후 Enter 또는 다른 항목 클릭 시 hosts에 반영됩니다.', style='Muted.TLabel').pack(anchor='w')
         self.radmin_only = tk.BooleanVar(value=self.cfg.get('radmin_only', True))
         ttk.Checkbutton(frame, text="라드민 전용 모드 (게임 IP 고정 + 하마치 일시 중지)",
                         variable=self.radmin_only).pack(anchor="w")
@@ -1064,7 +1243,7 @@ class App(tk.Tk):
         ttk.Button(frame, text="게임 IP / 하마치 상태 복구", command=lambda: self._radmin_session_start(restore=True)).pack(anchor="w")
         self.radmin_status = tk.StringVar(value="라드민 전용 모드 대기")
         ttk.Label(frame, textvariable=self.radmin_status, wraplength=420).pack(anchor="w")
-        ttk.Label(frame, textvariable=self.cur_ip_var, foreground="gray").pack(anchor="w", pady=(0, 8))
+        ttk.Label(frame, textvariable=self.cur_ip_var, style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
 
         btns = ttk.Frame(frame)
         btns.pack(fill="x")
@@ -1073,7 +1252,7 @@ class App(tk.Tk):
         ttk.Label(frame,
                   text="※ 접속 주소는 아래 '싱글/멀티플레이' 버튼이 자동 설정합니다.\n"
                        "   rhakmugame.hangame.naver.com 줄만 바뀌고 나머지는 보존됩니다.",
-                  foreground="gray").pack(anchor="w", pady=(8, 0))
+                  style="Muted.TLabel").pack(anchor="w", pady=(8, 0))
 
         self._refresh_hosts_view()
 
@@ -1321,9 +1500,9 @@ class App(tk.Tk):
         frame = ttk.Frame(notebook, padding=12)
         notebook.add(frame, text="  전적  ")
 
-        ttk.Label(frame, text="대전 기록", font=("맑은 고딕", 12, "bold")).pack(anchor="w", pady=(0, 6))
+        ttk.Label(frame, text="대전 기록", style="Title.TLabel").pack(anchor="w", pady=(0, 6))
         ttk.Label(frame, text="서버가 게임 시작 시 자동 기록합니다 (서버를 켜둔 PC 기준).",
-                  foreground="gray").pack(anchor="w", pady=(0, 8))
+                  style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
 
         cols = ("time", "map", "players", "result")
         tree = ttk.Treeview(frame, columns=cols, show="headings", height=12)
@@ -1461,10 +1640,10 @@ class App(tk.Tk):
             cadence_current = False
         self.cadence_var = tk.BooleanVar(value=False)
         ttk.Label(lat_frame, text='99ms 옵션 중단: 멀티 속도 저하·동시 종료 보고',
-                        foreground='gray').pack(anchor='w', pady=(8, 0))
+                        style='Muted.TLabel').pack(anchor='w', pady=(8, 0))
         ttk.Button(lat_frame, text='기존 전송 간격으로 원복', command=self._on_cadence_apply).pack(anchor='w', pady=4)
         ttk.Label(lat_frame, text='게임 실행 전 자동 원복합니다. 양쪽 모두 최신 런처를 사용하세요.',
-                  foreground='gray').pack(anchor='w')
+                  style='Muted.TLabel').pack(anchor='w')
         radmin_ip = has_radmin_adapter()
         rad_frame = ttk.LabelFrame(frame, text="라드민 멀티 최적화 (동기화 실패 해결)", padding=12)
         rad_frame.pack(fill="x", pady=(0, 10))
@@ -1473,12 +1652,12 @@ class App(tk.Tk):
         else:
             rad_txt = "라드민(26.x) 어댑터가 감지되지 않았습니다. 라드민 VPN을 켜세요."
         self.rad_status_var = tk.StringVar(value=rad_txt)
-        ttk.Label(rad_frame, textvariable=self.rad_status_var, foreground="gray").pack(anchor="w", pady=(0, 6))
+        ttk.Label(rad_frame, textvariable=self.rad_status_var, style="Muted.TLabel").pack(anchor="w", pady=(0, 6))
         ttk.Button(rad_frame, text="지금 적용", command=self._on_fix_radmin, width=14).pack(anchor="w")
         ttk.Label(rad_frame,
                   text="라드민일 때 게임(DP8)이 잘못된 랜카드 IP로 접속해 동기화가 실패합니다.\n"
                        "라드민 어댑터를 최우선으로 지정해 해결합니다.  ※ 대전하는 두 PC 모두 적용.",
-                  foreground="gray").pack(anchor="w", pady=(6, 0))
+                  style="Muted.TLabel").pack(anchor="w", pady=(6, 0))
 
         # ── 창모드 ──
         mode_frame = ttk.LabelFrame(frame, text="디스플레이 모드", padding=12)
@@ -1489,7 +1668,7 @@ class App(tk.Tk):
         ttk.Button(mode_frame,text='내부 해상도 적용 / 해제',command=self._on_viewport_apply).pack(anchor='w',pady=4)
         ttk.Label(mode_frame,text='기본 켜짐 · 게임 실행 전 자동 적용 · 해제 시 원본 복원\n'
                   '메뉴·로비는 1024×768 유지. 장시간/멀티플레이 안정성은 추가 검증 중입니다.',
-                  foreground='gray',wraplength=510).pack(anchor='w',pady=4)
+                  style='Muted.TLabel',wraplength=510).pack(anchor='w',pady=4)
         try:
             settings = self.winmode.read_settings()
         except (OSError, UnicodeError) as exc:
@@ -1509,7 +1688,7 @@ class App(tk.Tk):
         ttk.Combobox(res_row, textvariable=self.res_var, values=RESOLUTIONS, width=14).pack(side="left", padx=(6, 0))
         ttk.Label(mode_frame, text='0x0 = 게임이 요청한 원본 크기. 위 값은 화면 확대 크기입니다.\n'
                   '실제 지도 시야는 위 내부 해상도 옵션으로 변경합니다. 1920×1080 내부 해상도는 미지원입니다.',
-                  foreground='gray', wraplength=510).pack(anchor='w', pady=4)
+                  style='Muted.TLabel', wraplength=510).pack(anchor='w', pady=4)
         render_row = ttk.Frame(mode_frame)
         render_row.pack(fill='x')
         ttk.Label(render_row, text='렌더러:').pack(side='left')
@@ -1537,7 +1716,7 @@ class App(tk.Tk):
         ttk.Button(frame, text="표시 지연 완화 (3·4턴)", command=self._on_response_profile).pack(anchor="w", pady=(8, 0))
         ttk.Label(frame, text="수직동기화 끄기 + 모니터 주사율 + Bilinear 필터. 화질/화면 찢어짐 차이가 있을 수 있습니다.\n"
                   "명령 턴·게임 속도·네트워크 프로토콜은 변경하지 않습니다. 효과는 PC에 따라 다릅니다.",
-                  foreground='gray').pack(anchor='w')
+                  style='Muted.TLabel').pack(anchor='w')
 
         if not self.winmode.available:
             ttk.Label(frame, text="※ ddraw.ini를 찾을 수 없습니다. 게임 경로를 확인하세요.",
