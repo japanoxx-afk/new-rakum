@@ -32,6 +32,7 @@ import launcher_update
 import map_editor_web
 import ui_theme
 import map_preview
+import rally_gold_patch
 from tkinter import ttk, messagebox
 
 # server.py는 런타임 exec로 실행되므로 PyInstaller가 의존성을 자동 감지 못 한다.
@@ -44,7 +45,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9037"
+APP_VERSION = "0.9039"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -571,9 +572,9 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"라크무 런처 v{APP_VERSION}")
-        self.geometry("760x860")
+        self.geometry("1180x980")
         self.resizable(True, True)
-        self.minsize(660, 720)
+        self.minsize(1000, 760)
         self.theme_name = ui_theme.apply(self)
 
         self.base_dir = get_base_dir()
@@ -627,6 +628,8 @@ class App(tk.Tk):
         self._build_map_preview_tab(notebook)
         self._build_map_editor_tab(notebook)
         self._build_capture_tab(notebook)
+        self._two_columns(self.connection_parent)
+        self._two_columns(self._settings_frame)
         self.protocol("WM_DELETE_WINDOW", self._close_launcher)
 
 
@@ -643,6 +646,46 @@ class App(tk.Tk):
         if not (path / 'Data').is_dir():
             raise ValueError('게임 설치 폴더(Data 폴더가 있는 곳)를 먼저 지정하세요.')
         return path
+
+    # ------------------------------------------------------------ layout helpers
+    def _autoscroll(self, canvas, scrollbar, frame, item):
+        """내용이 창보다 길 때만 스크롤바 표시."""
+        def update(_=None):
+            canvas.configure(scrollregion=canvas.bbox('all'))
+            need = frame.winfo_reqheight() > canvas.winfo_height() + 2
+            shown = bool(scrollbar.winfo_manager())
+            if need and not shown:
+                scrollbar.pack(side='right', fill='y', before=canvas)
+            elif not need and shown:
+                scrollbar.pack_forget()
+                canvas.yview_moveto(0)
+        frame.bind('<Configure>', update)
+        canvas.bind('<Configure>', lambda e: (canvas.itemconfigure(item, width=e.width), update()))
+        scrollbar.pack_forget()
+
+    def _two_columns(self, frame):
+        """frame 에 pack 된 구역들을 높이가 비슷한 두 열로 나눈다 (순서 유지)."""
+        slaves = frame.pack_slaves()
+        if len(slaves) < 2:
+            return
+        self.update_idletasks()
+        hs = [w.winfo_reqheight() + 12 for w in slaves]
+        cut = min(range(1, len(slaves)), key=lambda c: max(sum(hs[:c]), sum(hs[c:])))
+        cols = ttk.Frame(frame)
+        left, right = ttk.Frame(cols), ttk.Frame(cols)
+        left.pack(side='left', fill='both', expand=True, padx=(0, 10))
+        right.pack(side='left', fill='both', expand=True, padx=(10, 0))
+        infos = [w.pack_info() for w in slaves]
+        for w in slaves:
+            w.pack_forget()
+        cols.pack(fill='both', expand=True)
+        for i, (w, info) in enumerate(zip(slaves, infos)):
+            info.pop('in', None)
+            w.pack(in_=left if i < cut else right, **info)
+            if i < cut:
+                w.lift(left)
+            else:
+                w.lift(right)
 
     # ------------------------------------------------------------ map preview
     def _build_map_preview_tab(self, notebook):
@@ -680,18 +723,26 @@ class App(tk.Tk):
         top.pack(fill="x")
         ttk.Label(top, textvariable=self.preview_title, style="Title.TLabel").pack(side="left")
         ttk.Button(top, text="에디터에서 열기", command=self._on_open_preview_in_editor).pack(side="right")
-        self.preview_canvas = tk.Canvas(right, width=330, height=330, highlightthickness=1,
+        body = ttk.Frame(right)
+        body.pack(fill="both", expand=True, pady=(8, 0))
+        self.preview_canvas = tk.Canvas(body, width=560, height=560, highlightthickness=1,
                                         highlightbackground=ui_theme.BORDER, background="#000000")
-        self.preview_canvas.pack(anchor="w", pady=(8, 6))
-        legend = ttk.Frame(right)
-        legend.pack(anchor="w", pady=(0, 8))
-        for color, text in (("#ffd83c", "금광"), ("#46c8ff", "우물"), ("#e050e0", "언덕 입구·다리"), ("#e03c3c", "시작 위치")):
-            c = tk.Canvas(legend, width=12, height=12, highlightthickness=0, background=ui_theme.BG)
-            c.create_rectangle(1, 1, 11, 11, fill=color, outline="#000")
-            c.pack(side="left")
-            ttk.Label(legend, text=text, style="Muted.TLabel").pack(side="left", padx=(4, 12))
+        self.preview_canvas.pack(side="left", anchor="n")
+        side = ttk.Frame(body, padding=(14, 0, 0, 0))
+        side.pack(side="left", fill="both", expand=True)
         self.preview_info = tk.StringVar()
-        ttk.Label(right, textvariable=self.preview_info, justify="left", wraplength=420).pack(anchor="w")
+        ttk.Label(side, textvariable=self.preview_info, justify="left", wraplength=230).pack(anchor="w")
+        legend = ttk.Frame(side)
+        legend.pack(anchor="w", pady=(14, 0))
+        for color, text in (("#e03c3c", "시작 위치 (번호)"), ("#ffd83c", "금광 표시"), ("#46c8ff", "우물 표시")):
+            row = ttk.Frame(legend)
+            row.pack(anchor="w", pady=1)
+            c = tk.Canvas(row, width=14, height=14, highlightthickness=0, background=ui_theme.BG)
+            c.create_oval(2, 2, 12, 12, outline=color, width=2)
+            c.pack(side="left")
+            ttk.Label(row, text=text, style="Muted.TLabel").pack(side="left", padx=(6, 0))
+        ttk.Label(side, text="지형·언덕 입구·나무·금광·우물은 게임 그림으로 표시됩니다.",
+                  style="Muted.TLabel", wraplength=230, justify="left").pack(anchor="w", pady=(14, 0))
         notebook.bind("<<NotebookTabChanged>>", lambda e: self._on_tab_changed(notebook), add="+")
 
     def _on_tab_changed(self, notebook):
@@ -730,34 +781,31 @@ class App(tk.Tk):
             path = self._editor_game_dir() / "Data" / "Maps" / rel
             key = (str(path), path.stat().st_mtime)
             if key not in self._preview_cache:
+                self._preview_cache.clear()
                 info = map_preview.load(path)
-                self._preview_cache[key] = (info,) + map_preview.render_rows(info, get_resource_dir(), 330)
-            info, w, h, rows, s = self._preview_cache[key]
-        except (OSError, ValueError, KeyError, IndexError, struct.error) as e:
+                img, scale = map_preview.render_tk(info, get_resource_dir(), self, 560)
+                self._preview_cache[key] = (info, img, scale)
+            info, img, scale = self._preview_cache[key]
+        except (OSError, ValueError, KeyError, IndexError, struct.error, tk.TclError) as e:
             self.preview_title.set(os.path.basename(rel)[:-4])
             self.preview_info.set(f"미리보기를 만들 수 없습니다: {e}")
             self.preview_canvas.delete("all")
             return
         self.preview_title.set(os.path.basename(rel)[:-4])
-        self.preview_info.set(map_preview.summary(info))
-        img = tk.PhotoImage(width=w, height=h)
-        img.put(" ".join(rows))
+        self.preview_info.set(map_preview.summary(info).replace("  ·  ", "\n"))
         self._preview_img = img
         cv = self.preview_canvas
         cv.delete("all")
-        cv.configure(width=w, height=h)
+        cv.configure(width=img.width(), height=img.height())
         cv.create_image(0, 0, image=img, anchor="nw")
-        for oid, x, y in info.subs:
-            X, Y = map_preview.to_px(info, s, x + 8, y + 4)
-            cv.create_rectangle(X - 3, Y - 3, X + 3, Y + 3, fill="#e050e0", outline="#000")
         for color, pts in (("#46c8ff", info.wells), ("#ffd83c", info.gold)):
             for x, y, _ in pts:
-                X, Y = map_preview.to_px(info, s, x + 1, y + 1)
-                cv.create_rectangle(X - 3, Y - 3, X + 3, Y + 3, fill=color, outline="#000")
+                X, Y = map_preview.to_px_scaled(scale, x + 1, y + 1)
+                cv.create_oval(X - 6, Y - 6, X + 6, Y + 6, outline=color, width=2)
         for i, (x, y) in enumerate(info.players):
-            X, Y = map_preview.to_px(info, s, x, y)
+            X, Y = map_preview.to_px_scaled(scale, x, y)
             col = map_preview.PLAYER_COLORS[i % 8]
-            cv.create_rectangle(X - 7, Y - 7, X + 7, Y + 7, fill=col, outline="#000", width=2)
+            cv.create_oval(X - 9, Y - 9, X + 9, Y + 9, fill=col, outline="#000", width=2)
             cv.create_text(X, Y, text=str(i + 1), fill="#000", font=ui_theme.font(ui_theme.SIZE_CAPTION, "bold"))
 
     def _on_open_preview_in_editor(self):
@@ -987,6 +1035,7 @@ class App(tk.Tk):
                 game_data = minimap_patch.underlying(pathlib.Path(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE).read_bytes())
                 patch_status = {'peer_address': peer_address_patch.state(game_data), 'sync_port': sync_port_patch.state(game_data),
                                 'peer_reply_8814': game_data[0xeb420:0xeb420+len(peer_address_patch.CODE)] == peer_address_patch.CODE,
+                                'rally_gold': rally_gold_patch.state(game_data),
                                 'game_path': str(pathlib.Path(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE)),
                                 'radmin_mode_selected': self.radmin_only.get()}
             except (ValueError, OSError) as e:
@@ -1061,8 +1110,7 @@ class App(tk.Tk):
         canvas.configure(yscrollcommand=scroll.set)
         frame = ttk.Frame(canvas, padding=12)
         window = canvas.create_window((0, 0), window=frame, anchor='nw')
-        frame.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
-        canvas.bind('<Configure>', lambda e: canvas.itemconfigure(window, width=e.width))
+        self._autoscroll(canvas, scroll, frame, window)
         self.connection_parent = frame
 
         ttk.Label(frame, text="라크무 서버 관리", style="Title.TLabel").pack(
@@ -1384,9 +1432,12 @@ class App(tk.Tk):
         exe = path / PATCH_EXE
         minimap_patch.ensure_closed(exe)
         # Build and validate the complete result in memory; one atomic replacement.
-        minimap_patch.prepare(exe, self.cfg.get('viewport_1280', True))
+        minimap_patch.prepare(exe, self.cfg.get('viewport_1280', True), self.cfg.get('rally_gold', True))
         self.cfg['command_cadence_99ms'] = False
         verified = minimap_patch.underlying(exe.read_bytes())
+        if rally_gold_patch.state(verified) != bool(self.cfg.get('rally_gold', True)):
+            raise RuntimeError('집결지 금광 인식 패치 검증 실패. 게임을 실행하지 않았습니다.')
+        verified = rally_gold_patch.strip(verified)
         if not panel_guard_patch.state(verified) or not sync_port_patch.state(verified) or verified[0xeb420:0xeb420+len(peer_address_patch.CODE)] != peer_address_patch.CODE:
             raise RuntimeError('왕건 방식 주소 응답 패치 검증 실패. 게임을 실행하지 않았습니다.')
         cfg = {**self.cfg, 'game_dir': str(path)}
@@ -1599,14 +1650,11 @@ class App(tk.Tk):
         canvas.configure(yscrollcommand=scrollbar.set)
         frame = ttk.Frame(canvas, padding=16)
         item = canvas.create_window((0, 0), window=frame, anchor='nw')
-        frame.bind('<Configure>', lambda event: canvas.configure(scrollregion=canvas.bbox('all')))
-        canvas.bind('<Configure>', lambda event: canvas.itemconfigure(item, width=event.width))
+        self._autoscroll(canvas, scrollbar, frame, item)
+        self._settings_frame = frame
 
         # ── 게임 경로 ──
-        path_frame = ttk.LabelFrame(frame, text="게임 설치 경로", padding=10)
-        path_frame.pack(fill="x", pady=(0, 10))
-        ttk.Entry(path_frame, textvariable=self.gamedir_var, width=44).pack(side="left", padx=(0, 6))
-        ttk.Button(path_frame, text="찾기", command=self._on_browse_game, width=6).pack(side="left")
+        # 게임 경로는 창 상단 '게임 폴더'에서 지정 (중복 제거)
 
         # ── 반응속도 (레이턴시) ──
         lat_frame = ttk.LabelFrame(frame, text="멀티플레이 반응속도 (명령 지연)", padding=12)
@@ -1621,17 +1669,24 @@ class App(tk.Tk):
                    command=lambda: self._on_latency(3)).pack(side="left", padx=(0, 6))
         ttk.Button(lat_main, text="원본 · 4턴", command=lambda: self._on_latency(4)).pack(side="left")
         ttk.Label(lat_frame,
-                  text="라크무는 명령을 5프레임(약 165ms)마다 묶어 4묶음 뒤에 실행합니다(약 0.5~0.6초).\n"
-                       "전작 태조왕건은 같은 5프레임 묶음에 네트워크 게임만 3묶음을 씁니다 (WangGun.exe 0x45179B).\n"
-                       "3턴은 묶음 하나(약 165ms)만큼 빨라지고, 예전에 실패한 99ms 시험보다 여유 폭(약 0.5초)이 큽니다.\n"
-                       "함께하는 모든 PC가 같은 값이어야 합니다. 멈춤이 잦으면 4턴으로 되돌리세요.  ※ 게임을 끈 상태에서 적용.",
-                  style="Muted.TLabel", wraplength=640, justify="left").pack(anchor="w", pady=(8, 0))
+                  text="원본 4턴은 클릭 후 약 0.5~0.6초 뒤 실행. 태조왕건은 네트워크 게임에서 3턴을 씁니다.\n"
+                       "모든 PC가 같은 값이어야 하며, 멈춤이 잦으면 4턴으로 되돌리세요. (게임을 끈 상태에서 적용)",
+                  style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(8, 0))
         exp = ttk.Frame(lat_frame)
         exp.pack(fill="x", pady=(8, 0))
         ttk.Label(exp, text="실험값:", style="Muted.TLabel").pack(side="left", padx=(0, 6))
         ttk.Button(exp, text="2턴", command=lambda: self._on_latency(2), width=6).pack(side="left", padx=(0, 4))
         ttk.Button(exp, text="1턴", command=lambda: self._on_latency(1), width=6).pack(side="left")
         ttk.Label(exp, text="  싱글/LAN 전용. 인터넷 멀티는 멈춤이 늘 수 있습니다.", style="Muted.TLabel").pack(side="left")
+
+        play_frame = ttk.LabelFrame(frame, text="게임 플레이 보정", padding=12)
+        play_frame.pack(fill="x", pady=(0, 10))
+        self.rally_gold_var = tk.BooleanVar(value=self.cfg.get("rally_gold", True))
+        ttk.Checkbutton(play_frame, text="집결지·우클릭 금광/우물 인식 범위 확장 (2칸)",
+                        variable=self.rally_gold_var, command=self._on_rally_gold_toggle).pack(anchor="w")
+        ttk.Label(play_frame, text="금광 그림 가장자리에 집결지를 찍어도 일꾼이 채취합니다. 다음 게임 실행 시 적용.\n"
+                                   "게임 진행 규칙이 바뀌므로 멀티는 모든 PC가 같은 설정(같은 런처 버전)이어야 합니다.",
+                  style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(4, 0))
 
         # ── 라드민 네트워크 최적화 ──
         try:
@@ -1770,6 +1825,11 @@ class App(tk.Tk):
             self.cfg["game_dir"] = d
             save_config(self.base_dir, self.cfg)
             self._refresh_patch_status()
+
+    def _on_rally_gold_toggle(self):
+        self.cfg["rally_gold"] = bool(self.rally_gold_var.get())
+        save_config(self.base_dir, self.cfg)
+        messagebox.showinfo("게임 플레이 보정", "다음 게임 실행 때 적용됩니다.\n멀티는 함께하는 모든 PC가 같은 설정이어야 합니다.")
 
     def _on_latency(self, value):
         if value != 4 and self.cfg.get('command_cadence_99ms', self.cadence_var.get()):
