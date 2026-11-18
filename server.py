@@ -56,7 +56,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9008"
+SERVER_VERSION = "0.9009"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -301,6 +301,26 @@ class Room:
 LOOPBACK = ("127.0.0.1", "::1")
 
 
+_own_cache = (0.0, frozenset())
+
+
+def own_addresses() -> frozenset:
+    """IPv4 addresses of this (server) PC, cached for 30 s."""
+    global _own_cache
+    now = _time.monotonic()
+    if now - _own_cache[0] > 30:
+        try:
+            ips = frozenset(i[4][0] for i in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET))
+        except OSError:
+            ips = frozenset()
+        _own_cache = (now, ips)
+    return _own_cache[1]
+
+
+def on_server_pc(ip: str) -> bool:
+    return ip in LOOPBACK or ip.startswith("127.") or ip in own_addresses()
+
+
 def local_ip_toward(remote_ip: str) -> str:
     """Local IPv4 this PC uses to reach remote_ip (Radmin 26.x -> our 26.x, Hamachi 25.x -> our 25.x).
 
@@ -398,11 +418,13 @@ class ClientSession:
         connects via 127.0.0.1, so pick this PC's address on the same network as the viewer
         (Radmin player -> our Radmin IP, Hamachi player -> our Hamachi IP).
         """
-        if self.peer_ip not in LOOPBACK:
+        # A player on the server PC may connect via 127.0.0.1 OR via one of its own VPN
+        # addresses (e.g. Radmin 26.x while the opponent uses Hamachi 25.x).
+        if not on_server_pc(self.peer_ip):
             return self.peer_ip
-        if viewer is not None and viewer.peer_ip not in LOOPBACK:
+        if viewer is not None and not on_server_pc(viewer.peer_ip):
             return local_ip_toward(viewer.peer_ip)
-        return STATE.server_ip
+        return self.peer_ip if self.peer_ip not in LOOPBACK else STATE.server_ip
 
     def send(self, ptype: int, payload: bytes = b""):
         self.writer.write(pack_pkt(ptype, payload))

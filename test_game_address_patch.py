@@ -95,5 +95,22 @@ class RouteTests(unittest.TestCase):
             self.assertIsNone(gap.local_ip_toward('bad'))
 
 
+class ChooseTests(unittest.TestCase):
+    LOG = (b"2026-11-19 00:22:46 [INFO] Login OK: 26.157.67.215:10792 account='seo'\r\n"
+           b"2026-11-19 00:22:53 [INFO] Login OK: 25.14.45.110:2623 account='nyai'\r\n")
+
+    def test_host_follows_remote_players_network(self):
+        local = ['192.168.0.5', '26.157.67.215', '25.1.2.3']
+        path = os.path.join(tempfile.mkdtemp(), 'server-console.log')
+        open(path, 'wb').write(self.LOG)
+        with mock.patch.object(gap, '_local_ipv4s', return_value=local), \
+             mock.patch.object(gap.socket, 'socket', side_effect=OSError):
+            self.assertEqual(gap.recent_remote_player(path), '25.14.45.110')
+            self.assertEqual(gap.choose('26.157.67.215', True, path), '25.1.2.3')
+            self.assertEqual(gap.choose('26.157.67.215', True, path + 'x'), '26.157.67.215')
+            # Joining someone else's server: route toward that server
+            self.assertEqual(gap.choose('26.9.9.9', True, path), '26.157.67.215')
+
+
 if __name__ == '__main__':
     unittest.main()

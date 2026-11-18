@@ -26,6 +26,12 @@ class AddressForTests(unittest.TestCase):
             self.assertEqual(host.address_for(Sess('25.7.7.7')), '25.0.0.9')
             self.assertEqual(host.address_for(Sess('192.168.0.20')), '192.168.0.5')
             self.assertEqual(host.address_for(Sess('127.0.0.1')), server.STATE.server_ip)
+            # Server-PC player connected through its own Radmin address; Hamachi viewer
+            server._own_cache = (0.0, frozenset())
+            own = Sess('26.0.0.9')
+            self.assertEqual(own.address_for(Sess('25.7.7.7')), '25.0.0.9')
+            self.assertEqual(own.address_for(Sess('26.7.7.7')), '26.0.0.9')
+            self.assertEqual(own.address_for(Sess('26.0.0.9')), '26.0.0.9')
 
 
 if __name__ == '__main__':

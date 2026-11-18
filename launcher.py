@@ -47,7 +47,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9041"
+APP_VERSION = "0.9042"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1431,7 +1431,8 @@ class App(tk.Tk):
         """
         target = None
         if multiplayer:
-            target = game_address_patch.local_ip_toward(ip, prefer_radmin=self.radmin_only.get())
+            target = game_address_patch.choose(ip, self.radmin_only.get(),
+                                               os.path.join(self.base_dir, 'server-console.log'))
             if target and target.startswith('26.'):
                 ok, msg = fix_radmin_priority()
                 if msg and hasattr(self, 'info_var'):

@@ -25,8 +25,9 @@ jae done
 cmp ecx, eax
 je done
 mov ebx, [edi]
-cmp bl, 26
-jne done
+lea edx, [ebx-25]
+cmp dl, 1
+ja done
 imul eax, ecx, 0x11e0
 cmp byte ptr [eax+0x7f790e], 0x20
 jb done

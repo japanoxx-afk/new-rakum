@@ -82,8 +82,14 @@ class PeerAddressTests(unittest.TestCase):
             result = self.run_to_decision(machine, 0x449e0d, {0x449ce0, 0x449f34})
             self.assertEqual(result, 0x449ce0 if enabled else 0x449f34)
 
+    def test_hamachi_source_learns(self):
+        machine = self.machine(True, source='25.14.45.110')
+        self.assertEqual(self.run_to_decision(machine, 0x449db2, {0x44a2e7, 0x44a0ac, 0x44a2ed}), 0x44a2e7)
+        self.assertEqual(bytes(machine.mem_read(0x7f7934+0x11e0,4)), socket.inet_aton('25.14.45.110'))
+        self.assertEqual(self.run_to_decision(machine, 0x449e0d, {0x449ce0, 0x449f34}), 0x449ce0)
+
     def test_invalid_announcements_do_not_change_address(self):
-        cases = [dict(source='25.16.57.186'),dict(source='192.168.0.8'),dict(sender=8),dict(sender=255),dict(sender=0),dict(recipient=2),dict(session=1),dict(active=0),dict(size=9),dict(corrupt=True)]
+        cases = [dict(source='24.16.57.186'),dict(source='27.1.2.3'),dict(source='192.168.0.8'),dict(sender=8),dict(sender=255),dict(sender=0),dict(recipient=2),dict(session=1),dict(active=0),dict(size=9),dict(corrupt=True)]
         for case in cases:
             with self.subTest(case=case):
                 machine = self.machine(True, **case)
@@ -111,14 +117,17 @@ class PeerAddressTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             patch.transform(data, True)
 
-    def test_upgrade_from_9016(self):
-        data = bytearray(patch.transform(self.original, True))
-        data[0xeb420:0xeb520] = patch.OLD_CODE.ljust(256, b'\x90')
-        with tempfile.TemporaryDirectory() as root:
-            path = Path(root, 'Rhakmu.exe')
-            path.write_bytes(data)
-            patch.apply(path)
-            self.assertEqual(path.read_bytes(), patch.transform(self.original, True))
+    def test_upgrade_from_legacy(self):
+        for legacy in patch.LEGACY_CODES:
+            data = bytearray(patch.transform(self.original, True))
+            data[0xeb420:0xeb520] = legacy.ljust(256, b'\x90')
+            self.assertTrue(patch.state(bytes(data)))
+            self.assertEqual(patch.transform(bytes(data), True), patch.transform(self.original, True))
+            with tempfile.TemporaryDirectory() as root:
+                path = Path(root, 'Rhakmu.exe')
+                path.write_bytes(data)
+                patch.apply(path)
+                self.assertEqual(path.read_bytes(), patch.transform(self.original, True))
 
 if __name__ == '__main__':
     unittest.main()
