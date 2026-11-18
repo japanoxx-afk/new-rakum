@@ -185,8 +185,42 @@ def mod_installed(game_dir) -> bool:
     return all((d / f).is_file() for f in MOD_FILES)
 
 
-def install_mod(game_dir, resource_dir) -> list[str]:
-    """상하대칭 언덕 입구 모드 설치. 같은 이름의 기존 파일은 .bak 으로 보관."""
+def _archive_members(resource_dir) -> dict[str, bytes]:
+    with tarfile.open(mod_archive(resource_dir), 'r:xz') as tar:
+        return {Path(m.name).name: tar.extractfile(m).read()
+                for m in tar.getmembers() if m.isfile() and Path(m.name).name in MOD_FILES}
+
+
+def mod_up_to_date(game_dir, resource_dir) -> bool:
+    """설치된 모드 파일이 런처에 들어 있는 것과 같으면 True (크기 비교 후 내용 비교)."""
+    d = tile_dir(game_dir)
+    if not mod_installed(game_dir):
+        return False
+    try:
+        members = _archive_members(resource_dir)
+    except (OSError, tarfile.TarError):
+        return True  # 비교할 원본이 없으면 그대로 둔다
+    for name, data in members.items():
+        f = d / name
+        if f.stat().st_size != len(data) or f.read_bytes() != data:
+            return False
+    return True
+
+
+def ensure_mod(game_dir, resource_dir) -> str:
+    """없거나 오래된 모드면 설치/갱신. 결과: 'ok' | 'installed' | 'updated' | 'no-game'."""
+    if not (Path(game_dir) / 'Data').is_dir():
+        return 'no-game'
+    if mod_up_to_date(game_dir, resource_dir):
+        return 'ok'
+    had = mod_installed(game_dir)
+    install_mod(game_dir, resource_dir, backup=not had)
+    return 'updated' if had else 'installed'
+
+
+def install_mod(game_dir, resource_dir, backup: bool = True) -> list[str]:
+    """상하대칭 언덕 입구 모드 설치. backup 이면 같은 이름의 기존(모드 아닌) 파일을 .bak 으로 보관.
+    이미 설치된 모드를 갱신할 때는 backup=False (옛 모드가 .bak 으로 남지 않게)."""
     arc = mod_archive(resource_dir)
     if not arc.is_file():
         raise FileNotFoundError(f'모드 파일이 없습니다: {arc}')
@@ -200,7 +234,7 @@ def install_mod(game_dir, resource_dir) -> list[str]:
                 continue
             data = tar.extractfile(m).read()
             out = dest / name
-            if out.exists() and not (dest / (name + '.bak')).exists():
+            if backup and out.exists() and not (dest / (name + '.bak')).exists():
                 shutil.copy2(out, str(out) + '.bak')
             tmp = out.with_name(name + '.tmp')
             tmp.write_bytes(data)

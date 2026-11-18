@@ -798,7 +798,48 @@ class App(tk.Tk):
         ttk.Button(mrow, text="모드 제거", command=self._on_uninstall_tile_mod, width=12).pack(side="left", padx=6)
         self.tile_mod_var = tk.StringVar()
         ttk.Label(mod, textvariable=self.tile_mod_var).pack(anchor="w", pady=(6, 0))
+        self.tile_mod_auto_var = tk.BooleanVar(value=self.cfg.get("tile_mod_auto", True))
+        ttk.Checkbutton(mod, text="런처 실행 시 자동 설치·갱신 (기본)", variable=self.tile_mod_auto_var,
+                        command=self._on_tile_mod_auto_toggle).pack(anchor="w", pady=(8, 0))
         self._refresh_tile_mod_status()
+        self.after(400, self._auto_tile_mod)
+
+    def _on_tile_mod_auto_toggle(self):
+        self.cfg["tile_mod_auto"] = bool(self.tile_mod_auto_var.get())
+        save_config(self.base_dir, self.cfg)
+        if self.cfg["tile_mod_auto"]:
+            self._auto_tile_mod()
+
+    def _auto_tile_mod(self):
+        """런처 시작 시 상하대칭 언덕 입구 타일 모드를 기본 설치/갱신 (백그라운드)."""
+        if not self.cfg.get("tile_mod_auto", True):
+            return
+        try:
+            game = self._editor_game_dir()
+        except ValueError:
+            return
+        res = get_resource_dir()
+        box = {}
+
+        def work():
+            try:
+                r = map_editor_web.ensure_mod(game, res)
+                msg = {"installed": "상태: 설치됨 (런처가 자동 설치)", "updated": "상태: 설치됨 (최신 버전으로 갱신)",
+                       "ok": "상태: 설치됨 (최신)"}.get(r)
+            except PermissionError:
+                msg = "상태: 자동 설치 실패 — 권한 없음. 런처를 관리자 권한으로 한 번 실행하세요."
+            except (OSError, RuntimeError) as e:
+                msg = f"상태: 자동 설치 실패 — {e}"
+            box["msg"] = msg or ""
+
+        def poll():  # Tk 는 메인 스레드에서만 갱신
+            if "msg" not in box:
+                self.after(200, poll)
+            elif box["msg"]:
+                self.tile_mod_var.set(box["msg"])
+
+        threading.Thread(target=work, name="tile-mod-auto", daemon=True).start()
+        self.after(200, poll)
 
     def _refresh_tile_mod_status(self):
         try:
@@ -831,6 +872,9 @@ class App(tk.Tk):
         try:
             game = self._editor_game_dir()
             map_editor_web.install_mod(game, get_resource_dir())
+            self.cfg["tile_mod_auto"] = True
+            self.tile_mod_auto_var.set(True)
+            save_config(self.base_dir, self.cfg)
             messagebox.showinfo("타일 모드", "상하대칭 언덕 입구 타일 모드를 설치했습니다.")
         except PermissionError:
             messagebox.showerror("타일 모드", "권한이 없습니다. 런처를 관리자 권한으로 실행하세요.")
@@ -839,8 +883,12 @@ class App(tk.Tk):
         self._refresh_tile_mod_status()
 
     def _on_uninstall_tile_mod(self):
-        if not messagebox.askyesno("타일 모드", "타일 모드를 제거할까요?\n상하대칭 언덕 입구를 쓴 맵은 입구가 보이지 않게 됩니다."):
+        if not messagebox.askyesno("타일 모드", "타일 모드를 제거할까요?\n상하대칭 언덕 입구를 쓴 맵은 입구가 보이지 않게 됩니다.\n"
+                                              "다음 실행부터 자동 설치도 꺼집니다."):
             return
+        self.cfg["tile_mod_auto"] = False
+        self.tile_mod_auto_var.set(False)
+        save_config(self.base_dir, self.cfg)
         try:
             map_editor_web.uninstall_mod(self._editor_game_dir())
         except PermissionError:

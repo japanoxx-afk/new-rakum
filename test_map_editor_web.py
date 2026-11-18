@@ -88,5 +88,22 @@ class TileModTests(unittest.TestCase):
             self.assertFalse((game / 'Data' / 'tile').exists())
 
 
+class EnsureModTests(unittest.TestCase):
+    def test_ensure_installs_then_ok_then_updates(self):
+        with tempfile.TemporaryDirectory() as t:
+            game = Path(t)
+            self.assertEqual(mew.ensure_mod(game, HERE), 'no-game')
+            (game / 'Data').mkdir()
+            self.assertEqual(mew.ensure_mod(game, HERE), 'installed')
+            self.assertEqual(mew.ensure_mod(game, HERE), 'ok')
+            (game / 'Data' / 'tile' / 'S_Bridge.brg').write_bytes(b'stale')
+            self.assertFalse(mew.mod_up_to_date(game, HERE))
+            self.assertEqual(mew.ensure_mod(game, HERE), 'updated')
+            self.assertTrue(mew.mod_up_to_date(game, HERE))
+            self.assertFalse((game / 'Data' / 'tile' / 'S_Bridge.brg.bak').exists())
+            mew.uninstall_mod(game)
+            self.assertFalse((game / 'Data' / 'tile').exists())
+
+
 if __name__ == '__main__':
     unittest.main()
