@@ -31,6 +31,7 @@ from display_settings import WindowModeManager, RENDERERS
 import launcher_update
 import map_editor_web
 import ui_theme
+import map_preview
 from tkinter import ttk, messagebox
 
 # server.py는 런타임 exec로 실행되므로 PyInstaller가 의존성을 자동 감지 못 한다.
@@ -43,7 +44,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9036"
+APP_VERSION = "0.9037"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -623,6 +624,7 @@ class App(tk.Tk):
         self._build_client_tab(notebook)
         self._build_history_tab(notebook)
         self._build_settings_tab(notebook)
+        self._build_map_preview_tab(notebook)
         self._build_map_editor_tab(notebook)
         self._build_capture_tab(notebook)
         self.protocol("WM_DELETE_WINDOW", self._close_launcher)
@@ -641,6 +643,135 @@ class App(tk.Tk):
         if not (path / 'Data').is_dir():
             raise ValueError('게임 설치 폴더(Data 폴더가 있는 곳)를 먼저 지정하세요.')
         return path
+
+    # ------------------------------------------------------------ map preview
+    def _build_map_preview_tab(self, notebook):
+        self._preview_cache = {}
+        self._preview_img = None
+        page = ttk.Frame(notebook, padding=12)
+        notebook.add(page, text="  맵 미리보기  ")
+        self._preview_tab = page
+        left = ttk.Frame(page)
+        left.pack(side="left", fill="y")
+        self.map_filter_var = tk.StringVar()
+        ent = ttk.Entry(left, textvariable=self.map_filter_var, width=28)
+        ent.pack(fill="x")
+        ent.bind("<KeyRelease>", lambda e: self._refresh_map_list())
+        ttk.Label(left, text="맵 이름 검색", style="Muted.TLabel").pack(anchor="w", pady=(2, 6))
+        lf = ttk.Frame(left)
+        lf.pack(fill="both", expand=True)
+        self.map_tree = ttk.Treeview(lf, show="tree", selectmode="browse", height=12)
+        self.map_tree.column("#0", width=230)
+        sb = ttk.Scrollbar(lf, orient="vertical", command=self.map_tree.yview)
+        self.map_tree.configure(yscrollcommand=sb.set)
+        self.map_tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="left", fill="y")
+        self.map_tree.bind("<<TreeviewSelect>>", lambda e: self._on_map_selected())
+        self.map_tree.bind("<Double-1>", lambda e: self._on_open_preview_in_editor())
+        lb = ttk.Frame(left)
+        lb.pack(fill="x", pady=(8, 0))
+        ttk.Button(lb, text="새로고침", command=self._refresh_map_list).pack(side="left", fill="x", expand=True)
+        ttk.Button(lb, text="폴더 열기", command=self._on_open_maps_folder).pack(side="left", fill="x", expand=True, padx=(6, 0))
+
+        right = ttk.Frame(page, padding=(14, 0, 0, 0))
+        right.pack(side="left", fill="both", expand=True)
+        self.preview_title = tk.StringVar(value="맵을 선택하세요")
+        top = ttk.Frame(right)
+        top.pack(fill="x")
+        ttk.Label(top, textvariable=self.preview_title, style="Title.TLabel").pack(side="left")
+        ttk.Button(top, text="에디터에서 열기", command=self._on_open_preview_in_editor).pack(side="right")
+        self.preview_canvas = tk.Canvas(right, width=330, height=330, highlightthickness=1,
+                                        highlightbackground=ui_theme.BORDER, background="#000000")
+        self.preview_canvas.pack(anchor="w", pady=(8, 6))
+        legend = ttk.Frame(right)
+        legend.pack(anchor="w", pady=(0, 8))
+        for color, text in (("#ffd83c", "금광"), ("#46c8ff", "우물"), ("#e050e0", "언덕 입구·다리"), ("#e03c3c", "시작 위치")):
+            c = tk.Canvas(legend, width=12, height=12, highlightthickness=0, background=ui_theme.BG)
+            c.create_rectangle(1, 1, 11, 11, fill=color, outline="#000")
+            c.pack(side="left")
+            ttk.Label(legend, text=text, style="Muted.TLabel").pack(side="left", padx=(4, 12))
+        self.preview_info = tk.StringVar()
+        ttk.Label(right, textvariable=self.preview_info, justify="left", wraplength=420).pack(anchor="w")
+        notebook.bind("<<NotebookTabChanged>>", lambda e: self._on_tab_changed(notebook), add="+")
+
+    def _on_tab_changed(self, notebook):
+        if notebook.select() == str(self._preview_tab) and not self.map_tree.get_children():
+            self._refresh_map_list()
+
+    def _refresh_map_list(self):
+        try:
+            game = self._editor_game_dir()
+        except ValueError as e:
+            self.preview_title.set(str(e))
+            return
+        q = self.map_filter_var.get().strip().lower()
+        sel = self.map_tree.selection()
+        self.map_tree.delete(*self.map_tree.get_children())
+        folders = {}
+        for rel in map_preview.list_maps(game):
+            if q and q not in rel.lower():
+                continue
+            parent = ""
+            if os.sep in rel:
+                folder = rel.rsplit(os.sep, 1)[0]
+                if folder not in folders:
+                    folders[folder] = self.map_tree.insert("", "end", text=folder, open=True)
+                parent = folders[folder]
+            self.map_tree.insert(parent, "end", iid=rel, text=os.path.basename(rel)[:-4])
+        if sel and self.map_tree.exists(sel[0]):
+            self.map_tree.selection_set(sel[0])
+
+    def _on_map_selected(self):
+        sel = self.map_tree.selection()
+        if not sel or not sel[0].lower().endswith(".rkm"):
+            return
+        rel = sel[0]
+        try:
+            path = self._editor_game_dir() / "Data" / "Maps" / rel
+            key = (str(path), path.stat().st_mtime)
+            if key not in self._preview_cache:
+                info = map_preview.load(path)
+                self._preview_cache[key] = (info,) + map_preview.render_rows(info, get_resource_dir(), 330)
+            info, w, h, rows, s = self._preview_cache[key]
+        except (OSError, ValueError, KeyError, IndexError, struct.error) as e:
+            self.preview_title.set(os.path.basename(rel)[:-4])
+            self.preview_info.set(f"미리보기를 만들 수 없습니다: {e}")
+            self.preview_canvas.delete("all")
+            return
+        self.preview_title.set(os.path.basename(rel)[:-4])
+        self.preview_info.set(map_preview.summary(info))
+        img = tk.PhotoImage(width=w, height=h)
+        img.put(" ".join(rows))
+        self._preview_img = img
+        cv = self.preview_canvas
+        cv.delete("all")
+        cv.configure(width=w, height=h)
+        cv.create_image(0, 0, image=img, anchor="nw")
+        for oid, x, y in info.subs:
+            X, Y = map_preview.to_px(info, s, x + 8, y + 4)
+            cv.create_rectangle(X - 3, Y - 3, X + 3, Y + 3, fill="#e050e0", outline="#000")
+        for color, pts in (("#46c8ff", info.wells), ("#ffd83c", info.gold)):
+            for x, y, _ in pts:
+                X, Y = map_preview.to_px(info, s, x + 1, y + 1)
+                cv.create_rectangle(X - 3, Y - 3, X + 3, Y + 3, fill=color, outline="#000")
+        for i, (x, y) in enumerate(info.players):
+            X, Y = map_preview.to_px(info, s, x, y)
+            col = map_preview.PLAYER_COLORS[i % 8]
+            cv.create_rectangle(X - 7, Y - 7, X + 7, Y + 7, fill=col, outline="#000", width=2)
+            cv.create_text(X, Y, text=str(i + 1), fill="#000", font=ui_theme.font(ui_theme.SIZE_CAPTION, "bold"))
+
+    def _on_open_preview_in_editor(self):
+        sel = self.map_tree.selection()
+        if not sel or not sel[0].lower().endswith(".rkm"):
+            messagebox.showinfo("맵 미리보기", "열 맵을 먼저 선택하세요.")
+            return
+        try:
+            url = self.map_editor.start(self._editor_game_dir())
+            import urllib.parse, webbrowser
+            webbrowser.open(url + "?open=" + urllib.parse.quote(sel[0]))
+            self.map_editor_var.set(f"에디터 서버: 실행 중 ({url})")
+        except (OSError, ValueError) as e:
+            messagebox.showerror("맵 에디터", str(e))
 
     def _build_map_editor_tab(self, notebook):
         self.map_editor = map_editor_web.EditorServer(get_resource_dir())

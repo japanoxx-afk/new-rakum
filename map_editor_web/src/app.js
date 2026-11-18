@@ -176,7 +176,10 @@
     if (!/^https?:/.test(location.protocol)) return false;
     try { const r = await fetch('/api/ping', { cache: 'no-store' }); if (!r.ok) return false; } catch (e) { return false; }
     SRV.on = true; $('gMaps').style.display = ''; $('modeLbl').textContent = 'Data\\Maps 자동 연결됨'; $('modeLbl').style.color = 'var(--acc2)';
-    await srvList(); return true;
+    await srvList();
+    const want = new URLSearchParams(location.search).get('open');   // 런처 '맵 미리보기'에서 연 경우
+    if (want) { history.replaceState(null, '', location.pathname); await srvOpen(want); }
+    return true;
   }
   async function srvList() {
     try {
@@ -903,7 +906,7 @@
     await startBlank();
     const srv = await srvInit();
     if (!srv) { $('modeLbl').textContent = '맵 폴더 자동 연결 안 됨 (맵에디터 실행.bat로 열면 자동 연결)'; }
-    toast('새 평지 맵(136×136, 4인, 늪지)으로 시작했습니다. 크기·타일셋은 [새 맵]/[맵 속성]에서 바꿀 수 있습니다.', 4500);
+    if (!S.srvName) toast('새 평지 맵(136×136, 4인, 늪지)으로 시작했습니다. 크기·타일셋은 [새 맵]/[맵 속성]에서 바꿀 수 있습니다.', 4500);
   })();
   window.__editor = { S, R, loadMapBytes, attachDataFiles, render, paintAt, save };
 })();

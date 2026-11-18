@@ -8,6 +8,7 @@ on:
       - 'launcher.py'
       - 'map_editor_web.py'
       - 'ui_theme.py'
+      - 'map_preview.py'
       - 'release_notes.py'
       - 'map_editor_web/**'
       - 'RhakMuLauncher_v*.spec'
@@ -30,7 +31,7 @@ jobs:
       - name: Install PyInstaller
         run: python -m pip install --upgrade pip pyinstaller sv-ttk
       - name: Tests
-        run: python -m unittest test_map_editor_web -v
+        run: python -m unittest test_map_editor_web test_map_preview -v
       - name: Build
         shell: pwsh
         run: |
