@@ -56,7 +56,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9010"
+SERVER_VERSION = "0.9011"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -277,14 +277,15 @@ class Room:
     host_ip: str
     max_players: int
     members: List[str] = field(default_factory=list)
+    in_game: bool = False   # battle started; lobby packets must not reach its players
 
     @property
     def player_count(self) -> int:
         return 1 + len(self.members)
 
-    def build_list_entry(self) -> bytes:
-        """Build the room list payload for 0x0BFF."""
-        host_b = nul(self.host_ip)
+    def build_list_entry(self, host_ip: str = "") -> bytes:
+        """Build the room list payload for 0x0BFF (host_ip: address as seen by the viewer)."""
+        host_b = nul(host_ip or self.host_ip)
         room_data = (
             bytes([0x00, 0x88, 0x00, 0x88, 0x00, 0x00,
                    min(self.player_count, 8),
@@ -298,6 +299,56 @@ class Room:
             self.max_players,
         ) + struct.pack("<H", len(room_data))
         return header + nul(self.title) + room_data
+
+
+LOOPBACK = ("127.0.0.1", "::1")
+
+
+_own_cache = (0.0, frozenset())
+
+
+def own_addresses() -> frozenset:
+    """IPv4 addresses of this (server) PC, cached for 30 s."""
+    global _own_cache
+    now = _time.monotonic()
+    if now - _own_cache[0] > 30:
+        try:
+            ips = frozenset(i[4][0] for i in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET))
+        except OSError:
+            ips = frozenset()
+        _own_cache = (now, ips)
+    return _own_cache[1]
+
+
+def on_server_pc(ip: str) -> bool:
+    return ip in LOOPBACK or ip.startswith("127.") or ip in own_addresses()
+
+
+def local_ip_toward(remote_ip: str) -> str:
+    """Local IPv4 this PC uses to reach remote_ip (Radmin 26.x -> our 26.x, Hamachi 25.x -> our 25.x).
+
+    A connected UDP socket sends nothing; the OS just picks the route/interface.
+    """
+    if remote_ip and remote_ip not in LOOPBACK and not remote_ip.startswith("0."):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect((remote_ip, 11223))
+                ip = s.getsockname()[0]
+                if ip and not ip.startswith(("127.", "0.")):
+                    return ip
+        except OSError:
+            pass
+        # Fallback: a local address on the same VPN / network prefix
+        try:
+            local = [i[4][0] for i in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)]
+        except OSError:
+            local = []
+        for n in (2, 1):
+            pref = ".".join(remote_ip.split(".")[:n]) + "."
+            for ip in local:
+                if ip.startswith(pref):
+                    return ip
+    return STATE.server_ip
 
 
 class ServerState:
@@ -350,6 +401,7 @@ class ClientSession:
         self.peer_port: int = addr[1]
         self.account: str = ""
         self.room_title: str = ""
+        self.in_game = False
         self._buf = b""
 
     @property
@@ -359,9 +411,24 @@ class ClientSession:
     @property
     def advertised_ip(self) -> str:
         """IP other peers should use to reach this client (Radmin/VPN, not loopback)."""
-        if self.peer_ip in ("127.0.0.1", "::1"):
+        if self.peer_ip in LOOPBACK:
             return STATE.server_ip
         return self.peer_ip
+
+    def address_for(self, viewer: "ClientSession" = None) -> str:
+        """Address `viewer` must use to reach this client.
+
+        Remote clients: their observed connection address. The client on the server PC
+        connects via 127.0.0.1, so pick this PC's address on the same network as the viewer
+        (Radmin player -> our Radmin IP, Hamachi player -> our Hamachi IP).
+        """
+        # A player on the server PC may connect via 127.0.0.1 OR via one of its own VPN
+        # addresses (e.g. Radmin 26.x while the opponent uses Hamachi 25.x).
+        if not on_server_pc(self.peer_ip):
+            return self.peer_ip
+        if viewer is not None and not on_server_pc(viewer.peer_ip):
+            return local_ip_toward(viewer.peer_ip)
+        return self.peer_ip if self.peer_ip not in LOOPBACK else STATE.server_ip
 
     def send(self, ptype: int, payload: bytes = b""):
         self.writer.write(pack_pkt(ptype, payload))
@@ -473,7 +540,9 @@ class ClientSession:
         elif ptype == P_ROOM_LIST_REQ:
             self.send(P_ROOM_LIST_ACK, b"")
             for room in STATE.rooms:
-                self.send(P_ROOM_LIST_REQ, room.build_list_entry())
+                owner_conn = next((c for c in STATE.clients if c.account == room.owner), None)
+                self.send(P_ROOM_LIST_REQ, room.build_list_entry(
+                    owner_conn.address_for(self) if owner_conn else room.host_ip))
             self.send(P_ROOM_LIST_END, b"")
 
         elif ptype == P_CREATE_ROOM:
@@ -501,6 +570,7 @@ class ClientSession:
             log.info(f"  Post-game 0x24FF from {self.account!r}: code={code} score={score} raw={payload.hex()}")
             if self.account:
                 record_match_result(self.account, code, score)
+            self._end_game()
             self.send(P_POST_GAME_ACK, bytes([2, 0]))
 
         elif ptype == P_POST_GAME2:
@@ -536,6 +606,7 @@ class ClientSession:
         return 0
 
     async def _handle_create_room(self, payload: bytes):
+        self.in_game = False
         # payload structure (45 bytes for standard room):
         #   [0:2]  unknown
         #   [2:4]  mode
@@ -584,40 +655,39 @@ class ClientSession:
         if room:
             # Send owner
             owner_client = next((c for c in STATE.clients if c.account == room.owner), None)
-            owner_ip = owner_client.peer_ip if owner_client else STATE.server_ip
+            owner_ip = owner_client.address_for(self) if owner_client else room.host_ip
             self.send(P_USER_LIST_REQ, build_user_entry(room.owner, owner_ip, 1))
             # Send members
             for i, member in enumerate(room.members):
                 mc = next((c for c in STATE.clients if c.account == member), None)
-                member_ip = mc.peer_ip if mc else self.peer_ip
+                member_ip = mc.address_for(self) if mc else self.peer_ip
                 self.send(P_USER_LIST_REQ, build_user_entry(member, member_ip, 2 + i))
         elif self.account:
             self.send(P_USER_LIST_REQ, build_user_entry(self.account, self.peer_ip, 1))
         self.send(P_USER_LIST_END, b"")
 
     async def _broadcast_member_list(self, room: "Room", exclude: "ClientSession" = None):
-        """Send updated member list to all room members except the excluded client."""
-        pkts = [pack_pkt(P_USER_LIST_ACK, b"")]
-        # Owner entry (player index 1)
-        owner_conn = next((c for c in STATE.clients if c.account == room.owner), None)
-        owner_ip = owner_conn.peer_ip if owner_conn and owner_conn.peer_ip != "127.0.0.1" else room.host_ip
-        pkts.append(pack_pkt(P_USER_LIST_REQ, build_user_entry(room.owner, owner_ip, 1)))
-        # Member entries (player index 2, 3, ...)
-        for i, member in enumerate(room.members):
-            mc = next((c for c in STATE.clients if c.account == member), None)
-            if mc:
-                member_ip = mc.peer_ip if mc.peer_ip not in ("127.0.0.1", "::1") else STATE.server_ip
-            else:
-                member_ip = STATE.server_ip
-            pkts.append(pack_pkt(P_USER_LIST_REQ, build_user_entry(member, member_ip, 2 + i)))
-        pkts.append(pack_pkt(P_USER_LIST_END, b""))
+        """Send updated member list to all room members except the excluded client.
 
-        data = b"".join(pkts)
-        for c in STATE.clients_in_room(room.title):
-            if c is exclude:
+        Built per recipient: the host on the server PC is advertised with the address on
+        the recipient's own network (Radmin / Hamachi / LAN).
+        """
+        owner_conn = next((c for c in STATE.clients if c.account == room.owner), None)
+        for viewer in STATE.clients_in_room(room.title):
+            if viewer is exclude or viewer.in_game:
+                # In battle the client's lobby form is gone: a user list (0x?? START,
+                # handler 0x44dbe0 -> class_form::GetControl on NULL) crashes the game.
                 continue
-            c.writer.write(data)
-            await c.flush()
+            pkts = [pack_pkt(P_USER_LIST_ACK, b"")]
+            owner_ip = owner_conn.address_for(viewer) if owner_conn else room.host_ip
+            pkts.append(pack_pkt(P_USER_LIST_REQ, build_user_entry(room.owner, owner_ip, 1)))
+            for i, member in enumerate(room.members):
+                mc = next((c for c in STATE.clients if c.account == member), None)
+                member_ip = mc.address_for(viewer) if mc else STATE.server_ip
+                pkts.append(pack_pkt(P_USER_LIST_REQ, build_user_entry(member, member_ip, 2 + i)))
+            pkts.append(pack_pkt(P_USER_LIST_END, b""))
+            viewer.writer.write(b"".join(pkts))
+            await viewer.flush()
 
     async def _handle_join_room(self, payload: bytes):
         strings = read_cstrings(payload)
@@ -634,18 +704,25 @@ class ClientSession:
         if room is None:
             self.send(P_JOIN_ROOM, struct.pack("<I", 1))
             return
+        if room.in_game:
+            log.info(f"Room join refused (game in progress): {self.peer} account={self.account!r} room={room.title!r}")
+            self.send(P_JOIN_ROOM, struct.pack("<I", 1))
+            return
 
         self.room_title = room.title
+        self.in_game = False
         if self.account not in room.members and self.account != room.owner:
             room.members.append(self.account)
 
-        joiner_ip = self.peer_ip if self.peer_ip not in ("127.0.0.1", "::1") else STATE.server_ip
+        joiner_ip = self.peer_ip if self.peer_ip not in LOOPBACK else STATE.server_ip
+        owner_conn = next((c for c in STATE.clients if c.account == room.owner), None)
+        host_ip = owner_conn.address_for(self) if owner_conn else room.host_ip
 
         # Reply to joiner: [0x00][host_account\0][host_ip\0]
         # Client uses host_account to identify the P2P peer and host_ip to connect.
-        self.send(P_JOIN_ROOM, bytes([0]) + nul(room.owner) + nul(room.host_ip))
+        self.send(P_JOIN_ROOM, bytes([0]) + nul(room.owner) + nul(host_ip))
 
-        log.info(f"Room join: {self.peer} account={self.account!r} room={room.title!r} host={room.host_ip} joiner_ip={joiner_ip}")
+        log.info(f"Room join: {self.peer} account={self.account!r} room={room.title!r} host={host_ip} joiner_ip={joiner_ip}")
 
         # Broadcast updated member list to ALL room members (owner + joiner).
         # The owner needs to see the joiner in the lobby player list before game start.
@@ -653,7 +730,14 @@ class ClientSession:
         # directive for itself and immediately leaves the room.
         await self._broadcast_member_list(room, exclude=None)
 
+    def _end_game(self):
+        self.in_game = False
+        room = STATE.find_room_by_title(self.room_title) if self.room_title else None
+        if room and not any(c.in_game for c in STATE.clients_in_room(room.title)):
+            room.in_game = False
+
     def _handle_leave_room(self):
+        self._end_game()
         if self.room_title:
             # Remove as member
             room = STATE.find_room_by_title(self.room_title)
@@ -688,7 +772,10 @@ class ClientSession:
         # The client's lobby dispatcher routes the battle-start handler
         # (ReplyBattleReqReply) from type 0x1EFF, NOT 0x0FFF.
         start_pkt = pack_pkt(P_BATTLE_START, payload if payload else bytes([0x02, 0x00, 0x00]))
+        if room:
+            room.in_game = True
         for c in all_in_room:
+            c.in_game = True
             c.writer.write(start_pkt)
             await c.flush()
             log.info(f"  Sent 0x1EFF battle-start to {c.account!r}")
