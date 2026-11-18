@@ -56,7 +56,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9007"
+SERVER_VERSION = "0.9008"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -298,6 +298,36 @@ class Room:
         return header + nul(self.title) + room_data
 
 
+LOOPBACK = ("127.0.0.1", "::1")
+
+
+def local_ip_toward(remote_ip: str) -> str:
+    """Local IPv4 this PC uses to reach remote_ip (Radmin 26.x -> our 26.x, Hamachi 25.x -> our 25.x).
+
+    A connected UDP socket sends nothing; the OS just picks the route/interface.
+    """
+    if remote_ip and remote_ip not in LOOPBACK and not remote_ip.startswith("0."):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect((remote_ip, 11223))
+                ip = s.getsockname()[0]
+                if ip and not ip.startswith(("127.", "0.")):
+                    return ip
+        except OSError:
+            pass
+        # Fallback: a local address on the same VPN / network prefix
+        try:
+            local = [i[4][0] for i in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)]
+        except OSError:
+            local = []
+        for n in (2, 1):
+            pref = ".".join(remote_ip.split(".")[:n]) + "."
+            for ip in local:
+                if ip.startswith(pref):
+                    return ip
+    return STATE.server_ip
+
+
 class ServerState:
     def __init__(self):
         self.rooms: List[Room] = []
@@ -357,9 +387,22 @@ class ClientSession:
     @property
     def advertised_ip(self) -> str:
         """IP other peers should use to reach this client (Radmin/VPN, not loopback)."""
-        if self.peer_ip in ("127.0.0.1", "::1"):
+        if self.peer_ip in LOOPBACK:
             return STATE.server_ip
         return self.peer_ip
+
+    def address_for(self, viewer: "ClientSession" = None) -> str:
+        """Address `viewer` must use to reach this client.
+
+        Remote clients: their observed connection address. The client on the server PC
+        connects via 127.0.0.1, so pick this PC's address on the same network as the viewer
+        (Radmin player -> our Radmin IP, Hamachi player -> our Hamachi IP).
+        """
+        if self.peer_ip not in LOOPBACK:
+            return self.peer_ip
+        if viewer is not None and viewer.peer_ip not in LOOPBACK:
+            return local_ip_toward(viewer.peer_ip)
+        return STATE.server_ip
 
     def send(self, ptype: int, payload: bytes = b""):
         self.writer.write(pack_pkt(ptype, payload))
@@ -582,40 +625,37 @@ class ClientSession:
         if room:
             # Send owner
             owner_client = next((c for c in STATE.clients if c.account == room.owner), None)
-            owner_ip = owner_client.peer_ip if owner_client else STATE.server_ip
+            owner_ip = owner_client.address_for(self) if owner_client else room.host_ip
             self.send(P_USER_LIST_REQ, build_user_entry(room.owner, owner_ip, 1))
             # Send members
             for i, member in enumerate(room.members):
                 mc = next((c for c in STATE.clients if c.account == member), None)
-                member_ip = mc.peer_ip if mc else self.peer_ip
+                member_ip = mc.address_for(self) if mc else self.peer_ip
                 self.send(P_USER_LIST_REQ, build_user_entry(member, member_ip, 2 + i))
         elif self.account:
             self.send(P_USER_LIST_REQ, build_user_entry(self.account, self.peer_ip, 1))
         self.send(P_USER_LIST_END, b"")
 
     async def _broadcast_member_list(self, room: "Room", exclude: "ClientSession" = None):
-        """Send updated member list to all room members except the excluded client."""
-        pkts = [pack_pkt(P_USER_LIST_ACK, b"")]
-        # Owner entry (player index 1)
-        owner_conn = next((c for c in STATE.clients if c.account == room.owner), None)
-        owner_ip = owner_conn.peer_ip if owner_conn and owner_conn.peer_ip != "127.0.0.1" else room.host_ip
-        pkts.append(pack_pkt(P_USER_LIST_REQ, build_user_entry(room.owner, owner_ip, 1)))
-        # Member entries (player index 2, 3, ...)
-        for i, member in enumerate(room.members):
-            mc = next((c for c in STATE.clients if c.account == member), None)
-            if mc:
-                member_ip = mc.peer_ip if mc.peer_ip not in ("127.0.0.1", "::1") else STATE.server_ip
-            else:
-                member_ip = STATE.server_ip
-            pkts.append(pack_pkt(P_USER_LIST_REQ, build_user_entry(member, member_ip, 2 + i)))
-        pkts.append(pack_pkt(P_USER_LIST_END, b""))
+        """Send updated member list to all room members except the excluded client.
 
-        data = b"".join(pkts)
-        for c in STATE.clients_in_room(room.title):
-            if c is exclude:
+        Built per recipient: the host on the server PC is advertised with the address on
+        the recipient's own network (Radmin / Hamachi / LAN).
+        """
+        owner_conn = next((c for c in STATE.clients if c.account == room.owner), None)
+        for viewer in STATE.clients_in_room(room.title):
+            if viewer is exclude:
                 continue
-            c.writer.write(data)
-            await c.flush()
+            pkts = [pack_pkt(P_USER_LIST_ACK, b"")]
+            owner_ip = owner_conn.address_for(viewer) if owner_conn else room.host_ip
+            pkts.append(pack_pkt(P_USER_LIST_REQ, build_user_entry(room.owner, owner_ip, 1)))
+            for i, member in enumerate(room.members):
+                mc = next((c for c in STATE.clients if c.account == member), None)
+                member_ip = mc.address_for(viewer) if mc else STATE.server_ip
+                pkts.append(pack_pkt(P_USER_LIST_REQ, build_user_entry(member, member_ip, 2 + i)))
+            pkts.append(pack_pkt(P_USER_LIST_END, b""))
+            viewer.writer.write(b"".join(pkts))
+            await viewer.flush()
 
     async def _handle_join_room(self, payload: bytes):
         strings = read_cstrings(payload)
@@ -637,13 +677,15 @@ class ClientSession:
         if self.account not in room.members and self.account != room.owner:
             room.members.append(self.account)
 
-        joiner_ip = self.peer_ip if self.peer_ip not in ("127.0.0.1", "::1") else STATE.server_ip
+        joiner_ip = self.peer_ip if self.peer_ip not in LOOPBACK else STATE.server_ip
+        owner_conn = next((c for c in STATE.clients if c.account == room.owner), None)
+        host_ip = owner_conn.address_for(self) if owner_conn else room.host_ip
 
         # Reply to joiner: [0x00][host_account\0][host_ip\0]
         # Client uses host_account to identify the P2P peer and host_ip to connect.
-        self.send(P_JOIN_ROOM, bytes([0]) + nul(room.owner) + nul(room.host_ip))
+        self.send(P_JOIN_ROOM, bytes([0]) + nul(room.owner) + nul(host_ip))
 
-        log.info(f"Room join: {self.peer} account={self.account!r} room={room.title!r} host={room.host_ip} joiner_ip={joiner_ip}")
+        log.info(f"Room join: {self.peer} account={self.account!r} room={room.title!r} host={host_ip} joiner_ip={joiner_ip}")
 
         # Broadcast updated member list to ALL room members (owner + joiner).
         # The owner needs to see the joiner in the lobby player list before game start.

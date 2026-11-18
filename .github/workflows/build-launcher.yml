@@ -35,7 +35,7 @@ jobs:
       - name: Install PyInstaller
         run: python -m pip install --upgrade pip pyinstaller sv-ttk pefile unicorn
       - name: Tests
-        run: python -m unittest test_map_editor_web test_map_preview test_rally_gold_patch test_highres_ready -v
+        run: python -m unittest test_map_editor_web test_map_preview test_rally_gold_patch test_highres_ready test_game_address_patch test_server_address -v
       - name: Build
         shell: pwsh
         run: |
