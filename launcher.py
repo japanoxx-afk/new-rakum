@@ -34,6 +34,7 @@ import map_editor_web
 import ui_theme
 import map_preview
 import rally_gold_patch
+import game_address_patch
 from tkinter import ttk, messagebox
 
 # server.py는 런타임 exec로 실행되므로 PyInstaller가 의존성을 자동 감지 못 한다.
@@ -46,7 +47,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9040"
+APP_VERSION = "0.9041"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1416,10 +1417,32 @@ class App(tk.Tk):
             return
         if hasattr(self, "cur_ip_var"):
             self._refresh_hosts_view()
+        self._pin_game_address(game_dir, ip, multiplayer)
         try:
             subprocess.Popen([exe], cwd=game_dir)
         except OSError as e:
             messagebox.showerror("실행 오류", str(e))
+
+    def _pin_game_address(self, game_dir, ip, multiplayer):
+        """Game's own IP = the local address that routes to the server (Radmin 26.x fix).
+
+        TG_Net picks the first host address; on Radmin that is the LAN, so peers drop
+        each other's game packets and the match ends at once as a draw.
+        """
+        target = None
+        if multiplayer:
+            target = game_address_patch.local_ip_toward(ip, prefer_radmin=self.radmin_only.get())
+            if target and target.startswith('26.'):
+                ok, msg = fix_radmin_priority()
+                if msg and hasattr(self, 'info_var'):
+                    self.info_var.set(msg)
+        try:
+            game_address_patch.apply(game_dir, target)
+            note = f'게임 통신 주소: {target}' if target else ''
+        except (OSError, ValueError) as e:
+            note = f'게임 통신 주소 고정 실패: {e}'
+        if note and hasattr(self, 'info_var'):
+            self.info_var.set(note)
 
     def _prepare_game_launch(self):
         path = pathlib.Path(self.gamedir_var.get().strip().strip('"')).expanduser()
