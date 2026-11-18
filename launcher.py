@@ -47,7 +47,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9042"
+APP_VERSION = "0.9043"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -588,6 +588,8 @@ class App(tk.Tk):
         game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
         self.winmode = WindowModeManager(game_dir)
         self.latency = LatencyPatch(game_dir)
+        self._rally_override = None
+        self._write_game_rules()
         self.gamedir_var = tk.StringVar(value=game_dir)
 
         # ── 헤더 ──
@@ -1371,8 +1373,15 @@ class App(tk.Tk):
 
     def _set_host_and_launch(self, ip, multiplayer=False):
         """rhakmugame 호스트를 ip로 설정(다른 줄 보존) 후 게임 실행."""
+        rules_note = ''
         try:
+            if multiplayer:
+                rules_note = self._sync_rules_from_server(ip)
+            else:
+                self._rally_override = None
             self._prepare_game_launch()
+            if rules_note:
+                self.info_var.set(rules_note)
         except Exception as e:
             messagebox.showerror('게임 실행 중단', str(e))
             return
@@ -1424,26 +1433,64 @@ class App(tk.Tk):
             messagebox.showerror("실행 오류", str(e))
 
     def _pin_game_address(self, game_dir, ip, multiplayer):
-        """Game's own IP = the local address that routes to the server (Radmin 26.x fix).
+        """Keep TG_Net.dll original (v0.9031 behaviour, verified on Radmin and Hamachi).
 
-        TG_Net picks the first host address; on Radmin that is the LAN, so peers drop
-        each other's game packets and the match ends at once as a draw.
+        v0.9041/0.9042 pinned the game's own address; that is undone here.
         """
-        target = None
-        if multiplayer:
-            target = game_address_patch.choose(ip, self.radmin_only.get(),
-                                               os.path.join(self.base_dir, 'server-console.log'))
-            if target and target.startswith('26.'):
-                ok, msg = fix_radmin_priority()
-                if msg and hasattr(self, 'info_var'):
-                    self.info_var.set(msg)
         try:
-            game_address_patch.apply(game_dir, target)
-            note = f'게임 통신 주소: {target}' if target else ''
-        except (OSError, ValueError) as e:
-            note = f'게임 통신 주소 고정 실패: {e}'
-        if note and hasattr(self, 'info_var'):
-            self.info_var.set(note)
+            game_address_patch.apply(game_dir, None)
+        except (OSError, ValueError):
+            pass
+
+    # ── 대전 규칙 동기화 ─────────────────────────────────────
+    # 명령 지연 턴·집결지 금광 인식이 PC마다 다르면 게임이 어긋나 곧 무승부로 끝난다.
+    # 서버 PC 런처가 game_rules.json 을 쓰고 서버가 /rules 로 알려주면, 접속 PC가 똑같이 맞춘다.
+    def _write_game_rules(self):
+        rules = {'launcher_version': APP_VERSION, 'turns': self.latency.current(),
+                 'rally_gold': bool(self._rally_setting())}
+        try:
+            with open(os.path.join(self.base_dir, 'game_rules.json'), 'w', encoding='utf-8') as f:
+                json.dump(rules, f, ensure_ascii=False)
+        except OSError:
+            pass
+
+    def _rally_setting(self):
+        override = getattr(self, '_rally_override', None)
+        return self.cfg.get('rally_gold', True) if override is None else override
+
+    def _sync_rules_from_server(self, ip):
+        """Client PC: take turns / rally setting from the server PC. Returns a status line."""
+        self._rally_override = None
+        try:
+            own = ipaddress.IPv4Address(ip).is_loopback or ip in game_address_patch._local_ipv4s()
+        except ValueError:
+            own = False
+        if own:
+            return ''
+        try:
+            import urllib.request
+            with urllib.request.urlopen(f'http://{ip}:11225/rules', timeout=2.5) as r:
+                rules = json.loads(r.read().decode('utf-8'))
+        except Exception:
+            return '서버 PC의 대전 규칙을 받지 못했습니다. 양쪽 턴·금광 인식 설정을 같게 맞추세요.'
+        if 'turns' not in rules:
+            return '서버 PC 런처가 구버전입니다. 양쪽 모두 같은 런처 버전을 사용하세요.'
+        notes = []
+        turns = rules.get('turns')
+        if isinstance(turns, int) and 1 <= turns <= 4 and self.latency.current() != turns:
+            ok, msg = self.latency.apply(turns)
+            if not ok:
+                raise RuntimeError('서버 PC와 명령 지연 턴을 맞추지 못했습니다.\n' + msg)
+            notes.append(f'{turns}턴')
+        if 'rally_gold' in rules:
+            self._rally_override = bool(rules['rally_gold'])
+            if self._rally_override != bool(self.cfg.get('rally_gold', True)):
+                notes.append('금광 인식 ' + ('켬' if self._rally_override else '끔'))
+        if hasattr(self, 'lat_status_var') and self.latency.current() is not None:
+            self.lat_status_var.set(f"현재 지연: {self.latency.current()}턴")
+        ver = rules.get('launcher_version')
+        warn = f' (서버 PC 런처 v{ver}, 이 PC v{APP_VERSION})' if ver and ver != APP_VERSION else ''
+        return ('서버 PC 설정에 맞춤: ' + ', '.join(notes) if notes else '서버 PC와 대전 규칙 일치') + warn
 
     def _prepare_game_launch(self):
         path = pathlib.Path(self.gamedir_var.get().strip().strip('"')).expanduser()
@@ -1458,10 +1505,10 @@ class App(tk.Tk):
         minimap_patch.ensure_closed(exe)
         highres, why = self._highres_ready(path) if self.cfg.get('viewport_1280', True) else (False, '')
         # Build and validate the complete result in memory; one atomic replacement.
-        minimap_patch.prepare(exe, highres, self.cfg.get('rally_gold', True))
+        minimap_patch.prepare(exe, highres, self._rally_setting())
         self.cfg['command_cadence_99ms'] = False
         verified = minimap_patch.underlying(exe.read_bytes())
-        if rally_gold_patch.state(verified) != bool(self.cfg.get('rally_gold', True)):
+        if rally_gold_patch.state(verified) != bool(self._rally_setting()):
             raise RuntimeError('집결지 금광 인식 패치 검증 실패. 게임을 실행하지 않았습니다.')
         verified = rally_gold_patch.strip(verified)
         if not panel_guard_patch.state(verified) or not sync_port_patch.state(verified) or verified[0xeb420:0xeb420+len(peer_address_patch.CODE)] != peer_address_patch.CODE:
@@ -1472,6 +1519,7 @@ class App(tk.Tk):
         self.gamedir_var.set(str(path))
         self.winmode.game_dir = str(path)
         self.latency = LatencyPatch(str(path))
+        self._write_game_rules()
         mode='1280×720' if highres else '원본'
         self.info_var.set(f'지형·금·물 미리보기 / 내부 해상도 {mode} — 게임 실행')
         if why:
@@ -1717,12 +1765,12 @@ class App(tk.Tk):
         ttk.Label(lat_frame, textvariable=self.lat_status_var, style="Title.TLabel").pack(anchor="w", pady=(0, 8))
         lat_main = ttk.Frame(lat_frame)
         lat_main.pack(fill="x")
-        ttk.Button(lat_main, text="태조왕건 방식 · 3턴 (약 0.17초 빠름)", style="Accent.TButton",
-                   command=lambda: self._on_latency(3)).pack(side="left", padx=(0, 6))
-        ttk.Button(lat_main, text="원본 · 4턴", command=lambda: self._on_latency(4)).pack(side="left")
+        ttk.Button(lat_main, text="원본 · 4턴 (권장)", style="Accent.TButton",
+                   command=lambda: self._on_latency(4)).pack(side="left", padx=(0, 6))
+        ttk.Button(lat_main, text="태조왕건 방식 · 3턴", command=lambda: self._on_latency(3)).pack(side="left")
         ttk.Label(lat_frame,
                   text="원본 4턴은 클릭 후 약 0.5~0.6초 뒤 실행. 태조왕건은 네트워크 게임에서 3턴을 씁니다.\n"
-                       "모든 PC가 같은 값이어야 하며, 멈춤이 잦으면 4턴으로 되돌리세요. (게임을 끈 상태에서 적용)",
+                       "멀티에서는 접속 PC가 서버 PC의 턴·금광 인식 설정을 자동으로 따릅니다. (게임을 끈 상태에서 적용)",
                   style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(8, 0))
         exp = ttk.Frame(lat_frame)
         exp.pack(fill="x", pady=(8, 0))
