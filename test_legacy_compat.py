@@ -27,6 +27,9 @@ class CompatTests(unittest.TestCase):
         mod[0xeb420:0xeb520] = legacy_compat.PEER_9042.ljust(256, b'\x90')
         self.assertEqual(legacy_compat.to_legacy(bytes(mod)), out)
         self.assertEqual(legacy_compat.to_legacy(out), out)
+        self.assertEqual(out[0xd7abe], 4)
+        three = bytearray(data); three[0xd7abe] = 3
+        self.assertEqual(legacy_compat.to_legacy(bytes(three)), out)
 
     def test_tgnet_pin_removed_unless_session_owns_it(self):
         d = tempfile.mkdtemp()

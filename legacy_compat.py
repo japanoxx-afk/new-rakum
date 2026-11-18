@@ -20,6 +20,7 @@ import game_address_patch
 
 SOURCE_SIZE = 1069098
 PEER_AT = 0xEB420
+TURN_AT = 0xD7ABE   # Game_Multi command delay (turns)
 # v0.9016 helper (what v0.9031 writes) and the v0.9042 helper (25.x + 26.x)
 PEER_9016 = bytes.fromhex('9c608b75fc8b7e18837f080c0f85810000008b570c66813a1388757766837a020a75708b42063b05c412b40075650fb605cc12b4003a420575590fb64a0483f908735039c1744c8b1f80fb1a754569c1e011000080b80e797f0020723683b834797f0000742d899834797f0089cf69c984020000895c0e5466c7440e50020066c7440e522bd757681488000089f1e82dd9f5ff619de92deef5ff')
 PEER_9042 = bytes.fromhex('9c608b75fc8b7e18837f080c0f85840000008b570c66813a1388757a66837a020a75738b42063b05c412b40075680fb605cc12b4003a4205755c0fb64a0483f908735339c1744f8b1f8d53e780fa01774569c1e011000080b80e797f0020723683b834797f0000742d899834797f0089cf69c984020000895c0e5466c7440e50020066c7440e522bd757681488000089f1e82ad9f5ff619de92aeef5ff')
@@ -55,6 +56,10 @@ def to_legacy(data):
     out = bytearray(rally_gold_patch.strip(underlying(data)))
     if bytes(out[PEER_AT:PEER_AT + 256]) == PEER_9042.ljust(256, b'\x90'):
         out[PEER_AT:PEER_AT + 256] = PEER_9016.ljust(256, b'\x90')
+    # v0.9035+ default "3턴" preset; v0.9031 only launches with the 4-turn setting.
+    if out[TURN_AT - 4:TURN_AT] == b'\x66\xc7\x40\x48' and out[TURN_AT + 1:TURN_AT + 3] == b'\x00\xe8' \
+            and out[TURN_AT] in (1, 2, 3):
+        out[TURN_AT] = 4
     return bytes(out)
 
 
