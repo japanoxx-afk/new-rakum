@@ -1,4 +1,9 @@
-NOTES = '''라크무 런처 — v0.9031.2 (v0.9031 호환판)
+NOTES = '''라크무 런처 — v0.9031.3 (v0.9031 호환판)
+
+• 서버 시작 시 'No module named http.server' 오류로 서버가 꺼지던 문제 수정
+  (서버 코드가 쓰는 모듈을 런처 exe 에 포함).
+
+v0.9031.2
 
 • 'This experiment requires the existing four-turn setting' 오류 수정.
   최신 런처의 '3턴' 설정이 남아 있으면 v0.9031 기본값인 4턴으로 되돌린 뒤 실행.

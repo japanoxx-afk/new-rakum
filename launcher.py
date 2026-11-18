@@ -40,8 +40,9 @@ import struct         # noqa: F401
 import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
+import http.server    # noqa: F401  (server.py 전적 HTTP; exec 로 실행되어 자동 수집 안 됨)
 
-APP_VERSION = "0.9031.2"
+APP_VERSION = "0.9031.3"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
