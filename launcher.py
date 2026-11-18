@@ -6,6 +6,7 @@
 """
 
 import ctypes
+import hashlib
 import json
 import os
 import re
@@ -45,7 +46,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9039"
+APP_VERSION = "0.9040"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1431,8 +1432,9 @@ class App(tk.Tk):
             raise ValueError('해당 경로에 Launcher.exe와 Rhakmu.exe가 있어야 합니다.')
         exe = path / PATCH_EXE
         minimap_patch.ensure_closed(exe)
+        highres, why = self._highres_ready(path) if self.cfg.get('viewport_1280', True) else (False, '')
         # Build and validate the complete result in memory; one atomic replacement.
-        minimap_patch.prepare(exe, self.cfg.get('viewport_1280', True), self.cfg.get('rally_gold', True))
+        minimap_patch.prepare(exe, highres, self.cfg.get('rally_gold', True))
         self.cfg['command_cadence_99ms'] = False
         verified = minimap_patch.underlying(exe.read_bytes())
         if rally_gold_patch.state(verified) != bool(self.cfg.get('rally_gold', True)):
@@ -1446,8 +1448,34 @@ class App(tk.Tk):
         self.gamedir_var.set(str(path))
         self.winmode.game_dir = str(path)
         self.latency = LatencyPatch(str(path))
-        mode='1280×720' if self.cfg.get('viewport_1280',True) else '원본'
+        mode='1280×720' if highres else '원본'
         self.info_var.set(f'지형·금·물 미리보기 / 내부 해상도 {mode} — 게임 실행')
+        if why:
+            messagebox.showwarning('내부 해상도', why + '\n\n이번에는 원본 해상도(1024×768)로 실행합니다.')
+
+    def _highres_ready(self, path):
+        """1280×720 내부 해상도 준비. (사용 가능 여부, 원본으로 실행하는 이유).
+        ddraw.dll(cnc-ddraw)이 없으면 런처에 들어 있는 것을 설치한다."""
+        dll, ini = path / 'ddraw.dll', path / DDRAW_INI
+        bundled = pathlib.Path(get_resource_dir()) / 'cnc_ddraw'
+        try:
+            if not dll.is_file():
+                shutil.copy2(bundled / 'ddraw.dll', dll)
+                if not ini.is_file():
+                    shutil.copy2(bundled / 'ddraw.ini', ini)
+                self.winmode = WindowModeManager(str(path))
+        except PermissionError:
+            return False, 'ddraw.dll(cnc-ddraw)을 설치할 권한이 없습니다. 런처를 관리자 권한으로 실행하면 자동 설치됩니다.'
+        except OSError as e:
+            return False, f'ddraw.dll(cnc-ddraw) 설치 실패: {e}'
+        for name, digest in viewport_patch.manifest()['dll_hashes'].items():
+            try:
+                ok = hashlib.sha256((path / name).read_bytes()).hexdigest() == digest
+            except OSError:
+                ok = False
+            if not ok:
+                return False, f'게임의 {name} 버전이 1280×720 패치가 지원하는 버전과 다릅니다.'
+        return True, ''
 
     def _on_viewport_apply(self):
         old=dict(self.cfg)
