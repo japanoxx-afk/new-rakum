@@ -9,6 +9,7 @@ on:
       - 'map_editor_web.py'
       - 'ui_theme.py'
       - 'map_preview.py'
+      - 'map_preview_tiles/**'
       - 'release_notes.py'
       - 'map_editor_web/**'
       - 'RhakMuLauncher_v*.spec'

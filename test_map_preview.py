@@ -46,6 +46,26 @@ class MapPreviewTests(unittest.TestCase):
             self.assertIn('2인', text)
             self.assertIn('타일 모드', text)
 
+    def test_render_tk_uses_tile_atlas(self):
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+        except Exception as e:  # 화면 없는 환경
+            self.skipTest(str(e))
+        try:
+            with tempfile.TemporaryDirectory() as t:
+                p = Path(t) / 'm.rkm'
+                p.write_bytes(_blank_map(72, 72, ts=0))
+                info = mp.load(p)
+                img, scale = mp.render_tk(info, HERE, root, 560)
+                self.assertEqual(scale, 4)
+                self.assertEqual((img.width(), img.height()), (64 * 32 // 4, 64 * 32 // 4))
+                self.assertNotEqual(img.get(100, 100), (0, 0, 0))
+                big = mp.MapInfo('x', 0, 300, 300)
+                self.assertEqual(mp.pick_scale(big, 560), (8, 3))
+        finally:
+            root.destroy()
+
     def test_colour_table_covers_mod_tiles(self):
         cols = mp._colors(HERE)
         self.assertEqual(sorted(cols), [0, 1, 2, 3])

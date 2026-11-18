@@ -52,6 +52,7 @@ class MapInfo:
     wells: list = field(default_factory=list)
     subs: list = field(default_factory=list)        # [(id, x, y)]
     decos: int = 0
+    objects: list = field(default_factory=list)     # [(id, x, y)] 자원·장식 (스프라이트 그리기용)
     tiles: list = field(default_factory=list)       # tile index per record, row-major (columns x rows)
     columns: int = 0
     rows: int = 0
@@ -79,6 +80,8 @@ def load(path) -> MapInfo:
     for r in m.objects()[m.object_counts[0]:]:
         kind, oid = r[2], struct.unpack_from("<H", r, 4)[0]
         x, y, val = struct.unpack_from("<III", r, 8)
+        if kind in (KIND_RES, KIND_DECO):
+            info.objects.append((oid, x, y))
         if kind == KIND_RES:
             (info.gold if (r[6] == 1 or oid == GOLD_IDS.get(ts)) else info.wells).append((x, y, val))
         elif kind == KIND_SUB:
@@ -141,3 +144,80 @@ def summary(info: MapInfo) -> str:
     if any(i >= 8 for i, *_ in info.subs):
         lines.append("※ 상하대칭 언덕 입구 사용 — 모든 PC에 타일 모드 필요")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- 실제 타일 그림 미리보기 (Tk)
+_ATLAS_META = None
+_ATLAS_IMG = {}
+
+
+def _atlas_meta(resource_dir):
+    global _ATLAS_META
+    if _ATLAS_META is None:
+        _ATLAS_META = json.loads((Path(resource_dir) / "map_preview_tiles" / "atlas.json").read_text(encoding="utf-8"))["tilesets"]
+    return _ATLAS_META
+
+
+def pick_scale(info: MapInfo, max_px: int) -> tuple[int, int]:
+    """(축소 배율 4|8, 추가 subsample) — 보이는 영역이 max_px 안에 들도록."""
+    world = max(info.width - 8, info.height - 8) * 32
+    if world / 4 <= max_px:
+        return 4, 1
+    sub = 1
+    while world / (8 * sub) > max_px:
+        sub += 1
+    return 8, sub
+
+
+def render_tk(info: MapInfo, resource_dir, master, max_px: int = 560):
+    """게임 타일·언덕 입구·오브젝트 그림으로 그린 PhotoImage 와 (배율, subsample) 를 돌려준다."""
+    import tkinter as tk
+    sc, sub = pick_scale(info, max_px)
+    meta = _atlas_meta(resource_dir).get(str(info.tileset)) or _atlas_meta(resource_dir)["0"]
+    m = meta[str(sc)]
+    key = (info.tileset, sc, str(master))
+    atlas = _ATLAS_IMG.get(key)
+    if atlas is None:
+        atlas = tk.PhotoImage(master=master, file=str(Path(resource_dir) / "map_preview_tiles" / m["file"]))
+        _ATLAS_IMG[key] = atlas
+    border = 128 // sc                                   # 게임에서 안 보이는 가장자리 4칸
+    W = max(1, (info.width - 8) * 32 // sc)
+    H = max(1, (info.height - 8) * 32 // sc)
+    img = tk.PhotoImage(master=master, width=W, height=H)
+    img.put("#000000", to=(0, 0, W, H))
+    tcl = master.tk.call
+    name, aname = str(img), str(atlas)
+
+    def blit(sx, sy, w, h, dx, dy):
+        if dx < 0:
+            sx -= dx; w += dx; dx = 0
+        if dy < 0:
+            sy -= dy; h += dy; dy = 0
+        w = min(w, W - dx); h = min(h, H - dy)
+        if w > 0 and h > 0:
+            tcl(name, "copy", aname, "-from", sx, sy, sx + w, sy + h, "-to", dx, dy, "-compositingrule", "overlay")
+
+    tw, th, cw, ch, per, cnt = 256 // sc, 128 // sc, m["cw"], m["ch"], m["per"], m["count"]
+    for i, t in enumerate(info.tiles):
+        if not 0 <= t < cnt:
+            continue
+        x, y = i % info.columns, i // info.columns
+        cx = (x * 256 + (y & 1) * 128) // sc - border
+        cy = (y * 64) // sc - border
+        blit((t % per) * cw, (t // per) * ch, cw, ch, cx - tw // 2 - 1, cy - th // 2 - 1)
+    for oid, x, y in info.subs:                          # 언덕 입구·다리: 스프라이트 왼쪽 위 = 앵커
+        if 0 <= oid < len(m["sub"]):
+            sx, sy, w, h = m["sub"][oid]
+            blit(sx, sy, w, h, x * 32 // sc - border, y * 32 // sc - border)
+    for oid, x, y in sorted(info.objects, key=lambda o: o[2]):
+        if 0 <= oid < len(m["obj"]):
+            sx, sy, w, h, ox, oy = m["obj"][oid]
+            blit(sx, sy, w, h, x * 32 // sc + ox - border, y * 32 // sc + oy - border)
+    if sub > 1:
+        img = img.subsample(sub)
+    return img, sc * sub
+
+
+def to_px_scaled(scale: int, x: float, y: float):
+    """맵 칸 좌표 -> render_tk 결과 이미지의 픽셀 좌표."""
+    return (x * 32 + 16 - 128) / scale, (y * 32 + 16 - 128) / scale
