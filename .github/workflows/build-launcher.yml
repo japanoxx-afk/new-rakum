@@ -3,10 +3,12 @@ name: Build launcher exe
 on:
   workflow_dispatch:
   push:
-    branches: [launcher-v0.9034-map-editor]
+    branches: ['launcher-*']
     paths:
       - 'launcher.py'
       - 'map_editor_web.py'
+      - 'ui_theme.py'
+      - 'release_notes.py'
       - 'map_editor_web/**'
       - 'RhakMuLauncher_v*.spec'
       - '.github/workflows/build-launcher.yml'
@@ -26,7 +28,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install PyInstaller
-        run: python -m pip install --upgrade pip pyinstaller
+        run: python -m pip install --upgrade pip pyinstaller sv-ttk
       - name: Tests
         run: python -m unittest test_map_editor_web -v
       - name: Build
