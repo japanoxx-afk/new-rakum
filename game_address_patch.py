@@ -15,6 +15,7 @@ import base64
 import os
 import socket
 import ipaddress
+import re
 
 DLL_NAME = "TG_Net.dll"
 DLL_SIZE = 81979
@@ -126,3 +127,44 @@ def local_ip_toward(server_ip: str, prefer_radmin=False):
     pref = str(addr).split(".")[0] + "."
     same = [i for i in local if i.startswith(pref)]
     return same[0] if len(same) == 1 else None
+
+
+_LOGIN = re.compile(r"Login OK: (\d+\.\d+\.\d+\.\d+):\d+")
+
+
+def recent_remote_player(log_path, own=None):
+    """Last remote player address in the local server log (other PCs), or None."""
+    own = set(own if own is not None else _local_ipv4s())
+    try:
+        with open(log_path, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 400_000))
+            text = f.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+    for ip in reversed(_LOGIN.findall(text)):
+        if ip not in own and not ip.startswith("127."):
+            return ip
+    return None
+
+
+def choose(server_ip, prefer_radmin=False, log_path=None):
+    """Game address for a multiplayer launch.
+
+    Joining another PC's server: the local address that routes there.
+    Hosting on this PC (server IP is our own / loopback): our address on the network
+    the other players actually used last time (e.g. Hamachi 25.x even when the server
+    address typed here is our Radmin 26.x), else the typed address.
+    """
+    local = _local_ipv4s()
+    try:
+        own_server = ipaddress.IPv4Address(server_ip).is_loopback or server_ip in local
+    except ValueError:
+        return None
+    if own_server and log_path:
+        peer = recent_remote_player(log_path, local)
+        if peer:
+            mine = local_ip_toward(peer)
+            if mine and mine in local:
+                return mine
+    return local_ip_toward(server_ip, prefer_radmin=prefer_radmin)

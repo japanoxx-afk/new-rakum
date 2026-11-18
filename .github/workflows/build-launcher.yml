@@ -6,6 +6,8 @@ on:
     branches: ['launcher-*']
     paths:
       - 'launcher.py'
+      - 'server.py'
+      - 'peer_address_patch.py'
       - 'map_editor_web.py'
       - 'ui_theme.py'
       - 'map_preview.py'
@@ -35,7 +37,7 @@ jobs:
       - name: Install PyInstaller
         run: python -m pip install --upgrade pip pyinstaller sv-ttk pefile unicorn
       - name: Tests
-        run: python -m unittest test_map_editor_web test_map_preview test_rally_gold_patch test_highres_ready test_game_address_patch test_server_address -v
+        run: python -m unittest test_map_editor_web test_map_preview test_rally_gold_patch test_highres_ready test_game_address_patch -v
       - name: Build
         shell: pwsh
         run: |
@@ -62,6 +64,19 @@ jobs:
           if ($p.HasExited) { throw "launcher exited early with code $($p.ExitCode)" }
           Stop-Process -Id $p.Id -Force
           "launcher stayed up"
+      - name: Smoke-start server mode
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "RhakMuLauncher_v$env:VER.exe" -ArgumentList '--server' -PassThru
+          Start-Sleep -Seconds 12
+          $log = if (Test-Path server-console.log) { Get-Content server-console.log -Raw } else { '' }
+          $log
+          if ($p.HasExited -or $log -match 'Traceback') { throw "server mode failed" }
+          $r = Invoke-RestMethod -Uri 'http://127.0.0.1:11225/rules' -TimeoutSec 5
+          $r | ConvertTo-Json
+          if (-not $r.server_version) { throw "rules endpoint failed" }
+          Stop-Process -Id $p.Id -Force
+          Remove-Item server-console.log, server.log -ErrorAction SilentlyContinue
       - name: Commit exe and version.json
         shell: pwsh
         run: |
