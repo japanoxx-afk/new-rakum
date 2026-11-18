@@ -1,0 +1,73 @@
+name: Build launcher exe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['launcher-*']
+    paths:
+      - 'launcher.py'
+      - 'legacy_compat.py'
+      - 'map_editor_web.py'
+      - 'ui_theme.py'
+      - 'map_preview.py'
+      - 'rally_gold_patch.py'
+      - 'cnc_ddraw/**'
+      - 'minimap_patch.py'
+      - 'map_preview_tiles/**'
+      - 'release_notes.py'
+      - 'map_editor_web/**'
+      - 'RhakMuLauncher_v*.spec'
+      - '.github/workflows/build-launcher.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pip pyinstaller sv-ttk pefile unicorn
+      - name: Tests
+        run: python -m unittest test_legacy_compat test_game_address_patch -v
+      - name: Build
+        shell: pwsh
+        run: |
+          $ver = (Select-String -Path launcher.py -Pattern '^APP_VERSION = "([0-9.]+)"').Matches[0].Groups[1].Value
+          $spec = "RhakMuLauncher_v$ver.spec"
+          python -m PyInstaller --noconfirm $spec
+          Copy-Item "dist/RhakMuLauncher_v$ver.exe" "RhakMuLauncher_v$ver.exe" -Force
+          $f = Get-Item "RhakMuLauncher_v$ver.exe"
+          $sha = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+          $json = [ordered]@{
+            launcher_version = $ver
+            launcher_url     = "https://raw.githubusercontent.com/japanoxx-afk/new-rakum/main/RhakMuLauncher_v$ver.exe"
+            launcher_size    = $f.Length
+            launcher_sha256  = $sha
+          } | ConvertTo-Json
+          [System.IO.File]::WriteAllText("version.json", $json + "`n", (New-Object System.Text.UTF8Encoding($false)))
+          "VER=$ver" >> $env:GITHUB_ENV
+          Get-Content version.json
+      - name: Smoke-start exe
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "RhakMuLauncher_v$env:VER.exe" -PassThru
+          Start-Sleep -Seconds 12
+          if ($p.HasExited) { throw "launcher exited early with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+          "launcher stayed up"
+      - name: Commit exe and version.json
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "RhakMuLauncher_v$env:VER.exe" version.json
+          git commit -m "Build RhakMuLauncher_v$env:VER.exe on windows-latest [skip ci]"
+          git push

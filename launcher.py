@@ -20,6 +20,7 @@ import queue
 import tkinter as tk
 import sync_port_patch
 import peer_address_patch
+import legacy_compat
 import panel_guard_patch
 import viewport_patch
 import command_cadence_trial
@@ -40,7 +41,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9031"
+APP_VERSION = "0.9031.1"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -577,6 +578,10 @@ class App(tk.Tk):
         self.domains = list(self.cfg.get("domains", DEFAULT_DOMAINS))
 
         game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
+        try:
+            legacy_compat.prepare(game_dir, os.path.join(os.environ.get('LOCALAPPDATA', self.base_dir), 'RhakMu', 'radmin-session'))
+        except Exception:
+            pass  # game running / unknown file: checked again before launch
         self.winmode = WindowModeManager(game_dir)
         self.latency = LatencyPatch(game_dir)
         self.gamedir_var = tk.StringVar(value=game_dir)
@@ -998,6 +1003,7 @@ class App(tk.Tk):
                 if rc != 0 or 'RUNNING' in out:
                     raise RuntimeError('게임을 완전히 종료한 뒤 다시 실행하세요.')
                 game_exe = os.path.join(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE)
+                legacy_compat.prepare(os.path.dirname(game_exe), root)
                 # Validate both sites before changing either; preserve user patches.
                 game_data = pathlib.Path(game_exe).read_bytes()
                 peer_address_patch.state(game_data)
@@ -1104,6 +1110,8 @@ class App(tk.Tk):
         if rc != 0 or 'RUNNING' in out:
             raise RuntimeError('게임을 완전히 종료한 뒤 실행하세요. 실행 중에는 패치하지 않습니다.')
         exe = path / PATCH_EXE
+        session_dir = os.path.join(os.environ.get('LOCALAPPDATA', self.base_dir), 'RhakMu', 'radmin-session')
+        legacy_compat.prepare(str(path), session_dir)
         data = exe.read_bytes()
         peer_address_patch.state(data)
         sync_port_patch.state(data)
