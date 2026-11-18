@@ -30,6 +30,7 @@ from hosts_entries import replace_entries
 from display_settings import WindowModeManager, RENDERERS
 import launcher_update
 import map_editor_web
+import ui_theme
 from tkinter import ttk, messagebox
 
 # server.py는 런타임 exec로 실행되므로 PyInstaller가 의존성을 자동 감지 못 한다.
@@ -42,7 +43,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9034"
+APP_VERSION = "0.9035"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -569,9 +570,10 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"라크무 런처 v{APP_VERSION}")
-        self.geometry("720x820")
+        self.geometry("760x860")
         self.resizable(True, True)
-        self.minsize(620, 680)
+        self.minsize(660, 720)
+        self.theme_name = ui_theme.apply(self)
 
         self.base_dir = get_base_dir()
         self.server = ServerManager(self.base_dir)
@@ -583,13 +585,39 @@ class App(tk.Tk):
         self.winmode = WindowModeManager(game_dir)
         self.latency = LatencyPatch(game_dir)
         self.gamedir_var = tk.StringVar(value=game_dir)
-        launch_path = ttk.LabelFrame(self, text='게임 실행 경로 (설치 폴더 또는 Launcher.exe)', padding=6)
-        launch_path.pack(fill='x', padx=8, pady=4)
-        ttk.Entry(launch_path, textvariable=self.gamedir_var).pack(side='left', fill='x', expand=True)
-        ttk.Button(launch_path, text='찾기', command=self._on_browse_game).pack(side='left', padx=4)
 
+        # ── 헤더 ──
+        header = ttk.Frame(self, style="Header.TFrame", padding=(18, 14))
+        header.pack(fill="x")
+        ttk.Separator(self).pack(fill="x")
+        brand = ttk.Frame(header, style="Header.TFrame")
+        brand.pack(side="left")
+        ttk.Label(brand, text="RHAKMU", style="Brand.TLabel").pack(anchor="w")
+        ttk.Label(brand, text=f"라크무 런처  ·  v{APP_VERSION}", style="Sub.TLabel").pack(anchor="w")
+        badges = ttk.Frame(header, style="Header.TFrame")
+        badges.pack(side="right")
+        self.info_var = tk.StringVar()
+        self.ver_badge = tk.StringVar()
+        self.lat_badge = tk.StringVar()
+        ttk.Label(badges, textvariable=self.ver_badge, style="Badge.TLabel").pack(side="left", padx=(0, 6))
+        ttk.Label(badges, textvariable=self.lat_badge, style="Badge.TLabel").pack(side="left")
+
+        # ── 게임 경로 ──
+        launch_path = ttk.Frame(self, padding=(14, 10, 14, 0))
+        launch_path.pack(fill='x')
+        ttk.Label(launch_path, text='게임 폴더', style='Muted.TLabel').pack(side='left', padx=(0, 8))
+        ttk.Entry(launch_path, textvariable=self.gamedir_var).pack(side='left', fill='x', expand=True)
+        ttk.Button(launch_path, text='찾기', command=self._on_browse_game).pack(side='left', padx=(6, 0))
+
+        # ── 실행 버튼 ──
+        footer = ttk.Frame(self, style="Footer.TFrame", padding=(14, 12))
+        footer.pack(side="bottom", fill="x")
+        ttk.Button(footer, text="싱글플레이", style="Accent.TButton",
+                   command=self._on_single_play).pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ttk.Button(footer, text="멀티플레이", style="Accent.TButton",
+                   command=self._on_multi_play).pack(side="left", fill="x", expand=True, padx=(6, 0))
         notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+        notebook.pack(fill="both", expand=True, padx=14, pady=(10, 0))
 
         self._build_server_tab(notebook)
         self._build_client_tab(notebook)
@@ -599,18 +627,6 @@ class App(tk.Tk):
         self._build_capture_tab(notebook)
         self.protocol("WM_DELETE_WINDOW", self._close_launcher)
 
-        self.info_var = tk.StringVar()
-        ttk.Label(self, textvariable=self.info_var, anchor="center",
-                  font=("맑은 고딕", 9, "bold")).pack(fill="x", padx=8, pady=(0, 2))
-
-        launch_frame = ttk.Frame(self)
-        launch_frame.pack(fill="x", padx=8, pady=(0, 10))
-        ttk.Button(
-            launch_frame, text="🎮 싱글플레이", command=self._on_single_play, width=18,
-        ).pack(side="left", expand=True, padx=4)
-        ttk.Button(
-            launch_frame, text="🌐 멀티플레이", command=self._on_multi_play, width=18,
-        ).pack(side="left", expand=True, padx=4)
 
         self._refresh_info_bar()
 
@@ -1414,22 +1430,29 @@ class App(tk.Tk):
         ttk.Button(path_frame, text="찾기", command=self._on_browse_game, width=6).pack(side="left")
 
         # ── 반응속도 (레이턴시) ──
-        lat_frame = ttk.LabelFrame(frame, text="명령 지연 (멀티플레이 권장: 4턴)", padding=12)
+        lat_frame = ttk.LabelFrame(frame, text="멀티플레이 반응속도 (명령 지연)", padding=12)
         lat_frame.pack(fill="x", pady=(0, 10))
         cur = self.latency.current()
         cur_txt = f"현재 지연: {cur}턴" if cur is not None else "현재 지연: (확인 불가)"
         self.lat_status_var = tk.StringVar(value=cur_txt)
-        ttk.Label(lat_frame, textvariable=self.lat_status_var).pack(anchor="w", pady=(0, 6))
-        lat_btns = ttk.Frame(lat_frame)
-        lat_btns.pack(fill="x")
-        ttk.Button(lat_btns, text="빠르게 (1턴)", command=lambda: self._on_latency(1), width=11).pack(side="left", padx=(0, 4))
-        ttk.Button(lat_btns, text="균형 (2턴)", command=lambda: self._on_latency(2), width=11).pack(side="left", padx=(0, 4))
-        ttk.Button(lat_btns, text="안정 (3턴)", command=lambda: self._on_latency(3), width=11).pack(side="left", padx=(0, 4))
-        ttk.Button(lat_btns, text="원래대로 (4턴)", command=lambda: self._on_latency(4), width=13).pack(side="left")
+        ttk.Label(lat_frame, textvariable=self.lat_status_var, style="Title.TLabel").pack(anchor="w", pady=(0, 8))
+        lat_main = ttk.Frame(lat_frame)
+        lat_main.pack(fill="x")
+        ttk.Button(lat_main, text="태조왕건 방식 · 3턴 (약 0.17초 빠름)", style="Accent.TButton",
+                   command=lambda: self._on_latency(3)).pack(side="left", padx=(0, 6))
+        ttk.Button(lat_main, text="원본 · 4턴", command=lambda: self._on_latency(4)).pack(side="left")
         ttk.Label(lat_frame,
-                  text="멀티플레이는 안정성이 확인된 4턴 권장. 1~3턴은 실험값이며 정지가 늘 수 있습니다.\n"
-                       "멀티는 함께하는 모든 PC가 같은 값이어야 합니다.  ※ 게임을 끈 상태에서 적용.",
-                  foreground="gray").pack(anchor="w", pady=(6, 0))
+                  text="라크무는 명령을 5프레임(약 165ms)마다 묶어 4묶음 뒤에 실행합니다(약 0.5~0.6초).\n"
+                       "전작 태조왕건은 같은 5프레임 묶음에 네트워크 게임만 3묶음을 씁니다 (WangGun.exe 0x45179B).\n"
+                       "3턴은 묶음 하나(약 165ms)만큼 빨라지고, 예전에 실패한 99ms 시험보다 여유 폭(약 0.5초)이 큽니다.\n"
+                       "함께하는 모든 PC가 같은 값이어야 합니다. 멈춤이 잦으면 4턴으로 되돌리세요.  ※ 게임을 끈 상태에서 적용.",
+                  style="Muted.TLabel", wraplength=640, justify="left").pack(anchor="w", pady=(8, 0))
+        exp = ttk.Frame(lat_frame)
+        exp.pack(fill="x", pady=(8, 0))
+        ttk.Label(exp, text="실험값:", style="Muted.TLabel").pack(side="left", padx=(0, 6))
+        ttk.Button(exp, text="2턴", command=lambda: self._on_latency(2), width=6).pack(side="left", padx=(0, 4))
+        ttk.Button(exp, text="1턴", command=lambda: self._on_latency(1), width=6).pack(side="left")
+        ttk.Label(exp, text="  싱글/LAN 전용. 인터넷 멀티는 멈춤이 늘 수 있습니다.", style="Muted.TLabel").pack(side="left")
 
         # ── 라드민 네트워크 최적화 ──
         try:
@@ -1511,7 +1534,7 @@ class App(tk.Tk):
                      state="readonly").pack(anchor="w", pady=(0, 6))
 
         ttk.Button(frame, text="디스플레이 설정 적용", command=self._on_apply_winmode, width=20).pack(anchor="w", pady=(4, 0))
-        ttk.Button(frame, text="표시 지연 완화 (4턴 유지)", command=self._on_response_profile).pack(anchor="w", pady=(8, 0))
+        ttk.Button(frame, text="표시 지연 완화 (3·4턴)", command=self._on_response_profile).pack(anchor="w", pady=(8, 0))
         ttk.Label(frame, text="수직동기화 끄기 + 모니터 주사율 + Bilinear 필터. 화질/화면 찢어짐 차이가 있을 수 있습니다.\n"
                   "명령 턴·게임 속도·네트워크 프로토콜은 변경하지 않습니다. 효과는 PC에 따라 다릅니다.",
                   foreground='gray').pack(anchor='w')
@@ -1552,9 +1575,11 @@ class App(tk.Tk):
         game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
         gv = get_game_version(game_dir)
         lat = self.latency.current()
-        latmap = {1: "매우 빠름", 2: "빠름", 3: "보통", 4: "기본"}
+        latmap = {1: "실험", 2: "실험", 3: "왕건 방식", 4: "원본"}
         latstr = f"{lat}턴 · {latmap.get(lat, '?')}" if lat is not None else "확인 불가"
         self.info_var.set(f"게임 버전: {gv}     |     반응속도: {latstr}")
+        self.ver_badge.set(gv if str(gv).startswith("게임") else f"게임 {gv}")
+        self.lat_badge.set(f"반응 {latstr}")
 
     def _on_browse_game(self):
         from tkinter import filedialog
@@ -1587,8 +1612,8 @@ class App(tk.Tk):
             return
         game_dir=self.gamedir_var.get().strip().strip('"')
         if os.path.isfile(game_dir):game_dir=os.path.dirname(game_dir)
-        if LatencyPatch(game_dir).current()!=4:
-            messagebox.showwarning('4턴 확인','먼저 명령 지연을 원래대로 (4턴) 적용하세요. 표시 설정은 변경하지 않았습니다.')
+        if LatencyPatch(game_dir).current() not in (3, 4):
+            messagebox.showwarning('턴 확인','먼저 명령 지연을 3턴 또는 4턴으로 적용하세요. 표시 설정은 변경하지 않았습니다.')
             return
         manager=WindowModeManager(game_dir)
         settings=manager.read_settings()
