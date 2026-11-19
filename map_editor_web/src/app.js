@@ -440,15 +440,14 @@
       let shape;
       if (S.shapeDrag) {
         const g = S.shapeDrag;
-        shape = S.shape === 'rect' ? { type: 'rect', x0: g.x0, y0: g.y0, x1: g.x1, y1: g.y1 } : { type: 'line', pts: [{ x: g.x0, y: g.y0 }, { x: g.x1, y: g.y1 }], size: Math.max(minSize(), S.brushSize) };
+        shape = S.shape === 'rect' ? { type: 'rect', x0: g.x0, y0: g.y0, x1: g.x1, y1: g.y1 } : { type: 'line', pts: [{ x: g.x0, y: g.y0 }, { x: g.x1, y: g.y1 }], size: S.brushSize };
         ctx.strokeStyle = '#fff'; ctx.setLineDash([10 / z, 6 / z]);
         if (S.shape === 'rect') ctx.strokeRect(Math.min(g.x0, g.x1), Math.min(g.y0, g.y1), Math.abs(g.x1 - g.x0), Math.abs(g.y1 - g.y0));
         else { ctx.beginPath(); ctx.moveTo(g.x0, g.y0); ctx.lineTo(g.x1, g.y1); ctx.stroke(); }
         ctx.setLineDash([]);
       } else {
         const v = vertexAt(h.x, h.y); if (!v) return;
-        shape = { type: S.shape === 'square' ? 'square' : 'circle', u: v[0], v: v[1], size: Math.max(minSize(), S.brushSize) };
-        if (S.shape !== 'circle' && S.shape !== 'square') shape.size = Math.max(minSize(), S.brushSize);
+        shape = { type: S.shape === 'square' ? 'square' : 'circle', u: v[0], v: v[1], size: S.brushSize };
       }
       const list = R.shapeVerts(S.map, shape);
       ctx.fillStyle = FALLBACK[S.brush]; ctx.globalAlpha = .55;
@@ -515,7 +514,6 @@
   mm.addEventListener('mousedown', (e) => { mmMove(e); const mv = (ev) => mmMove(ev), up = () => { removeEventListener('mousemove', mv); removeEventListener('mouseup', up); }; addEventListener('mousemove', mv); addEventListener('mouseup', up); });
 
   // ----------------------------------------------------------------- editing
-  function minSize() { return [5, 7, 8].includes(S.brush) ? 3 : 1; }
   function applyShape(shape) {
     const m = S.map, list = R.shapeVerts(m, shape); if (!list.length) return;
     let ch = R.paintVerts(m, list, S.brush);
@@ -528,7 +526,7 @@
   }
   function paintAt(wx, wy) {
     const v = vertexAt(wx, wy); if (!v) return;
-    applyShape({ type: S.shape === 'square' ? 'square' : 'circle', u: v[0], v: v[1], size: Math.max(minSize(), S.brushSize) });
+    applyShape({ type: S.shape === 'square' ? 'square' : 'circle', u: v[0], v: v[1], size: S.brushSize });
   }
   function placeRamp(wx, wy) {
     const m = S.map, r = R.suggestRamp(m, wx, wy);
@@ -674,7 +672,7 @@
     if (S.shapeDrag && S.map) {
       const g = S.shapeDrag; S.shapeDrag = null;
       if (S.shape === 'rect') applyShape({ type: 'rect', x0: g.x0, y0: g.y0, x1: g.x1, y1: g.y1 });
-      else applyShape({ type: 'line', pts: [{ x: g.x0, y: g.y0 }, { x: g.x1, y: g.y1 }], size: Math.max(minSize(), S.brushSize) });
+      else applyShape({ type: 'line', pts: [{ x: g.x0, y: g.y0 }, { x: g.x1, y: g.y1 }], size: S.brushSize });
     }
     if (S.drag && S.drag.o.kind === R.KIND.SUB) { subTerrain(S.drag.o); draw(); drawMinimap(); }
     if (S.act) endAct(); S.painting = false; S.drag = null; });
