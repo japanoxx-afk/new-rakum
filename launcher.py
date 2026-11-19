@@ -34,6 +34,7 @@ import map_editor_web
 import ui_theme
 import map_preview
 import rally_gold_patch
+import hotkey_patch
 import game_address_patch
 from tkinter import ttk, messagebox
 
@@ -47,7 +48,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9043"
+APP_VERSION = "0.9044"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1036,10 +1037,13 @@ class App(tk.Tk):
                            "peer_ip": self.capture_peer.get().strip(), "started": datetime.datetime.now().isoformat(),
                            "lobby_ip": HostsManager.read_current_ip([GAME_HOST])}, f, ensure_ascii=False, indent=2)
             try:
-                game_data = minimap_patch.underlying(pathlib.Path(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE).read_bytes())
+                raw_game = pathlib.Path(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE).read_bytes()
+                hotkeys_state = hotkey_patch.state(raw_game)
+                game_data = minimap_patch.underlying(raw_game)
                 patch_status = {'peer_address': peer_address_patch.state(game_data), 'sync_port': sync_port_patch.state(game_data),
                                 'peer_reply_8814': game_data[0xeb420:0xeb420+len(peer_address_patch.CODE)] == peer_address_patch.CODE,
                                 'rally_gold': rally_gold_patch.state(game_data),
+                                'hotkeys': hotkeys_state,
                                 'game_path': str(pathlib.Path(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE)),
                                 'radmin_mode_selected': self.radmin_only.get()}
             except (ValueError, OSError) as e:
@@ -1505,9 +1509,13 @@ class App(tk.Tk):
         minimap_patch.ensure_closed(exe)
         highres, why = self._highres_ready(path) if self.cfg.get('viewport_1280', True) else (False, '')
         # Build and validate the complete result in memory; one atomic replacement.
-        minimap_patch.prepare(exe, highres, self._rally_setting())
+        hotkeys = bool(self.cfg.get('hotkeys', True))
+        minimap_patch.prepare(exe, highres, self._rally_setting(), hotkeys)
         self.cfg['command_cadence_99ms'] = False
-        verified = minimap_patch.underlying(exe.read_bytes())
+        installed = exe.read_bytes()
+        if hotkey_patch.state(installed) != hotkeys:
+            raise RuntimeError('단축키 확장 패치 검증 실패. 게임을 실행하지 않았습니다.')
+        verified = minimap_patch.underlying(installed)
         if rally_gold_patch.state(verified) != bool(self._rally_setting()):
             raise RuntimeError('집결지 금광 인식 패치 검증 실패. 게임을 실행하지 않았습니다.')
         verified = rally_gold_patch.strip(verified)
@@ -1787,6 +1795,12 @@ class App(tk.Tk):
         ttk.Label(play_frame, text="금광 그림 가장자리에 집결지를 찍어도 일꾼이 채취합니다. 다음 게임 실행 시 적용.\n"
                                    "게임 진행 규칙이 바뀌므로 멀티는 모든 PC가 같은 설정(같은 런처 버전)이어야 합니다.",
                   style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(4, 0))
+        self.hotkeys_var = tk.BooleanVar(value=self.cfg.get("hotkeys", True))
+        ttk.Checkbutton(play_frame, text="단축키 확장 ( .  쉬는 일꾼 · F2 군사 유닛 · Shift+숫자 부대 추가 )",
+                        variable=self.hotkeys_var, command=self._on_hotkeys_toggle).pack(anchor="w", pady=(10, 0))
+        ttk.Label(play_frame, text="한 번에 최대 12기(게임 선택 한도). F2는 화면 위치 2번 이동 대신 사용됩니다(Ctrl+F2 저장은 그대로).\n"
+                                   "선택만 바꾸므로 멀티에서 상대 설정과 달라도 됩니다. 다음 게임 실행 시 적용.",
+                  style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(4, 0))
 
         # ── 라드민 네트워크 최적화 ──
         try:
@@ -1930,6 +1944,11 @@ class App(tk.Tk):
         self.cfg["rally_gold"] = bool(self.rally_gold_var.get())
         save_config(self.base_dir, self.cfg)
         messagebox.showinfo("게임 플레이 보정", "다음 게임 실행 때 적용됩니다.\n멀티는 함께하는 모든 PC가 같은 설정이어야 합니다.")
+
+    def _on_hotkeys_toggle(self):
+        self.cfg["hotkeys"] = bool(self.hotkeys_var.get())
+        save_config(self.base_dir, self.cfg)
+        messagebox.showinfo("단축키 확장", "다음 게임 실행 때 적용됩니다.")
 
     def _on_latency(self, value):
         if value != 4 and self.cfg.get('command_cadence_99ms', self.cadence_var.get()):

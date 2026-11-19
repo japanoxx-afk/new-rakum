@@ -12,6 +12,7 @@ on:
       - 'ui_theme.py'
       - 'map_preview.py'
       - 'rally_gold_patch.py'
+      - 'hotkey_patch.py'
       - 'cnc_ddraw/**'
       - 'minimap_patch.py'
       - 'map_preview_tiles/**'
@@ -37,7 +38,7 @@ jobs:
       - name: Install PyInstaller
         run: python -m pip install --upgrade pip pyinstaller sv-ttk pefile unicorn
       - name: Tests
-        run: python -m unittest test_map_editor_web test_map_preview test_rally_gold_patch test_highres_ready test_game_address_patch -v
+        run: python -m unittest test_map_editor_web test_map_preview test_rally_gold_patch test_highres_ready test_game_address_patch test_hotkey_patch -v
       - name: Build
         shell: pwsh
         run: |
