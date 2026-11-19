@@ -1,7 +1,7 @@
 """단축키 확장 패치 (Rhakmu.exe 1.000d).
 
-  .            쉬는 일꾼 모두 선택 (최대 12기 — 게임 선택 한도)
-  F2           모든 군사 유닛 선택 (일꾼 제외 이동 유닛, 최대 12기)
+  .            쉬는 일꾼 모두 선택 (선택 한도까지: 12기, selection_patch 가 켜져 있으면 24기 — CODE24)
+  F2           모든 군사 유닛 선택 (일꾼 제외 이동 유닛, 선택 한도까지)
   Shift+숫자   지금 선택한 유닛을 그 번호 부대에 추가 (부대가 비어 있으면 새로 지정)
 
 분석:
@@ -55,7 +55,28 @@ CODE = bytes.fromhex(
     "5e5b89ec5dc385c0743b3da6060000733483ff0c732f69d83801000081c3385a770050e8f1fdffff89c258"
     "85d2741631c939f9730a663b444de8740941ebf26689447de847c3"
 )
-assert len(CODE) <= SECTION_SIZE
+# 선택 한도 24 패치(selection_patch)가 켜져 있으면 옮겨진 목록·부대 주소와 24칸을 쓰는 판
+CODE24 = bytes.fromhex(
+    "8b45083dbe000000742183f871743183e83083f809764b6a11ff1550c34e0068d6ef4200c36806f14200c3e8"
+    "6600000085c074e36a00e8b700000083c404ebe56a11ff1550c34e006685c078cae84400000085c074c16a01"
+    "e89500000083c404ebc36a10ff1550c34e006685c079a86a11ff1550c34e006685c0789be81500000085c074"
+    "928b450883e83050e8a501000083c404eb8fb9d8666e00ff1520c54e0084c07521803d4907b400007518833d"
+    "ac1e800000750f803dcc12b400087306b801000000c331c0c331c066837b08007e1f66837b020074188a4b10"
+    "3a0dcc12b400750df64307107507807b2b00750140c35589e583ec3053565731ffbe0100000069de38010000"
+    "81c3385a7700e8b6ffffff85c0743d0fb7430e6bc01c8b8088cd4f0085c0742c31c966837840010f94c1837d"
+    "0800750d85c9741866837b06027511eb0485c9750b6689747dd04783ff1873094681fea606000072a585ff74"
+    "0d8d45d05750e80a00000083c4085f5e5b89ec5dc35589e55356578b75088b7d0c68a60600006a0068e412b4"
+    "00b8f0e74d00ffd083c40c31c983f918731c31c039f9730b0fb7044ec680e412b400016689044d0071070141"
+    "ebdf66893d3c088000c605ce12b400ffb8d07b4400ffd00fb7050071070169d038010000668b92465a7700b9"
+    "0100000039f9731c0fb71c4d0071070169db38010000663b93465a7700750341ebe231c066a3d012b40066c7"
+    "05c41e800000006a0169c03801000005385a770050b9581e8000b8e0594600ffd05f5e5b5dc35589e583ec30"
+    "5356570fbe05cc12b40069c0f40100008b4d086bc9328db4080072070131ff31c983f918730f0fb7444e0251"
+    "e8490000005941ebec31c983f91873120fb7044d0071070151e8300000005941ebe931c983f918731331c039"
+    "f97305668b444dd06689444e0241ebe889f88806c605ce12b400ff5f5e5b89ec5dc385c0743b3da606000073"
+    "3483ff18732f69d83801000081c3385a770050e8f1fdffff89c25885d2741631c939f9730a663b444dd07409"
+    "41ebf26689447dd047c3"
+)
+assert len(CODE) <= SECTION_SIZE and len(CODE24) <= SECTION_SIZE
 
 
 def _u16(b, o):
@@ -98,13 +119,20 @@ def state(data) -> bool:
     if name == SECTION_NAME:
         body = bytes(data[rptr:rptr + rsize])
         if (site == _jump(va) and rsize == SECTION_SIZE and vsize == SECTION_SIZE
-                and rptr + rsize == len(data) and body == CODE + bytes(SECTION_SIZE - len(CODE))
+                and rptr + rsize == len(data) and body == _code_for(data).ljust(SECTION_SIZE, bytes(1))
                 and _u32(data, soi) == va + SECTION_SIZE):
             return True
         raise ValueError("단축키 패치가 불완전하거나 알 수 없는 변경이 있습니다.")
     if site == SITE_ORIGINAL:
         return False
     raise ValueError("단축키 패치: 지원하지 않는 게임 파일입니다.")
+
+
+def _code_for(data) -> bytes:
+    """단축키 섹션 바로 아래 섹션이 선택 한도 24 섹션(.sel24)이면 CODE24."""
+    nt, nsec, table, salign, falign, soi, secs = _layout(data)
+    below = secs[-2] if secs[-1][0] == SECTION_NAME else secs[-1]
+    return CODE24 if below[0] == b".sel24" + bytes(2) else CODE
 
 
 def strip(data) -> bytes:
@@ -141,5 +169,5 @@ def apply(data, enabled: bool = True) -> bytes:
     struct.pack_into("<H", out, nt + 6, nsec + 1)
     struct.pack_into("<I", out, soi, new_va + SECTION_SIZE)
     out[SITE:SITE + len(SITE_ORIGINAL)] = _jump(new_va)
-    out += CODE + bytes(SECTION_SIZE - len(CODE))
+    out += _code_for(out).ljust(SECTION_SIZE, bytes(1))
     return bytes(out)

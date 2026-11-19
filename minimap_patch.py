@@ -14,8 +14,9 @@ def ensure_closed(path):
     if result.returncode or result.stdout.strip():raise RuntimeError('해당 설치 폴더의 게임을 완전히 종료한 뒤 적용하세요.')
 
 def underlying(data):
-    import hotkey_patch
+    import hotkey_patch,selection_patch
     data=hotkey_patch.strip(data)   # 단축키 섹션은 미니맵 꼬리 뒤에 붙으므로 먼저 걷어냄
+    data=selection_patch.strip(data)   # 그 아래 선택 한도 24 섹션과 코드 수정도 걷어냄
     spec=manifest()
     if len(data)==spec['source_size']:return bytes(data)
     if len(data)!=spec['patched_size']:raise ValueError('미니맵: 지원하지 않는 게임 파일 크기')
@@ -66,18 +67,18 @@ def replace(path,original,changed):
 def apply(path,enabled=True):
     path=Path(path);data=path.read_bytes();replace(path,data,transform(data,enabled))
 
-def prepare(path,highres,rally_gold=True,hotkeys=True):
+def prepare(path,highres,rally_gold=True,hotkeys=True,select24=False):
     import viewport_patch
     path=Path(path);original=path.read_bytes()
     if highres:
         for name,digest in viewport_patch.manifest()['dll_hashes'].items():
             if hashlib.sha256((path.parent/name).read_bytes()).hexdigest()!=digest:raise ValueError(f'지원하지 않는 {name}')
         if not (path.parent/'ddraw.dll').is_file():raise ValueError('ddraw.dll이 필요합니다.')
-    replace(path,original,build(original,highres,rally_gold,hotkeys))
+    replace(path,original,build(original,highres,rally_gold,hotkeys,select24))
 
-def build(original,highres,rally_gold=True,hotkeys=True):
+def build(original,highres,rally_gold=True,hotkeys=True,select24=False):
     """설치 파일 바이트 -> 실행용 최종 바이트 (메모리 안에서만; 파일은 건드리지 않음)."""
-    import viewport_patch,peer_address_patch,sync_port_patch,panel_guard_patch,rally_gold_patch,hotkey_patch
+    import viewport_patch,peer_address_patch,sync_port_patch,panel_guard_patch,rally_gold_patch,hotkey_patch,selection_patch
     data=rally_gold_patch.strip(underlying(original))
     peer_address_patch.state(data);sync_port_patch.state(data);panel_guard_patch.state(data)
     result=bytearray(data)
@@ -89,5 +90,6 @@ def build(original,highres,rally_gold=True,hotkeys=True):
     result[0xd7b97]=5
     data=viewport_patch.transform(bytes(result),highres)
     data=transform(data)
-    data=rally_gold_patch.apply(data,rally_gold)   # 마지막: 다른 패치 검증은 원본 기준
-    return hotkey_patch.apply(data,hotkeys)        # 미니맵 섹션 뒤에 새 섹션 추가
+    data=rally_gold_patch.apply(data,rally_gold)   # 다른 패치 검증은 원본 기준
+    data=selection_patch.apply(data,select24)      # 미니맵 섹션 뒤 .sel24 (선택 한도 24)
+    return hotkey_patch.apply(data,hotkeys)        # 맨 뒤에 단축키 섹션 (.sel24 가 있으면 24칸 판)
