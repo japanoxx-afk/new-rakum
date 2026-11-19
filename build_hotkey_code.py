@@ -102,7 +102,7 @@ uo_ret:
 select_units:
     push ebp
     mov ebp, esp
-    sub esp, 24
+    sub esp, {BUF}
     push ebx
     push esi
     push edi
@@ -133,9 +133,9 @@ su_mil:
     test ecx, ecx
     jnz su_next
 su_add:
-    mov word ptr [ebp+edi*2-24], si
+    mov word ptr [ebp+edi*2-{BUF}], si
     inc edi
-    cmp edi, 12
+    cmp edi, {N}
     jae su_done
 su_next:
     inc esi
@@ -144,7 +144,7 @@ su_next:
 su_done:
     test edi, edi
     jz su_out
-    lea eax, [ebp-24]
+    lea eax, [ebp-{BUF}]
     push edi
     push eax
     call commit
@@ -173,7 +173,7 @@ commit:
     add esp, 12
     xor ecx, ecx
 cm_copy:
-    cmp ecx, 12
+    cmp ecx, {N}
     jae cm_copied
     xor eax, eax
     cmp ecx, edi
@@ -181,7 +181,7 @@ cm_copy:
     movzx eax, word ptr [esi+ecx*2]
     mov byte ptr [eax+0xb412e4], 1
 cm_store:
-    mov word ptr [ecx*2+0x80083e], ax
+    mov word ptr [ecx*2+{LSEL}], ax
     inc ecx
     jmp cm_copy
 cm_copied:
@@ -189,14 +189,14 @@ cm_copied:
     mov byte ptr [0xb412ce], 0xff
     mov eax, 0x447bd0
     call eax
-    movzx eax, word ptr [0x80083e]
+    movzx eax, word ptr [{LSEL}]
     imul edx, eax, 0x138
     mov dx, word ptr [edx+0x775a46]
     mov ecx, 1
 cm_lead:
     cmp ecx, edi
     jae cm_lead_done
-    movzx ebx, word ptr [ecx*2+0x80083e]
+    movzx ebx, word ptr [ecx*2+{LSEL}]
     imul ebx, ebx, 0x138
     cmp dx, word ptr [ebx+0x775a46]
     jne cm_mixed
@@ -223,19 +223,19 @@ cm_lead_done:
 add_to_group:
     push ebp
     mov ebp, esp
-    sub esp, 24
+    sub esp, {BUF}
     push ebx
     push esi
     push edi
     movsx eax, byte ptr [0xb412cc]
-    imul eax, eax, 0xd0
+    imul eax, eax, {PSTRIDE}
     mov ecx, dword ptr [ebp+8]
-    imul ecx, ecx, 0x1a
-    lea esi, [eax+ecx+0x106a6c0]
+    imul ecx, ecx, {GSTRIDE}
+    lea esi, [eax+ecx+{GROUPS}]
     xor edi, edi
     xor ecx, ecx
 ag_old:
-    cmp ecx, 12
+    cmp ecx, {N}
     jae ag_old_done
     movzx eax, word ptr [esi+ecx*2+2]
     push ecx
@@ -246,9 +246,9 @@ ag_old:
 ag_old_done:
     xor ecx, ecx
 ag_new:
-    cmp ecx, 12
+    cmp ecx, {N}
     jae ag_new_done
-    movzx eax, word ptr [ecx*2+0x80083e]
+    movzx eax, word ptr [ecx*2+{LSEL}]
     push ecx
     call ag_try
     pop ecx
@@ -257,12 +257,12 @@ ag_new:
 ag_new_done:
     xor ecx, ecx
 ag_w:
-    cmp ecx, 12
+    cmp ecx, {N}
     jae ag_w_done
     xor eax, eax
     cmp ecx, edi
     jae ag_ws
-    mov ax, word ptr [ebp+ecx*2-24]
+    mov ax, word ptr [ebp+ecx*2-{BUF}]
 ag_ws:
     mov word ptr [esi+ecx*2+2], ax
     inc ecx
@@ -283,7 +283,7 @@ ag_try:
     jz at_ret
     cmp eax, 0x6a6
     jae at_ret
-    cmp edi, 12
+    cmp edi, {N}
     jae at_ret
     imul ebx, eax, 0x138
     add ebx, 0x775a38
@@ -297,24 +297,38 @@ ag_try:
 at_dup:
     cmp ecx, edi
     jae at_add
-    cmp ax, word ptr [ebp+ecx*2-24]
+    cmp ax, word ptr [ebp+ecx*2-{BUF}]
     je at_ret
     inc ecx
     jmp at_dup
 at_add:
-    mov word ptr [ebp+edi*2-24], ax
+    mov word ptr [ebp+edi*2-{BUF}], ax
     inc edi
 at_ret:
     ret
 '''
 
 
-def assemble(addr=0x10000000):
-    return bytes(Ks(KS_ARCH_X86, KS_MODE_32).asm(SOURCE, addr=addr)[0])
+# 12: original game lists.  24: lists moved by selection_patch (.sel24 section).
+LAYOUT = {
+    12: dict(N=12, BUF=24, LSEL='0x80083e', GROUPS='0x106a6c0', PSTRIDE='0xd0', GSTRIDE='0x1a'),
+}
+
+
+def _layout24():
+    import selection_patch as sp
+    return dict(N=sp.N, BUF=2 * sp.N, LSEL=hex(sp.LSEL), GROUPS=hex(sp.GROUPS),
+                PSTRIDE=hex(sp.PLAYER_GROUPS), GSTRIDE=hex(sp.GROUP_STRIDE))
+
+
+def assemble(addr=0x10000000, n=12):
+    layout = LAYOUT[12] if n == 12 else _layout24()
+    return bytes(Ks(KS_ARCH_X86, KS_MODE_32).asm(SOURCE.format(**layout), addr=addr)[0])
 
 
 if __name__ == '__main__':
-    a = assemble()
-    assert a == assemble(0x20000000), 'code must be position independent'
-    print(len(a))
-    print(a.hex())
+    for n in (12, 24):
+        a = assemble(n=n)
+        assert a == assemble(0x20000000, n=n), 'code must be position independent'
+        print(n, len(a))
+        print(a.hex())
