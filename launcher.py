@@ -53,7 +53,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9053"
+APP_VERSION = "0.9054"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1596,13 +1596,15 @@ class App(tk.Tk):
         hotkeys = bool(self.cfg.get('hotkeys', True))
         select24 = bool(self._select24_setting())
         record = bool(self.cfg.get("replay_record", True))
-        minimap_patch.prepare(exe, highres, self._rally_setting(), hotkeys, select24, record)
+        start_save = record and bool(self.cfg.get("replay_start_save", False))
+        minimap_patch.prepare(exe, highres, self._rally_setting(), hotkeys, select24, record, start_save)
         self.cfg['command_cadence_99ms'] = False
         installed = exe.read_bytes()
         if hotkey_patch.state(installed) != hotkeys:
             raise RuntimeError('단축키 확장 패치 검증 실패. 게임을 실행하지 않았습니다.')
-        if replay_record_patch.state(hotkey_patch.strip(installed)) != record:
-            raise RuntimeError('리플레이 명령 기록 패치 검증 실패. 게임을 실행하지 않았습니다.')
+        if (replay_record_patch.state(hotkey_patch.strip(installed)) != record
+                or replay_record_patch.saves_at_start(hotkey_patch.strip(installed)) != start_save):
+            raise RuntimeError('리플레이 기록 패치 검증 실패. 게임을 실행하지 않았습니다.')
         if selection_patch.state(replay_record_patch.strip(hotkey_patch.strip(installed))) != select24:
             raise RuntimeError('선택 한도 24 패치 검증 실패. 게임을 실행하지 않았습니다.')
         verified = minimap_patch.underlying(installed)
@@ -1763,6 +1765,9 @@ class App(tk.Tk):
         self.replay_record_var = tk.BooleanVar(value=self.cfg.get("replay_record", True))
         ttk.Checkbutton(btns, text="경기 자동 기록", variable=self.replay_record_var,
                         command=self._on_replay_record_toggle).pack(side="right")
+        self.replay_start_save_var = tk.BooleanVar(value=self.cfg.get("replay_start_save", False))
+        ttk.Checkbutton(btns, text="실험: 경기 시작 저장(실제 화면 리플레이용)", variable=self.replay_start_save_var,
+                        command=self._on_replay_start_save_toggle).pack(side="right", padx=(0, 8))
         ttk.Label(frame, text="런처를 켜 둔 채 게임하면 경기마다 자동 저장됩니다. 더블클릭하면 재생합니다 "
                               "(1·2·4 속도, Space 정지, ←→ 10초, S 통계, Esc 종료, 맵 전체 공개).",
                   style="Muted.TLabel", wraplength=640, justify="left").pack(anchor="w")
@@ -1854,6 +1859,14 @@ class App(tk.Tk):
             self.recorder.start()
         else:
             self.recorder.stop()
+
+    def _on_replay_start_save_toggle(self):
+        self.cfg["replay_start_save"] = bool(self.replay_start_save_var.get())
+        save_config(self.base_dir, self.cfg)
+        if self.cfg["replay_start_save"]:
+            messagebox.showinfo("리플레이", "다음 게임 실행부터 경기 시작 순간을 게임 저장 기능으로 남깁니다 "
+                                         "(USERs\\<계정>\\RKREPLAY.SAV, 리플레이 파일에 함께 보관).\n"
+                                         "실험 기능입니다. 먼저 싱글플레이로 시험해 보시고 문제가 있으면 끄세요.")
 
     def _tick_replay_status(self):
         rec = getattr(self, "recorder", None)

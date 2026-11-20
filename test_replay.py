@@ -125,6 +125,7 @@ class RecordAndModelTests(unittest.TestCase):
         (game_dir / "DATA" / "MAPS" / "[2]Test.rkm").write_bytes(b"J2M\0fake")
         self.g = FakeGame()
         self.clock = [0.0]
+        self.game_dir = game_dir
         self.rec = rr.Recorder(self.base, lambda: str(game_dir), open_memory=lambda pid: self.g,
                                find_pid=lambda: 1234, clock=lambda: self.clock[0])
 
@@ -132,11 +133,18 @@ class RecordAndModelTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def step(self, dt=0.5, advance=True):
+        if advance and self.g.frame == 0:
+            start = struct.pack(rrp.START_FMT, self.g.seed, 77, bytes(20), 0, 0, bytes(8))
+            self.g.dispatch(rrp.P_START, start)
+            save = self.game_dir / "USERs" / "aa" / "RKREPLAY.SAV"
+            save.parent.mkdir(parents=True, exist_ok=True)
+            save.write_bytes(b"SAVEDATA" * 100)
         self.clock[0] += dt
         if advance:
             for _ in range(int(dt * 30)):               # 30 프레임/초, 5프레임마다 턴
                 self.g.frame += 1
                 if self.g.frame % 5 == 0:
+                    self.g.dispatch(rrp.P_CHECK, struct.pack(rrp.CHECK_FMT, self.g.frame, 1, 2, self.g.frame * 7, 3))
                     for p in (0, 1):
                         self.g.dispatch(p, struct.pack("<HHIH", 0x2000, 10, self.g.frame // 5, 7))
         if advance and int(self.clock[0]) != int(self.clock[0] - dt):
@@ -145,6 +153,7 @@ class RecordAndModelTests(unittest.TestCase):
 
     def play_match(self):
         g = self.g
+        self.rec.poll()                               # 런처는 경기 전(로비)부터 게임에 붙어 있음
         g.player(0, "aa", 0, [300, 500, 50, 0])
         g.player(1, "big", 2, [300, 500, 50, 0])
         g.unit(1, 20, 0, 1000, 1000, hp=900, building=1)
@@ -179,7 +188,7 @@ class RecordAndModelTests(unittest.TestCase):
         h, dur = M.load_header(files[0])
         self.assertEqual([(p["name"], p["race"]) for p in h["players"]], [("aa", 0), ("big", 2)])
         self.assertEqual(h["map"], "DATA\\MAPS\\[2]Test.rkm")
-        self.assertEqual((h["seed"], h["options"], h["commands"], h["format"]), (0x1234ABCD, "0001020304050607", True, 2))
+        self.assertEqual((h["seed"], h["options"], h["commands"], h["format"]), (0x1234ABCD, "0001020304050607", True, 3))
         rp = M.load(files[0])
         self.assertEqual(rp.map_bytes(), b"J2M\0fake")
         self.assertAlmostEqual(rp.duration, dur)
@@ -203,6 +212,15 @@ class RecordAndModelTests(unittest.TestCase):
         import base64 as b64
         self.assertEqual(struct.unpack("<HHIH", b64.b64decode(cmds[0][2]))[0], 0x2000)
         self.assertIn("f", rp.frames[1])
+        starts = [fr["start"] for fr in rp.frames if "start" in fr]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual((starts[0]["seed"], starts[0]["rand"], starts[0]["local"]), (0x1234ABCD, 77, 0))
+        saves = [fr for fr in rp.frames if "save" in fr]
+        self.assertEqual(len(saves), 1)
+        self.assertEqual(b64.b64decode(saves[0]["save"]), b"SAVEDATA" * 100)
+        chk = [c for fr in rp.frames for c in fr.get("chk", ())]
+        self.assertTrue(chk and all(c[3] == c[0] * 7 for c in chk))
+        self.assertEqual([c[0] for c in chk], sorted(c[0] for c in chk))
         st = M.stats(rp)["players"]
         self.assertEqual(st[1]["units"], {"검사": 1})
         self.assertEqual(st[0]["lost_units"], 1)
@@ -301,7 +319,7 @@ class RecordPatchTests(unittest.TestCase):
         import hotkey_patch as hk, minimap_patch as mm, selection_patch as sp
         o = exe.read_bytes()
         try:
-            self.assertEqual(rrp.assemble(), rrp.CODE)
+            self.assertEqual(rrp.assemble(), rrp.CODE.ljust(rrp.NAME_OFF, b"\0"))
         except ImportError:
             pass
         for wide in (False, True):
@@ -319,6 +337,99 @@ class RecordPatchTests(unittest.TestCase):
                 self.assertIsNotNone(sec)
                 site = on[rrp.SITE:rrp.SITE + 5]
                 self.assertEqual(rrp.SITE_VA + 5 + struct.unpack("<i", site[1:])[0], sec)   # 호출이 섹션 코드로
+
+
+class InGameHookTests(unittest.TestCase):
+    """시작 저장·턴 검사값 코드를 에뮬레이터로 실행."""
+    BASE = 0x1084000
+
+    def machine(self):
+        try:
+            from unicorn import Uc, UC_ARCH_X86, UC_MODE_32, UC_HOOK_CODE
+            from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_ECX, UC_X86_REG_EAX, UC_X86_REG_EBP
+        except ImportError as e:
+            self.skipTest(str(e))
+        mu = Uc(UC_ARCH_X86, UC_MODE_32)
+        mu.mem_map(0x400000, 0xC00000)                 # 게임 코드·데이터 (0x400000..0x1000000)
+        mu.mem_map(self.BASE, rrp.VIRTUAL_SIZE)
+        mu.mem_map(0x2000000, 0x100000)
+        mu.mem_write(self.BASE, rrp.body())
+        self.saved = []
+
+        def save(uc, a, s, _):
+            esp = uc.reg_read(UC_X86_REG_ESP)
+            p = struct.unpack("<I", uc.mem_read(esp + 4, 4))[0]
+            self.saved.append(bytes(uc.mem_read(p, 16)).split(b"\0")[0])
+            uc.reg_write(UC_X86_REG_EAX, 1)
+        mu.mem_write(0x4D9120, b"\xc3")
+        mu.hook_add(UC_HOOK_CODE, save, begin=0x4D9120, end=0x4D9120)
+        self.regs = (UC_X86_REG_ESP, UC_X86_REG_ECX, UC_X86_REG_EBP)
+        rd = rrp.CommandReader(lambda a, n: bytes(mu.mem_read(a, n)), self.BASE)
+        rd.poll()
+        return mu, rd
+
+    def test_start_hook_records_state_and_saves(self):
+        mu, rd = self.machine()
+        ESP, ECX, EBP = self.regs
+        mu.mem_write(0x6E1A78, struct.pack("<I", 0xCAFEBABE))
+        mu.mem_write(0x501EC0, struct.pack("<I", 0x12345678))
+        mu.mem_write(0xB40FE8, bytes(range(1, 21)))
+        mu.mem_write(rrp.FRAME, struct.pack("<I", 4321))
+        mu.mem_write(0xB412CC, b"\x02")
+        mu.mem_write(0x6DFF88, bytes(range(10, 18)))
+        mu.mem_write(0xB411A4, struct.pack("<I", 0x2222))
+        mu.mem_write(0x4D7559, b"\xf4")
+        for nosave in (0, 1):
+            mu.mem_write(self.BASE + rrp.FLAGS_OFF, struct.pack("<I", nosave))   # body() 기본은 1 (끔)
+            esp = 0x2080000
+            mu.mem_write(esp, struct.pack("<I", 0x4D7559))
+            mu.reg_write(ESP, esp)
+            mu.reg_write(EBP, 0x1111)
+            mu.emu_start(self.BASE + rrp.OFF["start"], 0x4D7559, count=10000)
+            self.assertEqual(mu.reg_read(ECX), 0x2222)             # 원래 mov ecx,[0xB411A4]
+            self.assertEqual(mu.reg_read(EBP), 0x1111)
+            self.assertEqual(mu.reg_read(ESP), esp + 4)
+        self.assertEqual(self.saved, [b"RKREPLAY"])                # 두 번째는 저장 끄기
+        self.assertEqual(struct.unpack("<I", mu.mem_read(self.BASE + rrp.FLAGS_OFF + 4, 4))[0], 1)
+        got, _ = rd.poll()
+        self.assertEqual([(f, p) for f, p, b in got], [(4321, rrp.P_START)] * 2)
+        st = rrp.parse_start(got[0][2])
+        self.assertEqual(st, {"seed": 0xCAFEBABE, "rand": 0x12345678, "rng": bytes(range(1, 21)).hex(),
+                              "frame": 4321, "local": 2, "options": bytes(range(10, 18)).hex()})
+
+    def test_turn_hook_checksum_and_prologue(self):
+        mu, rd = self.machine()
+        ESP, ECX, EBP = self.regs
+        units = {3: (50, 1000, 2000, 7), 9: (5, 300, 400, 5), 12: (0, 1, 1, 7)}
+        for uid, (hp, x, y, t) in units.items():
+            o = 0x775A38 + uid * 0x138
+            mu.mem_write(o + 8, struct.pack("<h", hp))
+            mu.mem_write(o + 0xE, struct.pack("<h", t))
+            mu.mem_write(o + 0x12, struct.pack("<hh", x, y))
+        mu.mem_write(0x501EC0, struct.pack("<I", 99))
+        mu.mem_write(0xB40FF8, struct.pack("<I", 1234))
+        mu.mem_write(rrp.FRAME, struct.pack("<I", 500))
+        mu.mem_write(0x44A846, b"\xf4")                          # 원래 함수 이어서
+        esp = 0x2080000
+        mu.mem_write(esp, struct.pack("<I", 0xDEAD))              # 호출자 복귀 주소
+        mu.reg_write(ESP, esp)
+        mu.reg_write(EBP, 0x7777)
+        mu.emu_start(self.BASE + rrp.OFF["turn"], 0x44A846, count=200000)
+        self.assertEqual(mu.reg_read(ESP), esp - 4 - 0x44)        # push ebp; mov ebp,esp; sub esp,0x44
+        self.assertEqual(mu.reg_read(EBP), esp - 4)
+        self.assertEqual(struct.unpack("<I", mu.mem_read(esp - 4, 4))[0], 0x7777)
+        h, n = 0, 0
+        for uid in sorted(units):
+            hp, x, y, t = units[uid]
+            if hp <= 0:
+                continue
+            n += 1
+            h = (h * 31 + hp) & 0xFFFFFFFF
+            h = (h * 31 + (x | y << 16)) & 0xFFFFFFFF
+            h = (h * 31 + t) & 0xFFFFFFFF
+        got, _ = rd.poll()
+        self.assertEqual([(f, p) for f, p, b in got], [(500, rrp.P_CHECK)])
+        self.assertEqual(rrp.parse_check(got[0][2]), [500, 99, 1234, h, n])
 
 
 class ViewerTests(unittest.TestCase):
