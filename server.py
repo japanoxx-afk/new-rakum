@@ -56,7 +56,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9011"
+SERVER_VERSION = "0.9012"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -402,6 +402,7 @@ class ClientSession:
         self.account: str = ""
         self.room_title: str = ""
         self.in_game = False
+        self.game_version = 0          # handshake 0x01FF: Rhakmu.exe 1.000d -> 1003, older 1.000 -> 1000
         self._buf = b""
 
     @property
@@ -497,6 +498,7 @@ class ClientSession:
             magic = payload[:4]
             version = struct.unpack_from("<I", payload, 4)[0] if len(payload) >= 8 else 0
             log.info(f"{self.peer}: handshake magic={magic} version={version}")
+            self.game_version = version
             self.send(P_CONNECT, struct.pack("<I", 0))
 
         elif ptype == P_ANNOUNCE:
@@ -706,6 +708,16 @@ class ClientSession:
             return
         if room.in_game:
             log.info(f"Room join refused (game in progress): {self.peer} account={self.account!r} room={room.title!r}")
+            self.send(P_JOIN_ROOM, struct.pack("<I", 1))
+            return
+        owner_conn = next((c for c in STATE.clients if c.account == room.owner), None)
+        if owner_conn and owner_conn.game_version and self.game_version and owner_conn.game_version != self.game_version:
+            # The host's game compares versions on the P2P join (Rhakmu.exe 0x4452A7) and answers
+            # code 3: the joiner is bounced to the lobby while the server would still list it as a
+            # member. Refuse here instead so neither side keeps a ghost member.
+            log.warning(f"Room join refused (game version {self.game_version} != host {owner_conn.game_version}): "
+                        f"{self.peer} account={self.account!r} room={room.title!r} host={room.owner!r} -- "
+                        f"모든 PC가 같은 Rhakmu.exe (1.000d = 1003) 를 써야 합니다")
             self.send(P_JOIN_ROOM, struct.pack("<I", 1))
             return
 
