@@ -86,6 +86,29 @@ class Replay:
         return None
 
 
+def ingame_data(rp: Replay):
+    """게임 화면 재생 자료: {'start', 'save', 'records'} 또는 무엇이 없는지 알려 주는 문자열.
+    records = [(프레임, 플레이어, 바이트)], 같은 프레임에서는 검사값(턴 처리 시작) -> 명령 순서 (기록과 같음)."""
+    import struct
+    import replay_record_patch as rrp
+    start = next((fr["start"] for fr in rp.frames if "start" in fr), None)
+    save = next((fr["save"] for fr in rp.frames if "save" in fr), None)
+    if not start:
+        return "경기 시작 기록이 없습니다 (v0.9054 이상 런처로 기록한 경기만 재생할 수 있습니다)."
+    if not save:
+        return "경기 시작 저장이 없습니다. 리플레이 탭의 '경기 시작 저장'을 켜고 새로 기록한 경기만 재생할 수 있습니다."
+    items = []
+    for fr in rp.frames:
+        for c in fr.get("chk", ()):
+            items.append((c[0], 0, len(items), rrp.P_CHECK, struct.pack(rrp.CHECK_FMT, *[v & 0xFFFFFFFF for v in c[:5]])))
+        for f, p, b in fr.get("cmd", ()):
+            items.append((f, 1, len(items), p, base64.b64decode(b)))
+    items.sort(key=lambda x: (x[0], x[1], x[2]))
+    if not any(x[1] == 1 for x in items):
+        return "명령 기록이 없습니다."
+    return {"start": start, "save": base64.b64decode(save), "records": [(f, p, b) for f, _, _, p, b in items]}
+
+
 def load(path) -> Replay:
     path = Path(path)
     with gzip.open(path, "rt", encoding="utf-8") as f:
