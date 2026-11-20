@@ -37,6 +37,8 @@ import rally_gold_patch
 import hotkey_patch
 import selection_patch
 import game_version
+import replay_recorder
+import replay_model
 import game_address_patch
 from tkinter import ttk, messagebox
 
@@ -50,7 +52,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9050"
+APP_VERSION = "0.9051"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -683,6 +685,7 @@ class App(tk.Tk):
         self._build_server_tab(notebook)
         self._build_client_tab(notebook)
         self._build_history_tab(notebook)
+        self._build_replay_tab(notebook)
         self._build_settings_tab(notebook)
         self._build_map_preview_tab(notebook)
         self._build_map_editor_tab(notebook)
@@ -690,6 +693,9 @@ class App(tk.Tk):
         self._two_columns(self.connection_parent)
         self._two_columns(self._settings_frame)
         self.protocol("WM_DELETE_WINDOW", self._close_launcher)
+        self.recorder = replay_recorder.Recorder(self.base_dir, lambda: self.cfg.get("game_dir", DEFAULT_GAME_DIR))
+        if self.cfg.get("replay_record", True):
+            self.recorder.start()
 
 
         self._refresh_info_bar()
@@ -1161,6 +1167,10 @@ class App(tk.Tk):
                 messagebox.showerror('서버', msg)
                 return
         self.map_editor.stop()
+        try:
+            self.recorder.stop()
+        except Exception:
+            pass
         self.destroy()
 
     # ── 서버 탭 ──
@@ -1729,6 +1739,128 @@ class App(tk.Tk):
 
         entry.bind("<Return>", go)
         ttk.Button(dlg, text="실행", command=go, width=12).pack(pady=12)
+
+    # ── 리플레이 탭 ──
+    def _build_replay_tab(self, notebook):
+        frame = ttk.Frame(notebook, padding=12)
+        notebook.add(frame, text="  리플레이  ")
+        top = ttk.Frame(frame)
+        top.pack(fill="x")
+        ttk.Label(top, text="리플레이", style="Title.TLabel").pack(side="left")
+        self.replay_status = tk.StringVar(value="")
+        ttk.Label(top, textvariable=self.replay_status, style="Muted.TLabel").pack(side="left", padx=10)
+        btns = ttk.Frame(frame)
+        btns.pack(fill="x", pady=(6, 6))
+        ttk.Button(btns, text="재생", command=self._play_replay).pack(side="left")
+        ttk.Button(btns, text="통계", command=self._replay_stats_window).pack(side="left", padx=4)
+        ttk.Button(btns, text="리플레이 폴더 열기", command=self._open_replay_folder).pack(side="left", padx=4)
+        ttk.Button(btns, text="새로고침", command=self._refresh_replays).pack(side="left", padx=4)
+        ttk.Button(btns, text="삭제", command=self._delete_replay).pack(side="left", padx=4)
+        self.replay_record_var = tk.BooleanVar(value=self.cfg.get("replay_record", True))
+        ttk.Checkbutton(btns, text="경기 자동 기록", variable=self.replay_record_var,
+                        command=self._on_replay_record_toggle).pack(side="right")
+        ttk.Label(frame, text="런처를 켜 둔 채 게임하면 경기마다 자동 저장됩니다. 더블클릭하면 재생합니다 "
+                              "(1·2·4 속도, Space 정지, ←→ 10초, S 통계, Esc 종료, 맵 전체 공개).",
+                  style="Muted.TLabel", wraplength=640, justify="left").pack(anchor="w")
+        cols = ("date", "time", "map", "players")
+        tree = ttk.Treeview(frame, columns=cols, show="headings", height=9, selectmode="browse")
+        for c, t, w in (("date", "날짜", 140), ("time", "플레이 시간", 80), ("map", "맵", 150), ("players", "참가자 (아이디 / 진영)", 330)):
+            tree.heading(c, text=t)
+            tree.column(c, width=w, anchor="w")
+        tree.pack(fill="both", expand=True, pady=(6, 6))
+        tree.bind("<Double-1>", lambda e: self._play_replay())
+        tree.bind("<<TreeviewSelect>>", lambda e: self._show_replay_summary())
+        self.replay_tree = tree
+        self.replay_summary = tk.Text(frame, height=12, wrap="word", relief="flat", font=("Malgun Gothic", 9))
+        self.replay_summary.pack(fill="both", expand=False)
+        self.replay_summary.configure(state="disabled")
+        self._refresh_replays()
+        self._tick_replay_status()
+
+    def _replay_dir(self):
+        return replay_recorder.replay_dir(self.base_dir)
+
+    def _refresh_replays(self):
+        tree = self.replay_tree
+        tree.delete(*tree.get_children())
+        files = sorted(self._replay_dir().glob("*.rkr"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for path in files:
+            try:
+                h, dur = replay_model.load_header(path)
+            except (OSError, ValueError, EOFError):
+                continue
+            players = ",  ".join(f"{p['name']} / {replay_model.RACES[p['race']] if 0 <= p['race'] < 3 else '?'}"
+                                 for p in h.get("players", []))
+            mapname = pathlib.Path(h.get("map", "").replace("\\", "/")).stem
+            tree.insert("", "end", iid=str(path), values=(h.get("date", "").replace("T", " "),
+                                                          replay_model.fmt_time(dur), mapname, players))
+
+    def _selected_replay(self):
+        sel = self.replay_tree.selection()
+        return pathlib.Path(sel[0]) if sel else None
+
+    def _show_replay_summary(self):
+        path = self._selected_replay()
+        if not path:
+            return
+        try:
+            text = replay_model.summary_text(replay_model.load(path))
+        except (OSError, ValueError, EOFError) as e:
+            text = f"리플레이를 읽을 수 없습니다: {e}"
+        self.replay_summary.configure(state="normal")
+        self.replay_summary.delete("1.0", "end")
+        self.replay_summary.insert("1.0", text)
+        self.replay_summary.configure(state="disabled")
+
+    def _play_replay(self):
+        path = self._selected_replay()
+        if not path:
+            messagebox.showinfo("리플레이", "재생할 리플레이를 고르세요.")
+            return
+        try:
+            import replay_viewer
+            replay_viewer.ReplayViewer(self, path, get_resource_dir())
+        except (OSError, ValueError, EOFError, tk.TclError) as e:
+            messagebox.showerror("리플레이", f"리플레이를 열 수 없습니다.\n{e}")
+
+    def _replay_stats_window(self):
+        path = self._selected_replay()
+        if not path:
+            messagebox.showinfo("리플레이", "통계를 볼 리플레이를 고르세요.")
+            return
+        import replay_viewer
+        replay_viewer.StatsWindow(self, replay_model.load(path))
+
+    def _open_replay_folder(self):
+        os.startfile(str(self._replay_dir()))
+
+    def _delete_replay(self):
+        path = self._selected_replay()
+        if path and messagebox.askyesno("리플레이 삭제", f"{path.name} 을(를) 지울까요?"):
+            try:
+                path.unlink()
+            except OSError as e:
+                messagebox.showerror("리플레이", str(e))
+            self._refresh_replays()
+
+    def _on_replay_record_toggle(self):
+        self.cfg["replay_record"] = bool(self.replay_record_var.get())
+        save_config(self.base_dir, self.cfg)
+        if self.cfg["replay_record"]:
+            self.recorder.start()
+        else:
+            self.recorder.stop()
+
+    def _tick_replay_status(self):
+        rec = getattr(self, "recorder", None)
+        if rec is not None:
+            was = getattr(self, "_replay_was_recording", False)
+            now = rec.writer is not None
+            self.replay_status.set(rec.status if self.cfg.get("replay_record", True) else "자동 기록 꺼짐")
+            if was and not now:
+                self._refresh_replays()                 # 경기 끝: 새 파일 목록에 표시
+            self._replay_was_recording = now
+        self.after(1000, self._tick_replay_status)
 
     # ── 전적 탭 ──
     def _build_history_tab(self, notebook):

@@ -16,6 +16,7 @@ on:
       - 'selection_patch.py'
       - 'game_version.py'
       - 'menu_free_guard_patch.py'
+      - 'replay_*.py'
       - 'cnc_ddraw/**'
       - 'minimap_patch.py'
       - 'map_preview_tiles/**'
@@ -41,7 +42,7 @@ jobs:
       - name: Install PyInstaller
         run: python -m pip install --upgrade pip pyinstaller sv-ttk pefile unicorn
       - name: Tests
-        run: python -m unittest test_map_editor_web test_map_preview test_rally_gold_patch test_highres_ready test_game_address_patch test_hotkey_patch test_selection_patch test_server_address test_server_ingame test_server_version test_game_version test_menu_free_guard -v
+        run: python -m unittest test_map_editor_web test_map_preview test_rally_gold_patch test_highres_ready test_game_address_patch test_hotkey_patch test_selection_patch test_server_address test_server_ingame test_server_version test_game_version test_menu_free_guard test_replay -v
       - name: Build
         shell: pwsh
         run: |
