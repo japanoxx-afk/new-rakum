@@ -61,7 +61,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9013"
+SERVER_VERSION = "0.9014"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -82,7 +82,10 @@ P_CONNECT       = 0x01FF
 P_USERNAME      = 0x02FF
 P_ANNOUNCE      = 0x03FF
 P_LOGIN         = 0x05FF
-P_CHAN_SEL      = 0x07FF
+P_CHAN_SEL      = 0x07FF   # 채널 입장: client -> [word idx|0x8000][name\0]; server -> [result 0=OK][name\0]
+P_CHAN_LIST     = 0x08FF   # 채널 목록: client -> [start i16][end i16]; server -> {users i16, no i16, name\0}...
+P_CHAN_LIST_BEG = 0x09FF   # 채널 목록 시작 (클라 목록 비움, Rhakmu.exe 0x44CC30)
+P_CHAN_LIST_END = 0x0AFF   # 채널 목록 끝 ('채널리스트를 요청중입니다' 창 닫힘, 0x44CD40)
 P_ROOM_LIST_REQ = 0x0BFF
 P_ROOM_LIST_ACK = 0x0CFF
 P_ROOM_LIST_END = 0x0DFF
@@ -292,6 +295,46 @@ def build_user_entry(account: str, ip: str, index: int = 1) -> bytes:
     return bytes([0x00]) + struct.pack("<H", index) + nul(account) + nul(ip)
 
 
+CHANNEL_NAME = "자유채널".encode("cp949").decode("latin-1")   # 패킷 문자열은 CP949 바이트를 latin-1 로 보관
+
+
+def lobby_user_packets() -> bytes:
+    """로비 접속자 목록 0x20FF, 0x1FFF..., 0x21FF.
+
+    클라 파서 (Rhakmu.exe 0x44DC40): payload[0]=flag(1 이면 무시), 이후 끝까지
+    {등급값 i16, 이름\\0, 둘째 문자열\\0} 반복. 등급값은 랭킹과 같은 '승 수'로 아이콘이 정해지고,
+    둘째 문자열이 비어 있지 않으면 다른 색으로 그린다 → 상대 IP 는 넣지 않고 비운다.
+    """
+    wins = {r["name"]: r["win"] for r in ranking_rows()}
+    names = sorted({c.account for c in STATE.clients if c.account}, key=lambda n: n.lower())
+    pkts = [pack_pkt(P_USER_LIST_ACK, b"")]
+    chunk = b""
+    for n in names:
+        entry = struct.pack("<h", max(0, min(32767, wins.get(n, 0)))) + nul(n) + nul("")
+        if len(chunk) + len(entry) > 4000:
+            pkts.append(pack_pkt(P_USER_LIST_REQ, bytes([0]) + chunk))
+            chunk = b""
+        chunk += entry
+    if chunk:
+        pkts.append(pack_pkt(P_USER_LIST_REQ, bytes([0]) + chunk))
+    pkts.append(pack_pkt(P_USER_LIST_END, b""))
+    return b"".join(pkts)
+
+
+def push_lobby_users(exclude=None) -> None:
+    """누가 들어오거나 나가면 로비 화면에 있는 사람들의 접속자 목록을 새로 보낸다.
+    목록을 한 번이라도 요청한(=로비 폼이 있는) 사람만, 방·게임 중인 사람은 제외 (게임 중 전송은 크래시)."""
+    data = None
+    for c in list(STATE.clients):
+        if c is exclude or not c.account or not c.lobby_list or c.room_title or c.in_game:
+            continue
+        data = data or lobby_user_packets()
+        try:
+            c.writer.write(data)
+        except Exception as e:
+            log.warning(f"lobby user push -> {c.peer}: {e}")
+
+
 def read_cstrings(data: bytes) -> List[str]:
     """Extract all null-terminated strings from bytes."""
     result = []
@@ -494,6 +537,7 @@ class ClientSession:
         self.room_title: str = ""
         self.in_game = False
         self.game_version = 0          # handshake 0x01FF: Rhakmu.exe 1.000d -> 1003, older 1.000 -> 1000
+        self.lobby_list = False        # 로비 접속자 목록을 요청한 적 있음 → 로비 화면이 떠 있어 갱신을 보내도 안전
         self._buf = b""
 
     @property
@@ -560,6 +604,8 @@ class ClientSession:
                     STATE.rooms.remove(r)
                     log.info(f"Room removed (disconnect) id={r.id} title={r.title!r}")
         log.info(f"Disconnected: {self.peer} account={self.account!r}")
+        if self.account:
+            push_lobby_users()
 
     async def _process(self):
         while len(self._buf) >= 4:
@@ -613,12 +659,23 @@ class ClientSession:
                 # Remove stale rooms from previous sessions
                 STATE.remove_rooms_for(account)
                 log.info(f"Login OK: {self.peer} account={account!r}")
+                push_lobby_users(exclude=self)
             else:
                 log.info(f"Login FAIL: {self.peer} account={account!r} result={result}")
             self.send(P_LOGIN, struct.pack("<I", result))
 
         elif ptype == P_CHAN_SEL:
-            self.send(P_CHAN_SEL, struct.pack("<I", 0))
+            # 채널은 하나뿐 — 어떤 이름이 와도 성공(0)으로 답하고 그 이름을 돌려준다.
+            names = read_cstrings(payload[2:]) if len(payload) > 2 else []
+            self.send(P_CHAN_SEL, bytes([0]) + nul(names[0] if names else CHANNEL_NAME))
+
+        elif ptype == P_CHAN_LIST:
+            # 'Channel' 버튼 (Rhakmu.exe 0x44E5B0 요청 / 0x44CC60 응답 파서)
+            users = sum(1 for c in STATE.clients if c.account)
+            log.info(f"  Channel list -> 1 channel, {users} users")
+            self.send(P_CHAN_LIST_BEG, b"")
+            self.send(P_CHAN_LIST, struct.pack("<hh", min(users, 32767), 1) + nul(CHANNEL_NAME))
+            self.send(P_CHAN_LIST_END, b"")
 
         elif ptype == P_RANK_LIST:
             # 랭킹 목록 요청 (Rhakmu.exe 0x44EDC0): [sort][start int32][end int32]
@@ -759,10 +816,10 @@ class ClientSession:
         self.send(P_CREATE_ROOM, struct.pack("<I", 0))
 
     async def _handle_user_list(self):
-        # Send channel user list: start, [members], end
-        self.send(P_USER_LIST_ACK, b"")
+        # Send channel user list: start(0x20FF), [entries 0x1FFF], end(0x21FF)
         room = STATE.find_room_by_title(self.room_title) if self.room_title else None
         if room:
+            self.send(P_USER_LIST_ACK, b"")
             # Send owner
             owner_client = next((c for c in STATE.clients if c.account == room.owner), None)
             owner_ip = owner_client.address_for(self) if owner_client else room.host_ip
@@ -772,9 +829,14 @@ class ClientSession:
                 mc = next((c for c in STATE.clients if c.account == member), None)
                 member_ip = mc.address_for(self) if mc else self.peer_ip
                 self.send(P_USER_LIST_REQ, build_user_entry(member, member_ip, 2 + i))
+            self.send(P_USER_LIST_END, b"")
         elif self.account:
-            self.send(P_USER_LIST_REQ, build_user_entry(self.account, self.peer_ip, 1))
-        self.send(P_USER_LIST_END, b"")
+            # 로비(채널) 접속자 목록: 로그인한 모든 사람. 상대 IP 는 보내지 않는다.
+            self.lobby_list = True
+            self.writer.write(lobby_user_packets())
+        else:
+            self.send(P_USER_LIST_ACK, b"")
+            self.send(P_USER_LIST_END, b"")
 
     async def _broadcast_member_list(self, room: "Room", exclude: "ClientSession" = None):
         """Send updated member list to all room members except the excluded client.

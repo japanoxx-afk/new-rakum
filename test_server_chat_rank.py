@@ -176,5 +176,72 @@ class RankPacketTests(TmpMatches):
         self.assertEqual(server.compute_ranking()['p00']['win'], 2)
 
 
+class ChannelAndLobbyTests(TmpMatches):
+    def test_channel_list_closes_waiting_dialog(self):
+        c = sess('26.0.0.1', 'seo')
+        sess('26.0.0.2', 'nyai')
+        asyncio.run(c._handle(server.P_CHAN_LIST, struct.pack('<hh', 0, 10)))
+        pk = packets(c.writer.data)
+        self.assertEqual([t for t, _ in pk], [0x09FF, 0x08FF, 0x0AFF])   # start, entries, end
+        users, no = struct.unpack_from('<hh', pk[1][1], 0)              # client reads 4 bytes, then name
+        self.assertEqual(users, 2)
+        self.assertEqual(cstrings(pk[1][1][4:]), [server.CHANNEL_NAME])
+
+    def test_channel_join_returns_ok_and_name(self):
+        c = sess('26.0.0.1', 'seo')
+        asyncio.run(c._handle(server.P_CHAN_SEL, struct.pack('<H', 0x8001) + server.nul(server.CHANNEL_NAME)))
+        (t, p), = packets(c.writer.data)
+        self.assertEqual((t, p[0]), (0x07FF, 0))
+        self.assertEqual(cstrings(p[1:]), [server.CHANNEL_NAME])
+
+    def parse_users(self, data):
+        pk = packets(data)
+        self.assertEqual(pk[0][0], 0x20FF)
+        self.assertEqual(pk[-1][0], 0x21FF)
+        names = []
+        for t, p in pk[1:-1]:
+            self.assertEqual((t, p[0]), (0x1FFF, 0))
+            off = 1
+            while off < len(p):                      # same walk as Rhakmu.exe 0x44DC40
+                off += 2
+                end = p.index(b'\0', off); names.append(p[off:end].decode('latin-1')); off = end + 1
+                end = p.index(b'\0', off); self.assertEqual(p[off:end], b''); off = end + 1   # no IPs
+        return names
+
+    def test_lobby_user_list_shows_everyone_without_ips(self):
+        a = sess('26.0.0.1', 'seo')
+        sess('26.0.0.2', 'nyai')
+        sess('26.0.0.3', '')                         # not logged in yet
+        asyncio.run(a._handle(server.P_USER_LIST_REQ, b''))
+        self.assertEqual(self.parse_users(a.writer.data), ['nyai', 'seo'])
+        self.assertNotIn(b'26.0.0', a.writer.data)
+
+    def test_join_and_leave_push_to_lobby_viewers_only(self):
+        a = sess('26.0.0.1', 'seo')
+        asyncio.run(a._handle(server.P_USER_LIST_REQ, b''))
+        busy = sess('26.0.0.3', 'gamer'); busy.lobby_list = True; busy.in_game = True
+        roomy = sess('26.0.0.4', 'roomy'); roomy.lobby_list = True; roomy.room_title = 'r'
+        fresh = sess('26.0.0.5', 'fresh')            # never asked: lobby form may not exist yet
+        a.writer.data = busy.writer.data = roomy.writer.data = fresh.writer.data = b''
+        b = server.ClientSession(None, W('26.0.0.2'))
+        server.STATE.clients.append(b)
+        asyncio.run(b._handle(server.P_LOGIN, server.nul('nyai') + server.nul('pw')))
+        self.assertIn('nyai', self.parse_users(a.writer.data))
+        self.assertEqual(busy.writer.data + roomy.writer.data + fresh.writer.data, b'')
+        a.writer.data = b''
+        b._cleanup()
+        self.assertNotIn('nyai', self.parse_users(a.writer.data))
+
+    def test_room_member_list_unchanged(self):
+        host = sess('26.0.0.1', 'seo')
+        room = server.Room(id=1, title='seo', map_name='m', owner='seo', host_ip='26.0.0.1', max_players=4)
+        server.STATE.rooms.append(room)
+        host.room_title = 'seo'
+        asyncio.run(host._handle(server.P_USER_LIST_REQ, b''))
+        pk = packets(host.writer.data)
+        self.assertEqual([t for t, _ in pk], [0x20FF, 0x1FFF, 0x21FF])
+        self.assertEqual(pk[1][1], server.build_user_entry('seo', '26.0.0.1', 1))
+
+
 if __name__ == '__main__':
     unittest.main()
