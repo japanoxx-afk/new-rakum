@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 UNITS, UNIT_SIZE, UNIT_COUNT = 0x775A38, 0x138, 0x6A6
 PLAYERS, PLAYER_SIZE, PLAYER_COUNT = 0x7F7908, 0x11E0, 8
 MAP_NAME, PLAY_SECONDS, LOCAL_PLAYER = 0x6E10F6, 0x6E669C, 0xB412CC
+FRAME, SEED, GAME_OPTIONS = 0xB412B4, 0x6E1A78, 0x6DFF88   # 프레임 번호, 대전 난수 시드(srand), 대전 설정 바이트
 UNIT_NAMES, NAME_SIZE, TYPE_COUNT = 0x5038EC, 0x80, 0xD2
 TYPE_INFO, TYPE_INFO_STRIDE = 0x4FCD88, 0x1C
 TYPE_STATS, TYPE_STATS_STRIDE = 0x4FE474, 0x14
@@ -186,6 +187,15 @@ class GameReader:
 
     def units(self) -> list[Unit]:
         return parse_units(self.mem.read(UNITS, UNIT_SIZE * UNIT_COUNT))
+
+    def frame(self) -> int:
+        return self.u32(FRAME)
+
+    def seed(self) -> int:
+        return self.u32(SEED)
+
+    def options(self) -> bytes:
+        return self.mem.read(GAME_OPTIONS, 8)
 
     def local_player(self) -> int:
         return self.mem.read(LOCAL_PLAYER, 1)[0]

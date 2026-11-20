@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 import replay_memory as rm
+import replay_record_patch as rrp
 import replay_model as M
 import replay_recorder as rr
 
@@ -21,7 +22,19 @@ class FakeGame:
         self.tstats = bytearray(rm.TYPE_STATS_STRIDE * rm.TYPE_COUNT)
         self.heap = bytearray(0x10000)
         self.seconds = 0
+        self.frame = 0
+        self.seed = 0x1234ABCD
         self.map = b"DATA\\MAPS\\[2]Test.rkm"
+        self.sec_va = 0x1084000
+        self.ring = bytearray(rrp.RING + 0x10)
+        self.pe = bytearray(0x1000)                    # 최소 PE 머리: .rkrec 섹션 하나
+        struct.pack_into("<I", self.pe, 0x3C, 0x80)
+        self.pe[0x80:0x84] = b"PE\0\0"
+        struct.pack_into("<HH", self.pe, 0x80 + 6, 1, 0)
+        struct.pack_into("<H", self.pe, 0x80 + 20, 0xE0)
+        h = 0x80 + 24 + 0xE0
+        self.pe[h:h + 8] = rrp.SECTION_NAME
+        struct.pack_into("<I", self.pe, h + 12, self.sec_va - 0x400000)
         for t, name, worker, hp in ((5, "일꾼", True, 40), (7, "검사", False, 60), (20, "병영", False, 900)):
             self.names[t * rm.NAME_SIZE:t * rm.NAME_SIZE + len(name.encode('cp949'))] = name.encode('cp949')
             struct.pack_into("<I", self.info, t * rm.TYPE_INFO_STRIDE, 0x9000000 + t * 0x100)
@@ -44,6 +57,20 @@ class FakeGame:
         struct.pack_into("<hBxhh", self.units, o + 0xE, typ, owner, x, y)
         struct.pack_into("<fh", self.units, o + 0x4C, progress, producing)
 
+    def dispatch(self, player, batch):
+        """게임 안 기록 코드(.rkrec)와 같은 방식으로 링 버퍼에 덧붙인다."""
+        need = (8 + len(batch) + 3) & ~3
+        total, pos = struct.unpack_from("<II", self.ring, 0)
+        if pos + need > rrp.RING:
+            rem = rrp.RING - pos
+            if rem >= 4:
+                struct.pack_into("<I", self.ring, 0x10 + pos, rrp.WRAP)
+            total += rem; pos = 0
+        o = 0x10 + pos
+        struct.pack_into("<IBBH", self.ring, o, self.frame, player, 0, len(batch))
+        self.ring[o + 8:o + 8 + len(batch)] = batch
+        struct.pack_into("<II", self.ring, 0, total + need, pos + need)
+
     def kill(self, uid):
         struct.pack_into("<h", self.units, uid * rm.UNIT_SIZE + 8, 0)
 
@@ -51,7 +78,9 @@ class FakeGame:
         regions = ((rm.UNITS, self.units), (rm.PLAYERS, self.players), (rm.UNIT_NAMES, self.names),
                    (rm.TYPE_INFO, self.info), (rm.TYPE_STATS, self.tstats), (0x9000000, self.heap),
                    (rm.MAP_NAME, self.map + bytes(300)), (rm.PLAY_SECONDS, struct.pack("<I", self.seconds)),
-                   (rm.LOCAL_PLAYER, b"\x00"))
+                   (rm.LOCAL_PLAYER, b"\x00"), (rm.FRAME, struct.pack("<I", self.frame)),
+                   (rm.SEED, struct.pack("<I", self.seed)), (rm.GAME_OPTIONS, bytes(range(8))),
+                   (0x400000, self.pe), (self.sec_va + rrp.BUF, self.ring))
         for base, data in regions:
             if base <= addr and addr + size <= base + len(data):
                 return bytes(data[addr - base:addr - base + size])
@@ -104,6 +133,12 @@ class RecordAndModelTests(unittest.TestCase):
 
     def step(self, dt=0.5, advance=True):
         self.clock[0] += dt
+        if advance:
+            for _ in range(int(dt * 30)):               # 30 프레임/초, 5프레임마다 턴
+                self.g.frame += 1
+                if self.g.frame % 5 == 0:
+                    for p in (0, 1):
+                        self.g.dispatch(p, struct.pack("<HHIH", 0x2000, 10, self.g.frame // 5, 7))
         if advance and int(self.clock[0]) != int(self.clock[0] - dt):
             self.g.seconds += 1
         self.rec.poll()
@@ -144,6 +179,7 @@ class RecordAndModelTests(unittest.TestCase):
         h, dur = M.load_header(files[0])
         self.assertEqual([(p["name"], p["race"]) for p in h["players"]], [("aa", 0), ("big", 2)])
         self.assertEqual(h["map"], "DATA\\MAPS\\[2]Test.rkm")
+        self.assertEqual((h["seed"], h["options"], h["commands"], h["format"]), (0x1234ABCD, "0001020304050607", True, 2))
         rp = M.load(files[0])
         self.assertEqual(rp.map_bytes(), b"J2M\0fake")
         self.assertAlmostEqual(rp.duration, dur)
@@ -157,6 +193,16 @@ class RecordAndModelTests(unittest.TestCase):
         self.assertEqual(fr["b"][0][:2], [10, 7])
         units, _ = rp.state_at(rp.duration)
         self.assertEqual(sorted(units), [1, 10, 11])
+        # 명령 기록: 프레임 순서대로, 두 플레이어 모두, 5프레임 간격, 빠짐 없음
+        cmds = [c for fr in rp.frames for c in fr.get("cmd", ())]
+        frames = [c[0] for c in cmds]
+        self.assertEqual(frames, sorted(frames))
+        p0 = [c[0] for c in cmds if c[1] == 0]
+        self.assertTrue(all(b - a == 5 for a, b in zip(p0, p0[1:])), p0[:10])
+        self.assertEqual(len(p0), len([c for c in cmds if c[1] == 1]))
+        import base64 as b64
+        self.assertEqual(struct.unpack("<HHIH", b64.b64decode(cmds[0][2]))[0], 0x2000)
+        self.assertIn("f", rp.frames[1])
         st = M.stats(rp)["players"]
         self.assertEqual(st[1]["units"], {"검사": 1})
         self.assertEqual(st[0]["lost_units"], 1)
@@ -184,6 +230,95 @@ class RecordAndModelTests(unittest.TestCase):
         self.rec.find_pid = lambda: None
         self.rec._drop()
         self.assertEqual(len(list((self.base / "replays").glob("*.rkr"))), 1)
+
+
+class CommandRingTests(unittest.TestCase):
+    def test_reader_handles_wrap_and_overflow(self):
+        g = FakeGame()
+        rd = rrp.CommandReader(g.read, rrp.find_section(g.read))
+        self.assertEqual(rd.poll(), ([], 0))
+        big = bytes(range(256)) * 15                    # 3840 바이트 묶음
+        got = []
+        for k in range(rrp.RING // 3000):               # 링을 한 바퀴 넘게 (중간에 자주 읽음)
+            g.frame = k
+            g.dispatch(k % 3, big[:100 + k % 50])
+            if k % 50 == 0:
+                c, lost = rd.poll(); got += c; self.assertEqual(lost, 0)
+            if k % 7 == 0:
+                g.dispatch(1, big)
+        c, lost = rd.poll(); got += c
+        self.assertEqual(lost, 0)
+        main = [x for x in got if len(x[2]) != len(big)]
+        self.assertEqual([x[0] for x in main], list(range(rrp.RING // 3000)))
+        self.assertTrue(all(x[2] == big[:100 + x[0] % 50] and x[1] == x[0] % 3 for x in main))
+        for _ in range(rrp.RING // 1000):               # 읽지 않고 링보다 많이 쓰면 잃은 양을 알려 줌
+            g.dispatch(0, big)
+        c, lost = rd.poll()
+        self.assertGreater(lost, 0)
+
+    def test_in_game_code_writes_same_layout(self):
+        """실제 .rkrec 코드를 에뮬레이터로 실행: 기록 형식과 원래 0x4407E0 호출이 그대로인지."""
+        try:
+            from unicorn import Uc, UC_ARCH_X86, UC_MODE_32, UC_HOOK_CODE
+            from unicorn.x86_const import UC_X86_REG_ESP
+        except ImportError as e:
+            self.skipTest(str(e))
+        mu = Uc(UC_ARCH_X86, UC_MODE_32)
+        base = 0x1084000
+        mu.mem_map(0x400000, 0x100000)                 # 0x4407E0 (가짜), 0x44AAC1
+        mu.mem_map(0xB00000, 0x100000)                 # 프레임 번호
+        mu.mem_map(base, rrp.VIRTUAL_SIZE)
+        mu.mem_map(0x2000000, 0x100000)
+        mu.mem_write(base, rrp.body())
+        mu.mem_write(0x4407E0, b"\xc3")
+        mu.mem_write(0x44AAC1, b"\xf4")
+        seen = []
+        mu.hook_add(UC_HOOK_CODE, lambda uc, a, s, _: seen.append(struct.unpack("<III", uc.mem_read(uc.reg_read(UC_X86_REG_ESP) + 4, 12))),
+                    begin=0x4407E0, end=0x4407E0)
+        rd = rrp.CommandReader(lambda a, n: bytes(mu.mem_read(a, n)), base)
+        rd.poll()
+        batches = [(3, b"\x00\x20\x0a\x00" + bytes(range(6))), (1, b"\x02\x40" + bytes(51)), (0, b"")]
+        for k, (player, data) in enumerate(batches * 3):
+            mu.mem_write(rrp.FRAME, struct.pack("<I", 1000 + 5 * k))
+            mu.mem_write(0x2010000, data)
+            esp = 0x2080000
+            mu.mem_write(esp, struct.pack("<IIII", 0x44AAC1, player, 0x2010000, len(data)))
+            mu.reg_write(UC_X86_REG_ESP, esp)
+            mu.emu_start(base, 0x44AAC1, count=10000)
+            self.assertEqual(seen[-1], (player, 0x2010000, len(data)))   # 원래 함수에 같은 인자
+            self.assertEqual(mu.reg_read(UC_X86_REG_ESP), esp + 4)
+        got, lost = rd.poll()
+        self.assertEqual(lost, 0)
+        self.assertEqual([(f, p, b) for f, p, b in got],
+                         [(1000 + 5 * k, p, d) for k, (p, d) in enumerate(batches * 3)])
+
+
+class RecordPatchTests(unittest.TestCase):
+    def test_patch_roundtrip_in_every_combination(self):
+        exe = Path(__file__).resolve().parent / "game_backup" / "Rhakmu.exe"
+        if not exe.is_file():
+            self.skipTest("game_backup/Rhakmu.exe 없음")
+        import hotkey_patch as hk, minimap_patch as mm, selection_patch as sp
+        o = exe.read_bytes()
+        try:
+            self.assertEqual(rrp.assemble(), rrp.CODE)
+        except ImportError:
+            pass
+        for wide in (False, True):
+            for hot in (False, True):
+                off = mm.build(o, False, True, hot, wide, False)
+                on = mm.build(o, False, True, hot, wide, True)
+                under = hk.strip(on)
+                self.assertTrue(rrp.state(under))
+                self.assertFalse(rrp.state(hk.strip(off)))
+                self.assertEqual(rrp.strip(under), hk.strip(off))
+                self.assertEqual(mm.build(on, False, True, hot, wide, False), off)
+                self.assertEqual(mm.build(off, False, True, hot, wide, True), on)
+                self.assertEqual(sp.state(rrp.strip(under)), wide)
+                sec = rrp.find_section(lambda a, n: __import__("pefile").PE(data=on).get_memory_mapped_image()[a - 0x400000:a - 0x400000 + n])
+                self.assertIsNotNone(sec)
+                site = on[rrp.SITE:rrp.SITE + 5]
+                self.assertEqual(rrp.SITE_VA + 5 + struct.unpack("<i", site[1:])[0], sec)   # 호출이 섹션 코드로
 
 
 class ViewerTests(unittest.TestCase):

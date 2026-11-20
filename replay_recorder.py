@@ -2,7 +2,8 @@
 
 파일 = gzip 으로 압축한 JSON 줄:
   1줄: 머리 {"format": 1, "date", "map", "map_rkm"(base64), "players": [...], "types": {...}, "local"}
-  나머지: 장면 {"t": 경기 초, "k": [유닛 전체] | "c": [바뀐 유닛], "x": [사라진 번호],
+  나머지: 장면 {"t": 경기 초, "f": 게임 프레임, "k": [유닛 전체] | "c": [바뀐 유닛], "x": [사라진 번호],
+               "cmd": [[프레임, 플레이어, base64 명령 묶음]] (게임 엔진 재생용, replay_record_patch),
                "p": [[금, 물, 카르마, 글로리, 인구 현재, 인구 최대] * 참가자], "b": [[건물, 만드는 종류, 진행]], "s": [카운터]}
   유닛 = [번호, 종류, 소유, x, y, 체력, 표시]  (표시: 1 건물, 2 건물·금광 안, 4 생산 중)
 게임 시계가 멈추면(일시정지·로비) 기록하지 않고, 시계가 줄어들거나 맵이 바뀌면 새 파일을 연다.
@@ -20,8 +21,9 @@ import time
 from pathlib import Path
 
 import replay_memory as rm
+import replay_record_patch as rrp
 
-FORMAT = 1
+FORMAT = 2                     # 2: 명령 기록(cmd)·시드·프레임 추가
 KEYFRAME_EVERY = 20.0
 COUNTERS_EVERY = 5.0
 POLL = 0.5
@@ -48,10 +50,16 @@ class MatchWriter:
         self.last_key = -1e9
         self.last_counters = -1e9
         self.frames = 0
+        self.commands = 0
 
-    def frame(self, t: float, units, players, active):
+    def frame(self, t: float, units, players, active, gframe=None, cmds=()):
         rows = {u.id: u.row() for u in units if not u.flags & rm.F_IN_PRODUCTION}
         fr = {"t": round(t, 2)}
+        if gframe is not None:
+            fr["f"] = gframe
+        if cmds:
+            fr["cmd"] = [[f, p, base64.b64encode(b).decode()] for f, p, b in cmds]
+            self.commands += len(cmds)
         if t - self.last_key >= KEYFRAME_EVERY:
             fr["k"] = list(rows.values())
             self.last_key = t
@@ -73,6 +81,7 @@ class MatchWriter:
             self.last_counters = t
         self.f.write(json.dumps(fr, separators=(",", ":")) + "\n")
         self.frames += 1
+        self.last_t = fr["t"]
 
     def close(self):
         if self.f:
@@ -102,6 +111,9 @@ class Recorder:
         self.map = ""
         self.active: list = []
         self.status = "대기"
+        self.cmd_reader = None
+        self.pending_cmds: list = []
+        self.lost_bytes = 0
         self._stop = threading.Event()
         self.thread = None
 
@@ -118,6 +130,13 @@ class Recorder:
             except OSError:
                 self.mem = None
                 return
+            try:
+                sec = rrp.find_section(self.mem.read)
+                self.cmd_reader = rrp.CommandReader(self.mem.read, sec) if sec else None
+                if self.cmd_reader:
+                    self.cmd_reader.poll()                 # 기준점: 지금부터 들어오는 명령만
+            except OSError:
+                self.cmd_reader = None
         try:
             secs = self.reader.play_seconds()
             mapname = self.reader.map_name()
@@ -127,6 +146,13 @@ class Recorder:
         now = self.clock()
         if self.writer and (secs < self.last_seconds or (mapname and mapname != self.map)):
             self._finish("새 경기")
+        if self.cmd_reader:
+            try:
+                cmds, lost = self.cmd_reader.poll()
+                self.pending_cmds += cmds
+                self.lost_bytes += lost
+            except OSError:
+                pass
         if secs != self.last_seconds:
             if secs > self.last_seconds >= 0:
                 self.seconds_at = now
@@ -146,7 +172,12 @@ class Recorder:
         if self.writer is None:
             self._start(mapname, players, active)
         t = secs + min(0.99, now - self.seconds_at)
-        self.writer.frame(t, units, players, self.active)
+        try:
+            gframe = self.reader.frame()
+        except OSError:
+            gframe = None
+        cmds, self.pending_cmds = self.pending_cmds, []
+        self.writer.frame(t, units, players, self.active, gframe, cmds)
         self.status = f"기록 중: {os.path.basename(self.map)} {int(t) // 60}:{int(t) % 60:02d}"
 
     def _start(self, mapname, players, active):
@@ -159,23 +190,35 @@ class Recorder:
                 rkm = p.read_bytes()
         except OSError:
             pass
-        try:
-            types = self.reader.type_table()
-            local = self.reader.local_player()
-        except OSError:
-            types, local = {}, -1
+        def safe(fn, default):
+            try:
+                return fn()
+            except OSError:
+                return default
+        types = safe(self.reader.type_table, {})
+        local = safe(self.reader.local_player, -1)
+        seed = safe(self.reader.seed, None)
+        options = safe(lambda: self.reader.options().hex(), "")
+        frame0 = safe(self.reader.frame, None)
         stamp = datetime.datetime.now()
         header = {"format": FORMAT, "date": stamp.isoformat(timespec="seconds"), "map": mapname,
                   "map_rkm": base64.b64encode(rkm).decode() if rkm else "",
                   "players": [{"index": i, "name": players[i].name, "race": players[i].race} for i in active],
-                  "types": {str(k): v for k, v in types.items()}, "local": local}
+                  "types": {str(k): v for k, v in types.items()}, "local": local,
+                  "seed": seed, "options": options, "frame0": frame0, "commands": self.cmd_reader is not None,
+                  "races": [players[i].race for i in range(rm.PLAYER_COUNT)],
+                  "slots": [players[i].active for i in range(rm.PLAYER_COUNT)]}
         name = f"{stamp:%Y%m%d_%H%M%S}_{_safe(Path(mapname.replace(chr(92), '/')).stem)}.rkr"
         self.writer = MatchWriter(replay_dir(self.base_dir) / name, header)
 
     def _finish(self, why=""):
         if self.writer:
+            if self.pending_cmds:                       # 마지막 장면 뒤에 들어온 명령
+                self.writer.f.write(json.dumps({"t": self.writer.last_t, "cmd": [[f, p, base64.b64encode(b).decode()]
+                                                                                for f, p, b in self.pending_cmds]}) + "\n")
             self.writer.close()
             self.writer = None
+        self.pending_cmds = []
         self.last_seconds = -1
         self.seconds_at = None
         self.status = "대기" if not why else f"대기 ({why})"
@@ -187,7 +230,7 @@ class Recorder:
                 self.mem.close()
             except OSError:
                 pass
-        self.mem = self.reader = None
+        self.mem = self.reader = self.cmd_reader = None
 
     # ---- 백그라운드 ----
     def start(self):
