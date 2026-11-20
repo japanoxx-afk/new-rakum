@@ -36,6 +36,7 @@ import map_preview
 import rally_gold_patch
 import hotkey_patch
 import selection_patch
+import game_version
 import game_address_patch
 from tkinter import ttk, messagebox
 
@@ -49,7 +50,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9047"
+APP_VERSION = "0.9048"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1575,6 +1576,10 @@ class App(tk.Tk):
             raise ValueError('해당 경로에 Launcher.exe와 Rhakmu.exe가 있어야 합니다.')
         exe = path / PATCH_EXE
         minimap_patch.ensure_closed(exe)
+        # 모든 PC가 같은 게임판(1.000d)이어야 방 입장이 된다: 아니면 런처에 든 1.000d 로 교체
+        note = game_version.ensure(exe)
+        if note:
+            messagebox.showinfo('게임 버전 맞춤', note)
         highres, why = self._highres_ready(path) if self.cfg.get('viewport_1280', True) else (False, '')
         # Build and validate the complete result in memory; one atomic replacement.
         hotkeys = bool(self.cfg.get('hotkeys', True))
