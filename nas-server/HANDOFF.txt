@@ -21,7 +21,15 @@ Synology NAS + Debian VM(Docker, Portainer, 2 vCPU, RAM 2GB)에서 24시간 운�
 [업로드됨] 2026-11-21 사용자 보고: 업로드 폴더 내용을 NAS game-servers/rakmu-live/ 에 올림 (폴더 이름이 rakmu 가 아니라
            rakmu-live 이므로 compose.yaml 과 문서 경로를 rakmu-live 로 맞춤). 업로드된 compose.yaml 은 이전(rakmu 경로)
            판이라 NAS 의 사본만 교체 필요 — Portainer 에는 저장소의 최신 compose.yaml 을 붙여 넣는다.
-[미배포]   Portainer 스택 생성 — 진행 중. 사용자가 README.txt 3장 5번부터 직접 한다.
+[배포 완료] 2026-11-21 01:54 (KST) 사용자가 Portainer 에 스택 rakmu 생성 (커밋 075bda5 의 compose.yaml, 환경변수 없음).
+           컨테이너 rakmu-server, 이미지 python:3.12-slim, 상태 healthy, IP 172.18.0.2 (bridge),
+           게시 포트 30010->11223/tcp, 30011->11225/tcp, 30012->47584/udp.
+[외부 시험 완료] 같은 날 개발 PC(외부망)에서:
+           - http://akansas.synology.me:30011/version  → {"server_version": "0.9012"}
+           - http://akansas.synology.me:30011/matches.json → []  (새 데이터 폴더, 전적 없음)
+           - TCP akansas.synology.me:30010 에 게임과 같은 0x01FF 핸드셰이크 → ff 01 08 00 00 00 00 00 (정상 OK)
+           healthy = 컨테이너가 rakmu-live/data 로 chdir·import 에 성공했다는 뜻 (실패 시 종료됨).
+[미시험]   UDP 30012, 실제 게임 클라이언트 접속(런처 미지원, 6장), 멀티플레이 대전.
 [Portainer 에서 확인된 사실 (2026-11-21, 사용자 화면 캡처)]
   - Portainer CE, 환경 이름 local, Docker Standalone 29.10.0, 2 cores, 2.1GB.
   - 볼륨 game_servers_data: driver local, 옵션 type=none, o=bind, device=/mnt/game-servers (NAS 연결 확인),
@@ -86,7 +94,8 @@ rakmu-test 의 실제 compose/코드는 확인하지 못했다(확인 필요). �
 --------------------------------------
 (1) [완료] 사용자 결정: rakmu-test 와 나란히 실행(30010~30012). Environment variables 는 넣지 않는다(기본값 사용).
     30010~30012 가 다른 컨테이너에서 쓰이지 않는지는 배포 전에 Portainer 에서 확인(README 3장 7번).
-(2) 사용자 배포: README 3장 → 4장 확인 결과(/version 응답, Test-NetConnection, healthy, data/server.log 생성)를 여기에 기록.
+(2) [완료] 배포 및 외부 HTTP/로비 TCP 확인 (2장 기록). 남은 확인: File Station 에서 rakmu-live/data/server.log 생성 여부,
+    스택 Stop→Start 후 데이터 유지.
 (3) 접속 경로 선택 (README 6장):
     A) 서버 소유자에게 외부 TCP 11223→VM 30010, TCP 11225→VM 30011, UDP 47584→VM 30012 전달 요청 (코드 수정 없음)
     B) 런처 변경안 (미구현, 선택):
