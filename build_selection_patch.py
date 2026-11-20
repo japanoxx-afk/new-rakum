@@ -129,7 +129,7 @@ def build():
     for va, reg in UI_CLAMP.items():
         old = data[va - BASE: va - BASE + 7]
         assert old == bytes.fromhex('0fbf05' if reg == 'eax' else '0fbf0d') + struct.pack('<I', 0x80083C), hex(va)
-        target = sp.SECTION_VA + sp.STUB_OFFSET[reg]
+        target = sp.IMAGE + sp.STUB_OFFSET[reg]          # VA (image base + RVA), not the RVA
         edits[va] = (old, b'\xe8' + struct.pack('<i', target - (va + 5)) + b'\x90\x90')
 
     # formation (move-in-group spacing): grow the two stack arrays inside the existing frame

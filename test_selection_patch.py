@@ -19,6 +19,7 @@ FLAGS, LEADER, CUR_GROUP = 0xB412E4, 0xB412D0, 0xB412CE
 TYPEPTR = 0x4FCD88
 CMD_OBJ, CMD_BUF = 0x2200000, 0x2201000
 STUB = 0x3000000
+MOVSX = bytes.fromhex('0fbf')      # movsx r32, word [disp32]
 RET = STUB + 0xF00
 
 
@@ -241,6 +242,33 @@ class SelectionPatchTests(unittest.TestCase):
             call(sp.IMAGE + sp.STUB_OFFSET['ecx'])
             from unicorn.x86_const import UC_X86_REG_ECX
             self.assertEqual(mu.reg_read(UC_X86_REG_ECX), want)
+
+    def test_patched_calls_land_in_the_section(self):
+        """v0.9045 버그: call 대상이 RVA(0xC77000)로 계산돼 게임 시작 직후 정보 창 그리기에서 크래시."""
+        lo, hi = sp.IMAGE, sp.IMAGE + sp.RAW_SIZE
+        calls = [(o, b) for o, a, b in sp.SITES if len(a) == 7 and a[:2] == MOVSX and b[0] == 0xE8]
+        self.assertEqual(len(calls), 4)
+        for off, after in calls:
+            va = 0x400000 + off
+            target = va + 5 + struct.unpack('<i', after[1:5])[0]
+            self.assertTrue(lo <= target < hi, hex(target))
+
+    def test_panel_call_sites_run_and_cap_at_twelve(self):
+        """정보 창 함수 안의 실제 패치 위치(call + nop)를 그대로 실행한다."""
+        from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_ESP
+        mu, call, unit, rd16, calls = self._emu(self.wide)
+        for off, before, after in sp.SITES:
+            if not (len(before) == 7 and before[:2] == MOVSX and after[0] == 0xE8):
+                continue
+            va = 0x400000 + off
+            reg = UC_X86_REG_ECX if before[2] == 0x0D else UC_X86_REG_EAX
+            for n, want in ((20, 12), (12, 12), (7, 7), (0, 0)):
+                mu.mem_write(SEL_N, struct.pack('<h', n))
+                mu.reg_write(UC_X86_REG_ESP, 0x2080000)
+                mu.reg_write(reg, 0xDEAD)
+                mu.emu_start(va, va + len(after), count=50)
+                self.assertEqual(mu.reg_read(reg), want, (hex(va), n))
+                self.assertEqual(mu.reg_read(UC_X86_REG_ESP), 0x2080000)
 
     def test_hotkey_period_selects_up_to_twenty_four(self):
         mu, call, unit, rd16, calls = self._emu(self.wide)
