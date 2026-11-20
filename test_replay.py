@@ -639,6 +639,85 @@ class InGameHookTests(unittest.TestCase):
         self.run_entry(mu, "panel", 0x4D65F8)
         self.assertEqual(seen[-1][0], 0)
 
+    def cheat_machine(self, multi):
+        from unicorn import UC_HOOK_CODE
+        mu, rd = self.machine()
+        self.cheat_calls = []
+        mu.mem_write(0xB412CB, bytes([multi]))
+        mu.mem_write(0xB412CC, b"\x01")
+        mu.mem_write(0x106A650, struct.pack("<I", 0x1234))
+        for at, name in ((0x448110, "send"), (0x404C70, "orig_match"), (0x404990, "orig_exec"), (0x4DA9C0, "msg")):
+            mu.mem_write(at, b"\xc3")
+        def hook(name):
+            def f(uc, a, sz, _):
+                sp = uc.reg_read(self.regs[0])
+                arg0 = struct.unpack("<I", uc.mem_read(sp + 4, 4))[0]
+                if name == "msg":
+                    arg0 = bytes(uc.mem_read(arg0, 48)).split(b"\0")[0].decode("cp949")
+                self.cheat_calls.append((name, arg0))
+            return f
+        for at, name in ((0x448110, "send"), (0x404C70, "orig_match"), (0x404990, "orig_exec"), (0x4DA9C0, "msg")):
+            mu.hook_add(UC_HOOK_CODE, hook(name), begin=at, end=at)
+        return mu
+
+    def call_thiscall(self, mu, entry, arg, ret, ebp=0x6666):
+        """[esp] 돌아갈 곳, [esp+4] 인자 1개 (ret 4 로 끝남)."""
+        from unicorn.x86_const import UC_X86_REG_EAX
+        ESP, ECX, EBP = self.regs
+        mu.mem_write(ret, b"\xf4")
+        esp = 0x2080000
+        mu.mem_write(esp, struct.pack("<II", ret, arg))
+        mu.reg_write(ESP, esp)
+        mu.reg_write(EBP, ebp)
+        mu.reg_write(ECX, 0x6E66C8)
+        mu.emu_start(self.BASE + rrp.OFF[entry], ret, count=100000)
+        return mu.reg_read(UC_X86_REG_EAX), mu.reg_read(ESP) - esp, mu.reg_read(EBP)
+
+    def test_cheat_money_single_player(self):
+        mu = self.cheat_machine(0)
+        pl = 0x7F7908 + 1 * 0x11E0
+        mu.mem_write(pl, struct.pack("<h", 15))
+        mu.mem_write(pl + 0x864, struct.pack("<iiii", 10, 20, 30, 40))
+        mu.mem_write(0x2010000, b"MoNeY\0")
+        eax, moved, ebp = self.call_thiscall(mu, "cheatmatch", 0x2010000, 0x404D4F)
+        self.assertEqual((eax & 0xFFFF, moved, ebp), (1, 8, 0x6666))         # 처리함, ret 4
+        self.assertEqual(struct.unpack("<iiii", mu.mem_read(pl + 0x864, 16)), (50010, 50020, 50030, 50040))
+        self.assertEqual(struct.unpack("<h", mu.mem_read(pl, 2))[0], 1015)    # 인구 최대 +1000
+        self.assertEqual(self.cheat_calls, [("msg", "치트: 자원 +50000, 인구 제한 해제")])
+        self.call_thiscall(mu, "cheatmatch", 0x2010000, 0x404D4F)            # 두 번째: 자원만 더, 인구 그대로
+        self.assertEqual(struct.unpack("<h", mu.mem_read(pl, 2))[0], 1015)
+
+    def test_cheat_in_multiplayer_goes_through_command(self):
+        mu = self.cheat_machine(1)
+        mu.mem_write(0x2010000, b"speed\0")
+        eax, moved, ebp = self.call_thiscall(mu, "cheatmatch", 0x2010000, 0x404D4F)
+        self.assertEqual((eax & 0xFFFF, moved), (1, 8))
+        self.assertEqual(self.cheat_calls, [("send", rrp.CHEAT_SPEED)])     # 명령 0x4013 으로 모두에게
+        self.assertEqual(struct.unpack("<H", mu.mem_read(0xB412C8, 2))[0], 0)  # 바로 적용하지 않음
+        # 명령 처리 (0x440C65): 보낸 플레이어는 처리 함수 틀의 [ebp+8]
+        mu.mem_write(0x2070000 + 8, b"\x01")
+        self.cheat_calls.clear()
+        eax, moved, ebp = self.call_thiscall(mu, "cheatexec", rrp.CHEAT_SPEED, 0x440C6A, ebp=0x2070000)
+        self.assertEqual((moved, ebp), (8, 0x2070000))
+        self.assertEqual(struct.unpack("<H", mu.mem_read(0xB412C8, 2))[0], 8)  # 빠른 생산 켜짐
+        self.assertEqual(self.cheat_calls, [("msg", "치트: 빠른 생산 켜짐")])
+        self.call_thiscall(mu, "cheatexec", rrp.CHEAT_SPEED, 0x440C6A, ebp=0x2070000)
+        self.assertEqual(struct.unpack("<H", mu.mem_read(0xB412C8, 2))[0], 0)
+        self.assertEqual(self.cheat_calls[-1], ("msg", "치트: 빠른 생산 꺼짐"))
+        pl = 0x7F7908 + 1 * 0x11E0                                            # money 는 보낸 플레이어(1)에게만
+        self.call_thiscall(mu, "cheatexec", rrp.CHEAT_MONEY, 0x440C6A, ebp=0x2070000)
+        self.assertEqual(struct.unpack("<i", mu.mem_read(pl + 0x864, 4))[0], 50000)
+        self.assertEqual(struct.unpack("<i", mu.mem_read(0x7F7908 + 0x864, 4))[0], 0)
+
+    def test_other_text_and_cheats_go_to_the_game(self):
+        mu = self.cheat_machine(0)
+        mu.mem_write(0x2010000, "moneyx\0".encode())
+        self.call_thiscall(mu, "cheatmatch", 0x2010000, 0x404D4F)
+        self.assertEqual(self.cheat_calls, [("orig_match", 0x2010000)])     # 원래 치트 찾기로
+        self.cheat_calls.clear()
+        self.call_thiscall(mu, "cheatexec", 2, 0x440C6A, ebp=0x2070000)
+        self.assertEqual(self.cheat_calls, [("orig_exec", 2)])               # 원래 치트 번호는 원래 함수로
+
     def test_overlay_off_when_recording(self):
         mu, rd = self.machine()
         mu.mem_write(0x4D4440, b"\xc3")
