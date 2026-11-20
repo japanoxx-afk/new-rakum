@@ -1,162 +1,172 @@
-﻿HANDOFF ???쇳겕臾??쒕쾭 NAS 諛고룷 (?ㅼ쓬 ?묒뾽???ㅻⅨ AI ??
+HANDOFF — 라크무 서버 NAS 배포 (다음 작업자/다른 AI 용)
 =====================================================
-理쒖쥌 媛깆떊: 2026-11-21
-鍮꾨?踰덊샇쨌?좏겙? ?ш린???곸? ?딅뒗?? ?댁쁺?덈궡 ?먮Ц(?쒕쾭 ?뚯쑀???쒓났)? ??μ냼???ｌ? ?딅뒗??
+최종 갱신: 2026-11-21
+비밀번호·토큰은 여기에 적지 않는다. 운영안내 원문(서버 소유자 제공)은 저장소에 넣지 않는다.
 
-1. 紐⑺몴
+1. 목표
 -------
-?곗쿂媛 濡쒖뺄(127.0.0.1)?먯꽌 ?꾩슦???쇳겕臾??쒕쾭(??μ냼 猷⑦듃 server.py)瑜??쒕쾭 ?뚯쑀?먭? ?쒓났??Synology NAS + Debian VM(Docker, Portainer, 2 vCPU, RAM 2GB)?먯꽌 24?쒓컙 ?댁쁺?쒕떎.
-?ъ슜?먮뒗 ?몃??먯꽌 ??File Station :5001, Portainer :9443)?쇰줈留??묎렐?쒕떎. SSH ?놁쓬.
+런처가 로컬(127.0.0.1)에서 띄우는 라크무 서버(저장소 루트 server.py)를 서버 소유자가 제공한
+Synology NAS + Debian VM(Docker, Portainer, 2 vCPU, RAM 2GB)에서 24시간 운영한다.
+사용자는 외부에서 웹(File Station :5001, Portainer :9443)으로만 접근한다. SSH 없음.
 
-2. ?곹깭 援щ텇 (以묒슂)
+2. 상태 구분 (중요)
 -------------------
-[理쒖떊 ??2026-11-21 03:30 KST 寃? 釉뚮옖移?launcher-v0.9061-nas-online]
-  - ?뚯쑀?먭? ?몃? TCP 11223, 11225 瑜????ㅽ깮(30010/30011)?쇰줈 ?꾨떖??(媛쒕컻 PC ?먯꽌 ?뺤씤: 11225/version 怨?    30011/version ??媛숈? 0.9012, matches.json ?숈씪). 30000/30001 ? ?ロ옒(rakmu-test ?묐떟 ?놁쓬).
-  - ?ъ슜??蹂닿퀬: NAS ?꾨━?쒕쾭 ?묒냽쨌寃뚯엫 ?뺤긽. 臾몄젣 2媛????먯씤 李얠븘 ?섏젙(?쒕쾭 0.9013, ?꾨옒):
-    a) 濡쒕퉬 梨꾪똿????蹂댁엫: ?쒕쾭媛 0x13FF 濡?蹂대깉?붾뜲 Rhakmu.exe 濡쒕퉬 ?붿뒪?⑥쿂(0x44B1D0)??0x13FF 媛 ?놁쓬.
-       ?대씪 ?섏떊? 0x12FF [type=1][0][0] sender\0 message\0 (0x44C2B0). ??怨좎묠.
-    b) ??궧 諛섏쁺 ???? 寃뚯엫 ??궧 李??붿껌(0x15FF)??鍮??묐떟留?蹂대깂 + 寃곌낵 ?먯닔媛 ??긽 0 ?대씪 2?몄쟾??紐⑤몢 臾댁듅遺.
-       0x15FF/0x14FF/0x02FF ?묐떟 ?뺤떇??Rhakmu.exe ?먯꽌 ?뺤씤??援ы쁽, 寃곌낵肄붾뱶(1 ??2 ??3쨌4 臾? +0x80 ?섎뜑)濡??먯젙.
-       湲곗〈 matches.json 湲곕줉??議고쉶 ??寃곌낵肄붾뱶濡??ㅼ떆 ?먯젙(?뚯씪? 洹몃?濡?.
-  - ?ъ슜???쒗뿕(?쒕쾭 0.9013 諛섏쁺 ??: 梨꾪똿 ?뺤긽, ??궧 ?쒖떆 ?뺤긽. ??臾몄젣 2媛????쒕쾭 0.9014 ?먯꽌 ?섏젙:
-    c) 'Channel' 踰꾪듉 ??"梨꾨꼸由ъ뒪?몃? ?붿껌以묒엯?덈떎" ?먯꽌 OK/Cancel ?????뚮┝: ?대씪 ?붿껌 0x08FF [start i16][end i16]
-       ???쒕쾭媛 ?듯븯吏 ?딆븯?? ?묐떟 0x09FF(?쒖옉) ??0x08FF {users i16, no i16, name\0} ??0x0AFF(?? ?湲곗갹 ?レ쓬).
-       梨꾨꼸? '?먯쑀梨꾨꼸' ?섎굹. 梨꾨꼸 ?낆옣 0x07FF ?묐떟? [0=?깃났][梨꾨꼸?대쫫\0].
-    d) 濡쒕퉬 ?묒냽??紐⑸줉??蹂몄씤留?蹂댁엫: 濡쒕퉬?먯꽌???쒕쾭媛 ?먭린 ?먯떊留?蹂대깉?? 0x1FFF ?뚯꽌(0x44DC40)??       [flag][{?깃툒媛?i16, ?대쫫\0, ?섏㎏臾몄옄??0}...] ???댁젣 濡쒓렇?명븳 ?꾩썝??蹂대궡怨??섏㎏ 臾몄옄??鍮덉뭏, ?곷? IP 誘몄쟾??,
-       濡쒓렇???묒냽 醫낅즺 ??濡쒕퉬 紐⑸줉???붿껌?????덈뒗 ?щ엺(諛㈑룰쾶??以??쒖쇅)?먭쾶 ??紐⑸줉??蹂대깂.
-       諛??덉쓽 硫ㅻ쾭 紐⑸줉(湲곗〈 ?뺤떇, ?쇱뼱 IP ?ы븿)? 諛붽씀吏 ?딆쓬.
-    [誘몄떆?? c), d) ?ㅼ젣 寃뚯엫 ?뺤씤.
-  - ?곗쿂 v0.9061: ?쒕쾭 VPN IP 湲곕낯媛?112.159.73.235(1???곸슜, ?댄썑 ?ъ슜??媛??좎?), ?ㅽ뻾 吏곸쟾 hosts ?뺤씤쨌?곸슜.
-  - [NAS 誘몃컲?? ??server.py(0.9013)???꾩쭅 NAS ???щ━吏 ?딆쓬 ??README 5??"?쒕쾭 肄붾뱶 ?낅뜲?댄듃" ?덉감濡?諛섏쁺 ?꾩슂.
-  - [誘몄떆?? ?ㅼ젣 寃뚯엫?먯꽌 梨꾪똿 ?쒖떆쨌??궧 李??쒖떆. PC ?⑥쐞?쒗뿕(test_server_chat_rank.py 10媛?留??듦낵.
-  - [誘명뫖?? launcher-v0.9061-nas-online 釉뚮옖移섎뒗 濡쒖뺄 而ㅻ컠留??덉쓬(?몄떆?섎㈃ CI 媛 exe 鍮뚮뱶).
+[최신 — 2026-11-21 03:30 KST 경, 브랜치 launcher-v0.9061-nas-online]
+  - 소유자가 외부 TCP 11223, 11225 를 이 스택(30010/30011)으로 전달함 (개발 PC 에서 확인: 11225/version 과
+    30011/version 이 같은 0.9012, matches.json 동일). 30000/30001 은 닫힘(rakmu-test 응답 없음).
+  - 사용자 보고: NAS 프리서버 접속·게임 정상. 문제 2개 → 원인 찾아 수정(서버 0.9013, 아래):
+    a) 로비 채팅이 안 보임: 서버가 0x13FF 로 보냈는데 Rhakmu.exe 로비 디스패처(0x44B1D0)에 0x13FF 가 없음.
+       클라 수신은 0x12FF [type=1][0][0] sender\0 message\0 (0x44C2B0). → 고침.
+    b) 랭킹 반영 안 됨: 게임 랭킹 창 요청(0x15FF)에 빈 응답만 보냄 + 결과 점수가 항상 0 이라 2인전이 모두 무승부.
+       0x15FF/0x14FF/0x02FF 응답 형식을 Rhakmu.exe 에서 확인해 구현, 결과코드(1 승/2 패/3·4 무, +0x80 래더)로 판정.
+       기존 matches.json 기록도 조회 시 결과코드로 다시 판정(파일은 그대로).
+  - 사용자 시험(서버 0.9013 반영 후): 채팅 정상, 랭킹 표시 정상. 새 문제 2개 → 서버 0.9014 에서 수정:
+    c) 'Channel' 버튼 → "채널리스트를 요청중입니다" 에서 OK/Cancel 도 안 눌림: 클라 요청 0x08FF [start i16][end i16]
+       에 서버가 답하지 않았음. 응답 0x09FF(시작) → 0x08FF {users i16, no i16, name\0} → 0x0AFF(끝, 대기창 닫음).
+       채널은 '자유채널' 하나. 채널 입장 0x07FF 응답은 [0=성공][채널이름\0].
+    d) 로비 접속자 목록에 본인만 보임: 로비에서는 서버가 자기 자신만 보냈음. 0x1FFF 파서(0x44DC40)는
+       [flag][{등급값 i16, 이름\0, 둘째문자열\0}...] — 이제 로그인한 전원을 보내고(둘째 문자열=빈칸, 상대 IP 미전송),
+       로그인/접속 종료 때 로비 목록을 요청한 적 있는 사람(방·게임 중 제외)에게 새 목록을 보냄.
+       방 안의 멤버 목록(기존 형식, 피어 IP 포함)은 바꾸지 않음.
+    [미시험] c), d) 실제 게임 확인.
+  - 런처 v0.9061: 서버 VPN IP 기본값 112.159.73.235(1회 적용, 이후 사용자 값 유지), 실행 직전 hosts 확인·적용.
+  - [NAS 미반영] 새 server.py(0.9013)는 아직 NAS 에 올리지 않음 → README 5장 "서버 코드 업데이트" 절차로 반영 필요.
+  - [미시험] 실제 게임에서 채팅 표시·랭킹 창 표시. PC 단위시험(test_server_chat_rank.py 10개)만 통과.
+  - [미푸시] launcher-v0.9061-nas-online 브랜치는 로컬 커밋만 있음(푸시하면 CI 가 exe 빌드).
 
-[援ы쁽 ?꾨즺]  nas-server/ ?대뜑 (compose.yaml, app/nas_entry.py, Prepare-NasUpload.ps1, ?뚯뒪?? 臾몄꽌)
-[PC ?쒗뿕 ?꾨즺] test_nas_entry.py 3媛??듦낵 (Windows, Python 3.12.10, Docker ?놁씠):
-   - ?꾩떆 ?ы듃濡?濡쒕퉬 TCP ?몃뱶?곗씠??0x01FF ??OK), HTTP /version, /matches.json, UDP ?섏떊 ?앹〈
-   - server.log 媛 ?곗씠???대뜑???앷린怨?app ?대뜑?먮뒗 ???앷?
-   - rakmu-test 寃쎈줈瑜??곗씠???대뜑濡?二쇰㈃ 嫄곕??섍퀬 ?대뜑瑜?留뚮뱾吏 ?딆쓬
-   - server.py ??臾댁젣??FileHandler 媛 RotatingFileHandler 濡?援먯껜??[誘몄떆??   Docker 濡??ㅼ젣 ?ㅽ뻾 (??PC ??docker ?놁쓬). compose.yaml ? 臾몃쾿쨌?ㅼ젙留??묒꽦??
-[?낅줈?쒕맖] 2026-11-21 ?ъ슜??蹂닿퀬: ?낅줈???대뜑 ?댁슜??NAS game-servers/rakmu-live/ ???щ┝ (?대뜑 ?대쫫??rakmu 媛 ?꾨땲??           rakmu-live ?대?濡?compose.yaml 怨?臾몄꽌 寃쎈줈瑜?rakmu-live 濡?留욎땄). ?낅줈?쒕맂 compose.yaml ? ?댁쟾(rakmu 寃쎈줈)
-           ?먯씠??NAS ???щ낯留?援먯껜 ?꾩슂 ??Portainer ?먮뒗 ??μ냼??理쒖떊 compose.yaml ??遺숈뿬 ?ｋ뒗??
-[諛고룷 ?꾨즺] 2026-11-21 01:54 (KST) ?ъ슜?먭? Portainer ???ㅽ깮 rakmu ?앹꽦 (而ㅻ컠 075bda5 ??compose.yaml, ?섍꼍蹂???놁쓬).
-           而⑦뀒?대꼫 rakmu-server, ?대?吏 python:3.12-slim, ?곹깭 healthy, IP 172.18.0.2 (bridge),
-           寃뚯떆 ?ы듃 30010->11223/tcp, 30011->11225/tcp, 30012->47584/udp.
-[?몃? ?쒗뿕 ?꾨즺] 媛숈? ??媛쒕컻 PC(?몃?留??먯꽌:
-           - http://akansas.synology.me:30011/version  ??{"server_version": "0.9012"}
-           - http://akansas.synology.me:30011/matches.json ??[]  (???곗씠???대뜑, ?꾩쟻 ?놁쓬)
-           - TCP akansas.synology.me:30010 ??寃뚯엫怨?媛숈? 0x01FF ?몃뱶?곗씠????ff 01 08 00 00 00 00 00 (?뺤긽 OK)
-           healthy = 而⑦뀒?대꼫媛 rakmu-live/data 濡?chdir쨌import ???깃났?덈떎????(?ㅽ뙣 ??醫낅즺??.
-[誘몄떆??   UDP 30012, ?ㅼ젣 寃뚯엫 ?대씪?댁뼵???묒냽(?곗쿂 誘몄??? 6??, 硫?고뵆?덉씠 ???
-[Portainer ?먯꽌 ?뺤씤???ъ떎 (2026-11-21, ?ъ슜???붾㈃ 罹≪쿂)]
-  - Portainer CE, ?섍꼍 ?대쫫 local, Docker Standalone 29.10.0, 2 cores, 2.1GB.
-  - 蹂쇰ⅷ game_servers_data: driver local, ?듭뀡 type=none, o=bind, device=/mnt/game-servers (NAS ?곌껐 ?뺤씤),
-    ?뚯쑀 private(gameserver-admin). "Remove this volume" 踰꾪듉 ?덈? ?꾨Ⅴ吏 留?寃?
-  - gameserver-admin 怨꾩젙? 鍮꾧?由ъ옄: Containers 紐⑸줉???ㅻⅨ 而⑦뀒?대꼫(rakmu-test ??媛 蹂댁씠吏 ?딅뒗??    (Home ?먮뒗 2/2 containers). ???ы듃 ?ъ슜 ?щ?瑜??붾㈃?쇰줈 ?뺤씤?????놁쓬. 異⑸룎 ??諛고룷 ?ㅻ쪟濡??쒕윭?쒕떎.
-  - 鍮꾧?由ъ옄 ?쒗븳: compose ??security_opt ?ъ슜 遺덇?
-    ("stack config file is invalid: security-opt setting disabled for non administrator users") ??compose ?먯꽌 ?쒓굅??
-    ?ㅻⅨ ?쒗븳(privileged, cap_add, devices, sysctls, host ?ㅽ듃?뚰겕/PID, ?몄뒪??寃쎈줈 bind mount ?????곗? 留?寃?
-  - Docker 29 ?대?濡?volume subpath ???붿쭊??媛?ν븯??Portainer 鍮꾧?由ъ옄 ?덉슜 ?щ???誘명솗??
-[寃곗젙??   2026-11-21 ?ъ슜??寃곗젙: rakmu-test ??洹몃?濡??먭퀬 ?섎????ㅽ뻾 (rakmu = TCP 30010, TCP 30011, UDP 30012).
-           rakmu-test 瑜?以묒?쨌?泥댄븯吏 ?딅뒗?? ?泥닿? ?ㅼ떆 ?꾩슂?댁?硫?README 5???덉감? ?ъ슜???뺤씤??嫄곗튇??
-[誘멸뎄??   ?곗쿂媛 NAS ?쒕쾭濡??묒냽?섎뒗 湲곕뒫, ?명꽣???덈㉧ P2P 二쇱냼 臾몄젣 ?닿껐 (?꾨옒 5, 6).
-[?ъ슜???쒗뿕] ?놁쓬.
+[구현 완료]  nas-server/ 폴더 (compose.yaml, app/nas_entry.py, Prepare-NasUpload.ps1, 테스트, 문서)
+[PC 시험 완료] test_nas_entry.py 3개 통과 (Windows, Python 3.12.10, Docker 없이):
+   - 임시 포트로 로비 TCP 핸드셰이크(0x01FF → OK), HTTP /version, /matches.json, UDP 수신 생존
+   - server.log 가 데이터 폴더에 생기고 app 폴더에는 안 생김
+   - rakmu-test 경로를 데이터 폴더로 주면 거부하고 폴더를 만들지 않음
+   - server.py 의 무제한 FileHandler 가 RotatingFileHandler 로 교체됨
+[미시험]   Docker 로 실제 실행 (이 PC 에 docker 없음). compose.yaml 은 문법·설정만 작성됨.
+[업로드됨] 2026-11-21 사용자 보고: 업로드 폴더 내용을 NAS game-servers/rakmu-live/ 에 올림 (폴더 이름이 rakmu 가 아니라
+           rakmu-live 이므로 compose.yaml 과 문서 경로를 rakmu-live 로 맞춤). 업로드된 compose.yaml 은 이전(rakmu 경로)
+           판이라 NAS 의 사본만 교체 필요 — Portainer 에는 저장소의 최신 compose.yaml 을 붙여 넣는다.
+[배포 완료] 2026-11-21 01:54 (KST) 사용자가 Portainer 에 스택 rakmu 생성 (커밋 075bda5 의 compose.yaml, 환경변수 없음).
+           컨테이너 rakmu-server, 이미지 python:3.12-slim, 상태 healthy, IP 172.18.0.2 (bridge),
+           게시 포트 30010->11223/tcp, 30011->11225/tcp, 30012->47584/udp.
+[외부 시험 완료] 같은 날 개발 PC(외부망)에서:
+           - http://akansas.synology.me:30011/version  → {"server_version": "0.9012"}
+           - http://akansas.synology.me:30011/matches.json → []  (새 데이터 폴더, 전적 없음)
+           - TCP akansas.synology.me:30010 에 게임과 같은 0x01FF 핸드셰이크 → ff 01 08 00 00 00 00 00 (정상 OK)
+           healthy = 컨테이너가 rakmu-live/data 로 chdir·import 에 성공했다는 뜻 (실패 시 종료됨).
+[미시험]   UDP 30012, 실제 게임 클라이언트 접속(런처 미지원, 6장), 멀티플레이 대전.
+[Portainer 에서 확인된 사실 (2026-11-21, 사용자 화면 캡처)]
+  - Portainer CE, 환경 이름 local, Docker Standalone 29.10.0, 2 cores, 2.1GB.
+  - 볼륨 game_servers_data: driver local, 옵션 type=none, o=bind, device=/mnt/game-servers (NAS 연결 확인),
+    소유 private(gameserver-admin). "Remove this volume" 버튼 절대 누르지 말 것.
+  - gameserver-admin 계정은 비관리자: Containers 목록에 다른 컨테이너(rakmu-test 등)가 보이지 않는다
+    (Home 에는 2/2 containers). → 포트 사용 여부를 화면으로 확인할 수 없음. 충돌 시 배포 오류로 드러난다.
+  - 비관리자 제한: compose 의 security_opt 사용 불가
+    ("stack config file is invalid: security-opt setting disabled for non administrator users") → compose 에서 제거함.
+    다른 제한(privileged, cap_add, devices, sysctls, host 네트워크/PID, 호스트 경로 bind mount 등)도 쓰지 말 것.
+  - Docker 29 이므로 volume subpath 는 엔진상 가능하나 Portainer 비관리자 허용 여부는 미확인.
+[결정됨]   2026-11-21 사용자 결정: rakmu-test 는 그대로 두고 나란히 실행 (rakmu = TCP 30010, TCP 30011, UDP 30012).
+           rakmu-test 를 중지·대체하지 않는다. 대체가 다시 필요해지면 README 5장 절차와 사용자 확인을 거친다.
+[미구현]   런처가 NAS 서버로 접속하는 기능, 인터넷 너머 P2P 주소 문제 해결 (아래 5, 6).
+[사용자 시험] 없음.
 
-3. 諛붽씔 ?뚯씪
+3. 바꾼 파일
 ------------
-釉뚮옖移?launcher-v0.9061-nas-online (= nas-server-deploy + origin/main be71823 蹂묓빀 + ?꾨옒):
-  server.py                 0.9013: 梨꾪똿 0x12FF type1, ??궧 0x15FF/0x14FF, ?ъ슜???뺣낫 0x02FF type3, 寃곌낵肄붾뱶 ?먯젙,
-                            /matches.json ??寃곌낵肄붾뱶濡??먯젙???묐떟
-  test_server_chat_rank.py  ???뺤떇???대씪 ?뚯꽌 諛⑹떇?濡?寃利?(10媛?
-  launcher.py               APP_VERSION 0.9061, DEFAULT_SERVER_IP, apply_default_server(), ?ㅽ뻾 吏곸쟾 hosts ?뺤씤,
-                            ?쒖옉 ??hosts ?곸슜(愿由ъ옄????, ?꾩쟻 議고쉶 IP = ??λ맂 ?쒕쾭 IP, ?쒓? ?꾩씠???쒖떆
+브랜치 launcher-v0.9061-nas-online (= nas-server-deploy + origin/main be71823 병합 + 아래):
+  server.py                 0.9013: 채팅 0x12FF type1, 랭킹 0x15FF/0x14FF, 사용자 정보 0x02FF type3, 결과코드 판정,
+                            /matches.json 도 결과코드로 판정해 응답
+  test_server_chat_rank.py  위 형식을 클라 파서 방식대로 검증 (10개)
+  launcher.py               APP_VERSION 0.9061, DEFAULT_SERVER_IP, apply_default_server(), 실행 직전 hosts 확인,
+                            시작 시 hosts 적용(관리자일 때), 전적 조회 IP = 저장된 서버 IP, 한글 아이디 표시
   test_default_server.py, RhakMuLauncher_v0.9061.spec, release_notes.py
-  (test_launch_pipeline 2媛쑣톞est_auto_game_launch 1媛??ㅽ뙣??origin/main ?먯꽌???묎컳???ㅽ뙣 ????PC ??Rhakmu.exe ?곹깭 ?뚮Ц)
-釉뚮옖移?nas-server-deploy (origin/main fbc8c2a 湲곗?): nas-server/ 異붽?留?
-  nas-server/compose.yaml           Portainer ?ㅽ깮 (python:3.12-slim, bridge, ?ы듃 寃뚯떆, ?몃? 蹂쇰ⅷ)
-  nas-server/app/nas_entry.py       server.py ?섑띁: ?곗씠???대뜑濡?chdir ??import, 濡쒓렇 ?뚯쟾, ?ы듃 ?섍꼍蹂??  nas-server/Prepare-NasUpload.ps1  nas-server/upload/rakmu-live/ ?앹꽦 (gitignore). 猷⑦듃 server.py 瑜?蹂듭궗
-  nas-server/test_nas_entry.py      ?쒗뿕
-  nas-server/ports.txt, README.txt, HANDOFF.txt, .gitattributes(LF ?좎?), .gitignore(upload/)
+  (test_launch_pipeline 2개·test_auto_game_launch 1개 실패는 origin/main 에서도 똑같이 실패 — 이 PC 의 Rhakmu.exe 상태 때문)
+브랜치 nas-server-deploy (origin/main fbc8c2a 기준): nas-server/ 추가만.
+  nas-server/compose.yaml           Portainer 스택 (python:3.12-slim, bridge, 포트 게시, 외부 볼륨)
+  nas-server/app/nas_entry.py       server.py 래퍼: 데이터 폴더로 chdir 후 import, 로그 회전, 포트 환경변수
+  nas-server/Prepare-NasUpload.ps1  nas-server/upload/rakmu-live/ 생성 (gitignore). 루트 server.py 를 복사
+  nas-server/test_nas_entry.py      시험
+  nas-server/ports.txt, README.txt, HANDOFF.txt, .gitattributes(LF 유지), .gitignore(upload/)
 
-4. 援ъ“쨌寃곗젙怨??댁쑀
+4. 구조·결정과 이유
 -------------------
-- ?대?吏: 怨듦컻 python:3.12-slim. 鍮뚮뱶媛 ?꾩슂 ?녿떎. ?댁쁺?덈궡??File Station ??Dockerfile ??Portainer 媛 ?먮룞
-  鍮뚮뱶?섏? ?딆쑝硫? Portainer ?먯꽌 ?대?吏 鍮뚮뱶/?덉??ㅽ듃由??ъ슜 媛???щ????뺤씤?섏? ?딆븯??
-  server.py ???쒖? ?쇱씠釉뚮윭由щ쭔 ?ъ슜 ??肄붾뱶 ?대뜑 留덉슫??諛⑹떇??媛???⑥닚. (slim ? tzdata ?ы븿 ??TZ=Asia/Seoul ?곸슜)
-- 肄붾뱶 ?꾩튂: NAS game-servers/rakmu-live/app (VM /mnt/game-servers/rakmu-live/app, 而⑦뀒?대꼫 ?숈씪 寃쎈줈)
-- ?곗씠?? game-servers/rakmu-live/data ??matches.json(理쒓렐 500??, server.log(1MB횞6), game_rules.json(?좏깮, ?쒕쾭媛 ?쎄린留???
-- 蹂쇰ⅷ: ?몃? 蹂쇰ⅷ game_servers_data 瑜?/mnt/game-servers ???듭㎏濡?留덉슫???댁쁺?덈궡 吏?쒕?濡?湲곗〈 ?몃? 蹂쇰ⅷ 李몄“).
-  怨듭쑀 ?대뜑 ?꾩껜媛 蹂댁씠誘濡?nas_entry.py 媛 rakmu-test 瑜??곗씠???대뜑濡??곕뒗 寃껋쓣 嫄곕??쒕떎.
-  媛쒖꽑 ?ъ?: Docker Engine 26+ / Compose 2.26+ ?대㈃ volume.subpath: rakmu-live 濡?rakmu-live ?대뜑留?留덉슫??媛??(踰꾩쟾 ?뺤씤 ?꾩슂).
-- ?ㅽ듃?뚰겕: bridge + ?ы듃 寃뚯떆 (rakmu-test ??host). ?댁쑀: 而⑦뀒?대꼫 ???ы듃瑜?server.py 湲곕낯媛?11223/11225/47584)
-  洹몃?濡??먭퀬 ?몃? 踰덊샇留?compose 蹂?섎줈 諛붽? ???덇퀬, ?ㅻⅨ 寃뚯엫怨?寃⑸━?쒕떎. ?몃??뭋M ?몃컮?대뱶??DNAT ?대씪
-  ?쒕쾭媛 蹂대뒗 ?대씪?댁뼵??IP ???ㅼ젣 怨듭씤 IP 濡??좎??쒕떎(?뺤씤 ?꾩슂: ?ㅼ젣 諛고룷 ??濡쒓렇??Connected: 以?.
-- ?ы듃 蹂?? LOBBY_PORT(湲곕낯 30010, TCP??1223), HTTP_PORT(30011, TCP??1225), RELAY_PORT(30012, UDP??7584)
-- ?먯썝 ?쒗븳: mem_limit 128m, cpus 0.5, pids 64, read_only 猷⑦듃 + /tmp tmpfs 16m (security_opt no-new-privileges ??Portainer 鍮꾧?由ъ옄 ?쒗븳?쇰줈 ?쒓굅),
-  ?꾩빱 濡쒓렇 json-file 5m횞3. privileged/?꾩빱 ?뚯폆/?몄뒪??寃쎈줈 留덉슫???놁쓬.
-- healthcheck: 而⑦뀒?대꼫 ?덉뿉??http://127.0.0.1:11225/version (濡쒕퉬 TCP 濡??섎㈃ 60珥덈쭏???묒냽 濡쒓렇媛 ?⑥븘???쇳븿)
-- nas_entry.py ?섍꼍蹂?? RAKMU_DATA_DIR, RAKMU_LOBBY_PORT, RAKMU_HTTP_PORT, RAKMU_RELAY_PORT(?섏떊留?諛붾?
-  由대젅??紐⑹쟻吏??47584 怨좎젙), RAKMU_LOG_MAX_BYTES, RAKMU_LOG_BACKUPS.
-  nas_entry.run() ? server.main() ??蹂듭젣??寃껋씠?? server.py ??main()/HTTP ?쒖옉遺媛 諛붾뚮㈃ 媛숈씠 留욎텧 寃?  (李몄“: server.HOST, PORT, HTTP_PORT, UDP_RELAY_PORT, _HistoryHandler, DP8RelayProtocol, ClientSession, STATE, log).
-  test_nas_entry.py 媛 猷⑦듃 server.py 濡??ㅽ뻾?섎?濡?源⑥?硫??쒗뿕???ㅽ뙣?쒕떎.
+- 이미지: 공개 python:3.12-slim. 빌드가 필요 없다. 운영안내상 File Station 의 Dockerfile 을 Portainer 가 자동
+  빌드하지 않으며, Portainer 에서 이미지 빌드/레지스트리 사용 가능 여부는 확인되지 않았다.
+  server.py 는 표준 라이브러리만 사용 → 코드 폴더 마운트 방식이 가장 단순. (slim 은 tzdata 포함 → TZ=Asia/Seoul 적용)
+- 코드 위치: NAS game-servers/rakmu-live/app (VM /mnt/game-servers/rakmu-live/app, 컨테이너 동일 경로)
+- 데이터: game-servers/rakmu-live/data — matches.json(최근 500판), server.log(1MB×6), game_rules.json(선택, 서버가 읽기만 함)
+- 볼륨: 외부 볼륨 game_servers_data 를 /mnt/game-servers 에 통째로 마운트(운영안내 지시대로 기존 외부 볼륨 참조).
+  공유 폴더 전체가 보이므로 nas_entry.py 가 rakmu-test 를 데이터 폴더로 쓰는 것을 거부한다.
+  개선 여지: Docker Engine 26+ / Compose 2.26+ 이면 volume.subpath: rakmu-live 로 rakmu-live 폴더만 마운트 가능 (버전 확인 필요).
+- 네트워크: bridge + 포트 게시 (rakmu-test 는 host). 이유: 컨테이너 안 포트를 server.py 기본값(11223/11225/47584)
+  그대로 두고 외부 번호만 compose 변수로 바꿀 수 있고, 다른 게임과 격리된다. 외부→VM 인바운드는 DNAT 이라
+  서버가 보는 클라이언트 IP 는 실제 공인 IP 로 유지된다(확인 필요: 실제 배포 후 로그의 Connected: 줄).
+- 포트 변수: LOBBY_PORT(기본 30010, TCP→11223), HTTP_PORT(30011, TCP→11225), RELAY_PORT(30012, UDP→47584)
+- 자원 제한: mem_limit 128m, cpus 0.5, pids 64, read_only 루트 + /tmp tmpfs 16m (security_opt no-new-privileges 는 Portainer 비관리자 제한으로 제거),
+  도커 로그 json-file 5m×3. privileged/도커 소켓/호스트 경로 마운트 없음.
+- healthcheck: 컨테이너 안에서 http://127.0.0.1:11225/version (로비 TCP 로 하면 60초마다 접속 로그가 남아서 피함)
+- nas_entry.py 환경변수: RAKMU_DATA_DIR, RAKMU_LOBBY_PORT, RAKMU_HTTP_PORT, RAKMU_RELAY_PORT(수신만 바뀜,
+  릴레이 목적지는 47584 고정), RAKMU_LOG_MAX_BYTES, RAKMU_LOG_BACKUPS.
+  nas_entry.run() 은 server.main() 을 복제한 것이다. server.py 의 main()/HTTP 시작부가 바뀌면 같이 맞출 것
+  (참조: server.HOST, PORT, HTTP_PORT, UDP_RELAY_PORT, _HistoryHandler, DP8RelayProtocol, ClientSession, STATE, log).
+  test_nas_entry.py 가 루트 server.py 로 실행되므로 깨지면 시험이 실패한다.
 
-5. ?ы듃쨌寃쎈줈 ?붿빟
+5. 포트·경로 요약
 -----------------
-ports.txt 李멸퀬. 怨듭쑀湲곕뒗 TCP/UDP 30000~30999 瑜?VM(?대? 192.168.0.94)??媛숈? 踰덊샇濡??꾨떖.
-湲곗〈 rakmu-test: TCP 30000 濡쒕퉬, TCP 30001 ?꾩쟻쨌踰꾩쟾, UDP 30002 諛?李얘린, host ?ㅽ듃?뚰겕.
-rakmu-test ???ㅼ젣 compose/肄붾뱶???뺤씤?섏? 紐삵뻽???뺤씤 ?꾩슂). ?ъ슜?먭? Portainer ?먯꽌 Editor ?댁슜??鍮꾨?媛믪쓣 吏?곌퀬 蹂댁뿬 二쇰㈃ 鍮꾧탳 媛?? game-servers/rakmu-test/data ??蹂댁〈(?쎄린/?곌린 ????.
+ports.txt 참고. 공유기는 TCP/UDP 30000~30999 를 VM(내부 192.168.0.94)의 같은 번호로 전달.
+기존 rakmu-test: TCP 30000 로비, TCP 30001 전적·버전, UDP 30002 방 찾기, host 네트워크.
+rakmu-test 의 실제 compose/코드는 확인하지 못했다(확인 필요). 사용자가 Portainer 에서 Editor 내용을
+비밀값을 지우고 보여 주면 비교 가능. game-servers/rakmu-test/data 는 보존(읽기/쓰기 안 함).
 
-?대씪?댁뼵??怨좎젙 ?ы듃(肄붾뱶 洹쇨굅):
-  Rhakmu.exe 濡쒕퉬 TCP 11223 (SYNC_PORT_ANALYSIS.txt: ?뚯폆 ?앹꽦遺 push 0x2bd7), 寃뚯엫 P2P UDP 11223
-  launcher.py: http://{ip}:11225/rules, /matches.json, /ranking (_sync_rules_from_server, ?꾩쟻 議고쉶)
-  WG_IPX.dll EnumHosts 諛⑹넚 UDP 47584
-?????곗쿂/寃뚯엫? NAS ??30000踰덈? ?ы듃??諛붾줈 ?묒냽?????녿떎.
+클라이언트 고정 포트(코드 근거):
+  Rhakmu.exe 로비 TCP 11223 (SYNC_PORT_ANALYSIS.txt: 소켓 생성부 push 0x2bd7), 게임 P2P UDP 11223
+  launcher.py: http://{ip}:11225/rules, /matches.json, /ranking (_sync_rules_from_server, 전적 조회)
+  WG_IPX.dll EnumHosts 방송 UDP 47584
+→ 현 런처/게임은 NAS 의 30000번대 포트에 바로 접속할 수 없다.
 
-6. ?⑥? 臾몄젣? ?ㅼ쓬 ?묒뾽 (?곗꽑?쒖쐞 ??
+6. 남은 문제와 다음 작업 (우선순위 순)
 --------------------------------------
-(1) [?꾨즺] ?ъ슜??寃곗젙: rakmu-test ? ?섎????ㅽ뻾(30010~30012). Environment variables ???ｌ? ?딅뒗??湲곕낯媛??ъ슜).
-    30010~30012 媛 ?ㅻⅨ 而⑦뀒?대꼫?먯꽌 ?곗씠吏 ?딅뒗吏??諛고룷 ?꾩뿉 Portainer ?먯꽌 ?뺤씤(README 3??7踰?.
-(2) [?꾨즺] 諛고룷 諛??몃? HTTP/濡쒕퉬 TCP ?뺤씤 (2??湲곕줉). ?⑥? ?뺤씤: File Station ?먯꽌 rakmu-live/data/server.log ?앹꽦 ?щ?,
-    ?ㅽ깮 Stop?뭆tart ???곗씠???좎?.
-(2-1) [?ㅼ쓬 ???? NAS ??server.py 0.9013 諛섏쁺 ??而⑦뀒?대꼫 Restart ??/version ??0.9013 ?몄? ?뺤씤
-      ??2紐낆씠 濡쒕퉬 梨꾪똿, 寃뚯엫 1?? 寃뚯엫 ????궧 李??뺤씤. 寃곌낵瑜?2?μ뿉 湲곕줉.
-(2-2) [?ㅼ쓬 ???? launcher-v0.9061-nas-online ?몄떆 ??CI exe 鍮뚮뱶 ??main 蹂묓빀 (湲곗〈 由대━???덉감).
-(3) [?꾨즺 ??A 諛⑹떇] ?뚯쑀?먭? ?몃? TCP 11223??0010, 11225??0011 ?꾨떖. ?곗쿂??112.159.73.235 濡?諛붾줈 ?묒냽.
-    (?꾨옒 A/B ??湲곕줉??
-    A) ?쒕쾭 ?뚯쑀?먯뿉寃??몃? TCP 11223?뭋M 30010, TCP 11225?뭋M 30011, UDP 47584?뭋M 30012 ?꾨떖 ?붿껌 (肄붾뱶 ?섏젙 ?놁쓬)
-    B) ?곗쿂 蹂寃쎌븞 (誘멸뎄?? ?좏깮):
-       - launcher.py ??NAS ?쒕쾭 ?ㅼ젙 異붽?: nas_host="akansas.synology.me", nas_lobby_port=30010, nas_http_port=30011
-       - "NAS ?쒕쾭濡?硫?? ?좏깮 ?? 濡쒖뺄 ?쒕쾭瑜??꾩슦吏 ?딄퀬, 127.0.0.1:11223 ?먯꽌 ?섏떊?섎뒗 asyncio TCP 以묎퀎瑜??꾩썙
-         媛??묒냽??nas_host:nas_lobby_port 濡??묐갑??蹂듭궗. hosts ??rhakmugame=127.0.0.1.
-         (?⑥씪 ?뚮젅?댁슜 濡쒖뺄 ?쒕쾭? 11223 ???숈떆???????놁쑝誘濡???以??섎굹留??ㅽ뻾)
-       - ?꾩쟻/洹쒖튃 議고쉶 URL ??http://{host}:{http_port} 濡??쇰컲??(?꾩옱 11225 ?섎뱶肄붾뵫 3怨? _sync_rules_from_server, ?꾩쟻 議고쉶).
-       - 踰꾩쟾? APP_VERSION + spec ?뚯씪 ?щ━??湲곗〈 launcher-* 釉뚮옖移??덉감濡?由대━??
-(4) ?명꽣???덈㉧ ???P2P) 臾몄젣 ???듭떖 ?꾩냽 怨쇱젣:
-    server.py ??諛?host_ip / address_for() ??"?쒕쾭媛 蹂??묒냽 IP"瑜??대떎(_handle_create_room, address_for).
-    NAS ?먯꽌???닿쾬???뚮젅?댁뼱??怨듭씤 IP ??寃뚯엫 P2P(UDP 11223)? DP8 ??怨듭쑀湲곗뿉 留됲옄 媛?μ꽦???믩떎.
-    ??DP8RelayProtocol ? VPN 釉뚮줈?쒖틦?ㅽ듃瑜?諛쏆븘???숈옉?섎?濡?NAS ?먮뒗 ?⑦궥???ㅼ? ?딅뒗??
-    諛⑹븞: ?뚮젅?댁뼱?ㅼ? 怨꾩냽 Radmin VPN ??耳쒓퀬, ?곗쿂媛 ?먯떊??VPN IP 瑜??쒕쾭???뚮┝
-          (?? HTTP POST /announce {account, vpn_ip} ?먮뒗 濡쒕퉬 ?묒냽 吏곹썑 蹂꾨룄 ?⑦궥) ???쒕쾭媛 host_ip/address_for ??          洹?二쇱냼瑜??ъ슜. UDP 47584 諛⑹넚? ?곗쿂(?먮뒗 湲곗〈 radmin_session)媛 濡쒖뺄?먯꽌 罹≪쿂??VPN ?곷??먭쾶 吏곸젒 蹂대궡??諛⑹떇 寃??
-          ??HTTP ?곌린 API 瑜?留뚮뱾硫??몄쬆 ?놁씠 怨듦컻?섏? 留?寃??댁쁺?덈궡). 怨듭쑀 ?좏겙???곕㈃ Portainer ?섍꼍蹂?섎줈 ?ｊ퀬 ??μ냼???ｌ? ?딅뒗??
-    ???묒뾽 ?꾧퉴吏 NAS ?쒕쾭??"濡쒕퉬쨌梨꾪똿쨌?꾩쟻 ?쒕쾭" ?섏??쇰줈 蹂몃떎. ?ㅼ젣 ????깃났? ?ъ슜???쒗뿕?쇰줈留??먯젙.
-    ??2026-11-21 ?ъ슜??蹂닿퀬濡쒕뒗 NAS ?쒕쾭濡?寃뚯엫???뺤긽 ?숈옉(?꾩쟻??2?몄쟾 湲곕줉 ?덉쓬). ?대뼡 VPN 議고빀?먯꽌 ?먮뒗吏??誘멸린濡?
-(4-1) ??궧 怨꾩궛 洹쒖튃(server.py): ?닿났 = 1000 + 10횞????10횞??(理쒖냼 0), ?뺣젹 ?닿났?믪듅?믫뙣?믪씠由?
-      ?깃툒 ?꾩씠肄?媛?= ???? 留덉?留?移?= 留덉?留?寃쎄린 ?좎쭨. ?쇱옄 ??寃뚯엫 ?쒖쇅. 諛붽씀?ㅻ㈃ BASE_POINTS ???곸닔 ?섏젙.
-(5) ?ㅼ젣 ?ㅼ쨷 ?묒냽 ?쒗뿕: ?쒕줈 ?ㅻⅨ 怨꾩젙 2紐??댁긽 濡쒓렇????諛??앹꽦/李멸? ??寃뚯엫 ?쒖옉. 寃곌낵瑜??ш린??湲곕줉.
+(1) [완료] 사용자 결정: rakmu-test 와 나란히 실행(30010~30012). Environment variables 는 넣지 않는다(기본값 사용).
+    30010~30012 가 다른 컨테이너에서 쓰이지 않는지는 배포 전에 Portainer 에서 확인(README 3장 7번).
+(2) [완료] 배포 및 외부 HTTP/로비 TCP 확인 (2장 기록). 남은 확인: File Station 에서 rakmu-live/data/server.log 생성 여부,
+    스택 Stop→Start 후 데이터 유지.
+(2-1) [다음 할 일] NAS 에 server.py 0.9014 반영 → 컨테이너 Restart → /version 이 0.9014 인지 확인
+      → 2명이 로비 채팅, 게임 1판, 게임 안 랭킹 창 확인. 결과를 2장에 기록.
+(2-2) [다음 할 일] launcher-v0.9061-nas-online 푸시 → CI exe 빌드 → main 병합 (기존 릴리스 절차).
+(3) [완료 — A 방식] 소유자가 외부 TCP 11223→30010, 11225→30011 전달. 런처는 112.159.73.235 로 바로 접속.
+    (아래 A/B 는 기록용)
+    A) 서버 소유자에게 외부 TCP 11223→VM 30010, TCP 11225→VM 30011, UDP 47584→VM 30012 전달 요청 (코드 수정 없음)
+    B) 런처 변경안 (미구현, 선택):
+       - launcher.py 에 NAS 서버 설정 추가: nas_host="akansas.synology.me", nas_lobby_port=30010, nas_http_port=30011
+       - "NAS 서버로 멀티" 선택 시: 로컬 서버를 띄우지 않고, 127.0.0.1:11223 에서 수신하는 asyncio TCP 중계를 띄워
+         각 접속을 nas_host:nas_lobby_port 로 양방향 복사. hosts 의 rhakmugame=127.0.0.1.
+         (단일 플레이용 로컬 서버와 11223 을 동시에 쓸 수 없으므로 둘 중 하나만 실행)
+       - 전적/규칙 조회 URL 을 http://{host}:{http_port} 로 일반화 (현재 11225 하드코딩 3곳: _sync_rules_from_server, 전적 조회).
+       - 버전은 APP_VERSION + spec 파일 올리는 기존 launcher-* 브랜치 절차로 릴리스.
+(4) 인터넷 너머 대전(P2P) 문제 — 핵심 후속 과제:
+    server.py 는 방 host_ip / address_for() 에 "서버가 본 접속 IP"를 쓴다(_handle_create_room, address_for).
+    NAS 에서는 이것이 플레이어의 공인 IP → 게임 P2P(UDP 11223)와 DP8 이 공유기에 막힐 가능성이 높다.
+    또 DP8RelayProtocol 은 VPN 브로드캐스트를 받아야 동작하므로 NAS 에는 패킷이 오지 않는다.
+    방안: 플레이어들은 계속 Radmin VPN 을 켜고, 런처가 자신의 VPN IP 를 서버에 알림
+          (예: HTTP POST /announce {account, vpn_ip} 또는 로비 접속 직후 별도 패킷) → 서버가 host_ip/address_for 에
+          그 주소를 사용. UDP 47584 방송은 런처(또는 기존 radmin_session)가 로컬에서 캡처해 VPN 상대에게 직접 보내는 방식 검토.
+          새 HTTP 쓰기 API 를 만들면 인증 없이 공개하지 말 것(운영안내). 공유 토큰을 쓰면 Portainer 환경변수로 넣고 저장소에 넣지 않는다.
+    이 작업 전까지 NAS 서버는 "로비·채팅·전적 서버" 수준으로 본다. 실제 대전 성공은 사용자 시험으로만 판정.
+    → 2026-11-21 사용자 보고로는 NAS 서버로 게임이 정상 동작(전적에 2인전 기록 있음). 어떤 VPN 조합에서 됐는지는 미기록.
+(4-1) 랭킹 계산 규칙(server.py): 내공 = 1000 + 10×승 − 10×패 (최소 0), 정렬 내공→승→패→이름,
+      등급 아이콘 값 = 승 수, 마지막 칸 = 마지막 경기 날짜. 혼자 한 게임 제외. 바꾸려면 BASE_POINTS 등 상수 수정.
+(5) 실제 다중 접속 시험: 서로 다른 계정 2명 이상 로그인 → 방 생성/참가 → 게임 시작. 결과를 여기에 기록.
 
-7. 蹂듦뎄 諛⑸쾿
+7. 복구 방법
 ------------
-- ?쒕쾭媛 ?댁긽?섎㈃: Portainer ??Stacks ??rakmu ??Stop. ?곗씠?곕뒗 rakmu-live/data ???⑤뒗??
-- 肄붾뱶 濡ㅻ갚: rakmu-live/backups/app-YYYYMMDD ??rakmu-live/app ??뼱?곌린 ??Start (README 5??.
-- ?곗씠??蹂듭썝: Stop ??backups/data-YYYYMMDD/matches.json ??data/ ??Start.
-- ?ㅽ깮 ?꾩쟾 ?쒓굅: Stacks ??rakmu ??Delete (?몃? 蹂쇰ⅷ game_servers_data ? NAS ?뚯씪? 吏?뚯?吏 ?딅뒗??
-  "Remove volumes" 媛숈? ?좏깮吏媛 ?섏삤硫?泥댄겕?섏? ?딅뒗??.
-- rakmu-test 瑜?硫덉톬??寃쎌슦: rakmu 瑜?Stop ?섍퀬 rakmu-test ??Start. ?泥??꾩뿉 ??ν빐 ??rakmu-test ?ㅼ젙?쇰줈 ?섎룎由곕떎.
-- 濡쒖뺄 諛⑹떇?쇰줈 蹂듦?: ?곗쿂??吏湲덈룄 洹몃?濡?濡쒖뺄 server.py 瑜??곕?濡??꾨Т寃껊룄 諛붽? ?꾩슂 ?녿떎.
+- 서버가 이상하면: Portainer → Stacks → rakmu → Stop. 데이터는 rakmu-live/data 에 남는다.
+- 코드 롤백: rakmu-live/backups/app-YYYYMMDD → rakmu-live/app 덮어쓰기 → Start (README 5장).
+- 데이터 복원: Stop → backups/data-YYYYMMDD/matches.json → data/ → Start.
+- 스택 완전 제거: Stacks → rakmu → Delete (외부 볼륨 game_servers_data 와 NAS 파일은 지워지지 않는다.
+  "Remove volumes" 같은 선택지가 나오면 체크하지 않는다).
+- rakmu-test 를 멈췄던 경우: rakmu 를 Stop 하고 rakmu-test → Start. 대체 전에 저장해 둔 rakmu-test 설정으로 되돌린다.
+- 로컬 방식으로 복귀: 런처는 지금도 그대로 로컬 server.py 를 쓰므로 아무것도 바꿀 필요 없다.
 
-8. ?ㅻⅨ PC ?먯꽌 ?댁뼱???묒뾽?섍린
+8. 다른 PC 에서 이어서 작업하기
 -------------------------------
-  git fetch origin && git switch launcher-v0.9061-nas-online   (?몄떆 ?꾩씠硫?nas-server-deploy)
-  python nas-server\test_nas_entry.py        (Docker ?놁씠 ?섑띁 ?쒗뿕)
-  .\nas-server\Prepare-NasUpload.ps1         (?낅줈???대뜑 ?앹꽦)
-???뚯씪??2???곹깭)怨?6???ㅼ쓬 ?묒뾽)??癒쇱? 媛깆떊?????묒뾽???쒖옉??寃?
+  git fetch origin && git switch launcher-v0.9061-nas-online   (푸시 전이면 nas-server-deploy)
+  python nas-server\test_nas_entry.py        (Docker 없이 래퍼 시험)
+  .\nas-server\Prepare-NasUpload.ps1         (업로드 폴더 생성)
+이 파일의 2장(상태)과 6장(다음 작업)을 먼저 갱신한 뒤 작업을 시작할 것.
