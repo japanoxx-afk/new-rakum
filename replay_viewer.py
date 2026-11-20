@@ -294,7 +294,8 @@ class StatsWindow(tk.Toplevel):
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         for title, key, pick in (("병력(일꾼 제외)", "army", lambda v: v), ("일꾼", "workers", lambda v: v),
-                                 ("금", "resources", lambda v: v[0]), ("물", "resources", lambda v: v[1])):
+                                 ("금", "resources", lambda v: v[0]), ("물", "resources", lambda v: v[1]),
+                                 ("카르마", "resources", lambda v: v[2]), ("글로리", "resources", lambda v: v[3])):
             cv = tk.Canvas(nb, bg="#121212", highlightthickness=0)
             nb.add(cv, text=title)
             cv.bind("<Configure>", lambda e, cv=cv, key=key, pick=pick: draw_chart(cv, st, key, pick))
