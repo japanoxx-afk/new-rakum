@@ -363,6 +363,48 @@ class InGameHookTests(unittest.TestCase):
             uc.reg_write(UC_X86_REG_EAX, 1)
         mu.mem_write(0x4D9120, b"\xc3")
         mu.hook_add(UC_HOOK_CODE, save, begin=0x4D9120, end=0x4D9120)
+        # Windows API 대체 (stdcall): 주소 -> (인자 수, 처리)
+        STUB = 0x3000000
+        mu.mem_map(STUB, 0x1000)
+        self.files, self.dirs, self.keys, self.calls = {}, [], set(), []
+        self.names_at_save = []
+
+        def arg(uc, k):
+            return struct.unpack("<I", uc.mem_read(uc.reg_read(UC_X86_REG_ESP) + 4 + 4 * k, 4))[0]
+
+        def cstr(uc, a):
+            return bytes(uc.mem_read(a, 64)).split(b"\0")[0]
+
+        def create_dir(uc):
+            self.dirs.append(cstr(uc, arg(uc, 0)))
+            return 1
+
+        def create_file(uc):
+            name = cstr(uc, arg(uc, 0))
+            return 0x55 if name in self.files else 0xFFFFFFFF
+
+        def read_file(uc):
+            data = self.files[b"RKREPLAY.RKP"][:arg(uc, 2)]
+            uc.mem_write(arg(uc, 1), data)
+            uc.mem_write(arg(uc, 3), struct.pack("<I", len(data)))
+            return 1
+
+        apis = {0x4EC284: (2, create_dir), 0x4EC27C: (7, create_file), 0x4EC260: (5, read_file),
+                0x4EC1AC: (1, lambda uc: 1), 0x4EC350: (1, lambda uc: 0xFF80 if arg(uc, 0) in self.keys else 0)}
+        for k, (imp, (n, fn)) in enumerate(apis.items()):
+            at = STUB + 0x20 * k
+            mu.mem_write(at, b"\xc2" + struct.pack("<H", 4 * n))
+            mu.mem_write(imp, struct.pack("<I", at))
+            mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _, fn=fn: uc.reg_write(UC_X86_REG_EAX, fn(uc)), begin=at, end=at)
+        mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: self.names_at_save.append(cstr(uc, 0x6E61F4)), begin=0x4D9120, end=0x4D9120)
+        # 게임 함수 대체: 지도 공개, 명령 실행, 0x447AF0 본문(끝부분)
+        mu.mem_write(0x4991E0, b"\xc3")
+        mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: self.calls.append(("reveal", uc.reg_read(UC_X86_REG_ECX))), begin=0x4991E0, end=0x4991E0)
+        mu.mem_write(0x4407E0, b"\xc3")
+        mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: self.calls.append(
+            ("dispatch", arg(uc, 0) & 0xFF, bytes(uc.mem_read(arg(uc, 1), arg(uc, 2))))), begin=0x4407E0, end=0x4407E0)
+        mu.mem_write(0x447AF6, b"\x8b\xe5\x5d\xc3")              # mov esp,ebp; pop ebp; ret (원래 함수 끝)
+        mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: self.calls.append(("send",)), begin=0x447AF6, end=0x447AF6)
         self.regs = (UC_X86_REG_ESP, UC_X86_REG_ECX, UC_X86_REG_EBP)
         rd = rrp.CommandReader(lambda a, n: bytes(mu.mem_read(a, n)), self.BASE)
         rd.poll()
@@ -396,6 +438,136 @@ class InGameHookTests(unittest.TestCase):
         st = rrp.parse_start(got[0][2])
         self.assertEqual(st, {"seed": 0xCAFEBABE, "rand": 0x12345678, "rng": bytes(range(1, 21)).hex(),
                               "frame": 4321, "local": 2, "options": bytes(range(10, 18)).hex()})
+
+    def test_record_start_save_uses_player_name_folder(self):
+        mu, rd = self.machine()
+        ESP, ECX, EBP = self.regs
+        mu.mem_write(0xB412CC, b"\x01")
+        mu.mem_write(0x7F7910 + 0x11E0, b"big\0")
+        mu.mem_write(0x6E61F4, b"RhakMu\0")
+        mu.mem_write(self.BASE + rrp.FLAGS_OFF, struct.pack("<I", 0))   # 시작 저장 켬
+        mu.mem_write(0x4D7559, b"\xf4")
+        esp = 0x2080000
+        mu.mem_write(esp, struct.pack("<I", 0x4D7559))
+        mu.reg_write(ESP, esp)
+        mu.emu_start(self.BASE + rrp.OFF["start"], 0x4D7559, count=20000)
+        self.assertEqual(self.dirs, [b"USERs\\big"])
+        self.assertEqual(self.saved, [b"RKREPLAY"])
+        self.assertEqual(self.names_at_save, [b"big"])                 # 저장 경로 USERs\big\RKREPLAY.SAV
+        self.assertEqual(bytes(mu.mem_read(0x6E61F4, 7)), b"RhakMu\0")   # 계정 이름 되돌림
+
+    def play_machine(self, records, start_frame=100):
+        mu, rd = self.machine()
+        mu.mem_write(self.BASE, rrp.body(play=True))
+        start = {"frame": start_frame, "rand": 0x11111111, "rng": bytes(range(40, 60)).hex(), "seed": 0x2222}
+        self.files[b"RKREPLAY.RKP"] = rrp.build_rkp(start, records)
+        return mu
+
+    def run_entry(self, mu, entry, ret):
+        ESP, ECX, EBP = self.regs
+        mu.mem_write(ret, b"\xf4")
+        esp = 0x2080000
+        mu.mem_write(esp, struct.pack("<I", ret))
+        mu.reg_write(ESP, esp)
+        mu.reg_write(EBP, 0x6666)
+        mu.emu_start(self.BASE + rrp.OFF[entry], ret, count=200000)
+        self.assertEqual(mu.reg_read(ESP), esp + 4)
+        self.assertEqual(mu.reg_read(EBP), 0x6666)
+
+    def flags(self, mu):
+        return rrp.read_flags(lambda a, n: bytes(mu.mem_read(a, n)), self.BASE)
+
+    def test_play_start_loads_file_restores_state_and_reveals_map(self):
+        mu = self.play_machine([(105, 0, b"\x00\x20\x0a\x00abcdef")])
+        mu.mem_write(0xB412C8, struct.pack("<H", 0x8))
+        self.run_entry(mu, "start", 0x4D7559)
+        self.assertEqual(struct.unpack("<I", mu.mem_read(0x501EC0, 4))[0], 0x11111111)
+        self.assertEqual(bytes(mu.mem_read(0xB40FE8, 20)), bytes(range(40, 60)))
+        self.assertEqual(struct.unpack("<I", mu.mem_read(0x6E1A78, 4))[0], 0x2222)
+        self.assertEqual(struct.unpack("<I", mu.mem_read(rrp.FRAME, 4))[0], 100)
+        self.assertEqual(struct.unpack("<H", mu.mem_read(0xB412C8, 2))[0], 0x9)          # 지도 공개 비트
+        self.assertIn(("reveal", 0x915698), self.calls)
+        self.assertEqual(self.saved, [])                                                # 재생 땐 저장 안 함
+        self.assertEqual(self.flags(mu)["diverged"], 0)
+
+    def test_play_start_without_file_flags_missing_data(self):
+        mu = self.play_machine([])
+        del self.files[b"RKREPLAY.RKP"]
+        self.run_entry(mu, "start", 0x4D7559)
+        self.assertEqual(self.flags(mu)["diverged"], 0xFFFFFFFF)
+
+    def test_play_feeds_recorded_batches_on_turn_frames(self):
+        b1, b2, b3 = b"\x00\x20\x0a\x00" + bytes(6), b"\x02\x40" + bytes(51), b"\x03\x40ABC"
+        chk_ok = struct.pack(rrp.CHECK_FMT, 105, 0x11111111, 0, 0, 0)       # 유닛 없음: 해시 0, 수 0
+        chk_bad = struct.pack(rrp.CHECK_FMT, 110, 0x99999999, 0, 0, 0)
+        recs = [(105, rrp.P_CHECK, chk_ok), (105, 0, b1), (105, 1, b2), (110, rrp.P_CHECK, chk_bad), (110, 0, b3), (115, 1, b1)]
+        mu = self.play_machine(recs)
+        self.run_entry(mu, "start", 0x4D7559)
+        for frame in range(100, 113):
+            mu.mem_write(rrp.FRAME, struct.pack("<I", frame))
+            self.calls.clear()
+            if frame == 110:
+                self.keys = {0x32}
+            self.run_entry(mu, "send", 0x4D79FB)
+            if frame % 5:
+                self.assertEqual(self.calls, [], frame)                   # 5프레임마다만 (멀티 루프와 같은 rand 소비)
+            else:
+                self.assertEqual(self.calls[0], ("send",), frame)        # 원래 0x447AF0 (rand 1회)
+                got = [c[1:] for c in self.calls if c[0] == "dispatch"]
+                want = {100: [], 105: [(0, b1), (1, b2)], 110: [(0, b3)]}[frame]
+                self.assertEqual(got, want, frame)
+        f = self.flags(mu)
+        self.assertEqual(f["fed"], 3)
+        self.assertEqual(f["diverged"], 110)                              # 첫 어긋남
+        self.assertEqual(struct.unpack("<I", mu.mem_read(0xB412B8, 4))[0], 16)   # 2 키 -> 2배속
+
+    def test_play_turn_hook_skips_live_dispatch(self):
+        from unicorn.x86_const import UC_X86_REG_EAX
+        mu = self.play_machine([])
+        mu.mem_write(0x44A846, b"\xcc")                                  # 원래 함수로 가면 안 됨
+        self.run_entry(mu, "turn", 0x4D7A18)
+        self.assertEqual(mu.reg_read(UC_X86_REG_EAX) & 0xFF, 1)
+
+    def test_recorded_match_plays_back_identically(self):
+        """기록(가짜 게임) -> 리플레이 파일 -> .rkp -> 실제 재생 코드: 같은 명령이 같은 프레임·순서로 실행."""
+        t = RecordAndModelTests("test_record_load_and_stats")
+        t.setUp()
+        try:
+            t.play_match()
+            t.rec._finish()
+            rp = M.load(next((t.base / "replays").glob("*.rkr")))
+        finally:
+            t.tearDown()
+        data = M.ingame_data(rp)
+        self.assertIsInstance(data, dict)
+        self.assertEqual(data["save"], b"SAVEDATA" * 100)
+        want = [(r[0], r[1], r[2]) for r in data["records"] if r[1] < 8]
+        self.assertGreater(len(want), 20)
+        recs = [r for r in data["records"] if r[1] < 8]                 # 검사값은 가짜라 빼고 명령만
+        mu = self.play_machine(recs, start_frame=data["start"]["frame"])
+        self.run_entry(mu, "start", 0x4D7559)
+        got = []
+        for frame in range(data["start"]["frame"], max(r[0] for r in want) + 6):
+            mu.mem_write(rrp.FRAME, struct.pack("<I", frame))
+            self.calls.clear()
+            self.run_entry(mu, "send", 0x4D79FB)
+            got += [(frame, c[1], c[2]) for c in self.calls if c[0] == "dispatch"]
+        self.assertEqual(got, want)
+        self.assertEqual(self.flags(mu)["diverged"], 0)
+
+    def test_ingame_data_requires_start_and_save(self):
+        rp = M.Replay(Path("x"), {"players": []}, [{"t": 0, "cmd": [[5, 0, "AA=="]]}], [0], [0])
+        self.assertIn("시작 기록", M.ingame_data(rp))
+        rp.frames[0]["start"] = {"frame": 0, "rand": 0, "rng": "00" * 20, "seed": 0, "local": 0}
+        self.assertIn("시작 저장", M.ingame_data(rp))
+
+    def test_rkp_layout(self):
+        st = {"frame": 7, "rand": 1, "rng": "00" * 20, "seed": 2}
+        blob = rrp.build_rkp(st, [(10, 0, b"abc"), (15, rrp.P_CHECK, bytes(20))])
+        self.assertEqual(blob[:4], rrp.RKP_MAGIC)
+        n, cur, frame = struct.unpack_from("<III", blob, 4)
+        self.assertEqual((n, cur, frame), (len(blob) - rrp.RKP_HEAD, 0, 7))
+        self.assertEqual(struct.unpack_from("<I", blob, 0x2C)[0], 15)
 
     def test_turn_hook_checksum_and_prologue(self):
         mu, rd = self.machine()

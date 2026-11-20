@@ -133,11 +133,30 @@ class Recorder:
         self.pending_cmds: list = []
         self.lost_bytes = 0
         self.save_wait = None                  # (경로, 시작 시각) — 시작 저장 파일을 리플레이에 넣을 때까지
+        self.paused_since = None               # 게임 화면 재생 중엔 기록하지 않음
+        self.play_flags = None
         self._stop = threading.Event()
         self.thread = None
 
+    def pause_for_playback(self):
+        self._finish("재생")
+        self.paused_since = time.time()
+
+    def play_status(self) -> str:
+        f = self.play_flags
+        if not f or not f.get("play"):
+            return ""
+        if f["diverged"] == 0xFFFFFFFF:
+            return "게임 화면 재생: 재생 자료(RKREPLAY.RKP)를 읽지 못했습니다."
+        if f["diverged"]:
+            return f"게임 화면 재생: 프레임 {f['diverged']}부터 원래 경기와 달라졌습니다 (명령 {f['fed']}개 재생)."
+        return f"게임 화면 재생 중: 명령 {f['fed']}개 재생, 원래 경기와 같음"
+
     # ---- 한 번 살펴보기 (테스트에서 직접 부름) ----
     def poll(self):
+        if self.paused_since is not None:
+            self._poll_playback()
+            return
         if self.mem is None:
             pid = self.find_pid()
             if not pid:
@@ -233,6 +252,27 @@ class Recorder:
                   "slots": [players[i].active for i in range(rm.PLAYER_COUNT)]}
         name = f"{stamp:%Y%m%d_%H%M%S}_{_safe(Path(mapname.replace(chr(92), '/')).stem)}.rkr"
         self.writer = MatchWriter(replay_dir(self.base_dir) / name, header)
+
+    def _poll_playback(self):
+        """재생용으로 띄운 게임: 기록하지 않고 재생 상태만 읽는다. 게임이 끝나면 다시 기록."""
+        if self.mem is None:
+            pid = self.find_pid()
+            if not pid:
+                if self.play_flags is not None or time.time() - self.paused_since > 180:
+                    self.paused_since, self.play_flags = None, None
+                return
+            try:
+                self.mem = self.open_memory(pid)
+                self.reader = rm.GameReader(self.mem)
+            except OSError:
+                self.mem = None
+                return
+        try:
+            sec = rrp.find_section(self.mem.read)
+            self.play_flags = rrp.read_flags(self.mem.read, sec) if sec else {}
+        except OSError:
+            self._drop()
+            self.paused_since, self.play_flags = None, None
 
     def _expect_save(self, local):
         """게임이 경기 시작에 쓴 RKREPLAY.SAV (<게임>\\USERs\\<내 계정>\\) 를 기다린다."""

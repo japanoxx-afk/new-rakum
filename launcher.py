@@ -53,7 +53,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9054"
+APP_VERSION = "0.9055"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1596,14 +1596,17 @@ class App(tk.Tk):
         hotkeys = bool(self.cfg.get('hotkeys', True))
         select24 = bool(self._select24_setting())
         record = bool(self.cfg.get("replay_record", True))
-        start_save = record and bool(self.cfg.get("replay_start_save", False))
-        minimap_patch.prepare(exe, highres, self._rally_setting(), hotkeys, select24, record, start_save)
+        play = bool(getattr(self, "_replay_play", False))       # 게임 화면 리플레이로 띄우는 한 번만
+        self._replay_play = False
+        start_save = record and not play and bool(self.cfg.get("replay_start_save", False))
+        minimap_patch.prepare(exe, highres, self._rally_setting(), hotkeys, select24, record, start_save, play)
         self.cfg['command_cadence_99ms'] = False
         installed = exe.read_bytes()
         if hotkey_patch.state(installed) != hotkeys:
             raise RuntimeError('단축키 확장 패치 검증 실패. 게임을 실행하지 않았습니다.')
-        if (replay_record_patch.state(hotkey_patch.strip(installed)) != record
-                or replay_record_patch.saves_at_start(hotkey_patch.strip(installed)) != start_save):
+        if (replay_record_patch.state(hotkey_patch.strip(installed)) != (record or play)
+                or replay_record_patch.saves_at_start(hotkey_patch.strip(installed)) != start_save
+                or replay_record_patch.plays(hotkey_patch.strip(installed)) != play):
             raise RuntimeError('리플레이 기록 패치 검증 실패. 게임을 실행하지 않았습니다.')
         if selection_patch.state(replay_record_patch.strip(hotkey_patch.strip(installed))) != select24:
             raise RuntimeError('선택 한도 24 패치 검증 실패. 게임을 실행하지 않았습니다.')
@@ -1757,7 +1760,8 @@ class App(tk.Tk):
         ttk.Label(top, textvariable=self.replay_status, style="Muted.TLabel").pack(side="left", padx=10)
         btns = ttk.Frame(frame)
         btns.pack(fill="x", pady=(6, 6))
-        ttk.Button(btns, text="재생", command=self._play_replay).pack(side="left")
+        ttk.Button(btns, text="게임 화면으로 재생", style="Accent.TButton", command=self._play_replay_ingame).pack(side="left")
+        ttk.Button(btns, text="간단 보기", command=self._play_replay).pack(side="left", padx=4)
         ttk.Button(btns, text="통계", command=self._replay_stats_window).pack(side="left", padx=4)
         ttk.Button(btns, text="리플레이 폴더 열기", command=self._open_replay_folder).pack(side="left", padx=4)
         ttk.Button(btns, text="새로고침", command=self._refresh_replays).pack(side="left", padx=4)
@@ -1777,7 +1781,7 @@ class App(tk.Tk):
             tree.heading(c, text=t)
             tree.column(c, width=w, anchor="w")
         tree.pack(fill="both", expand=True, pady=(6, 6))
-        tree.bind("<Double-1>", lambda e: self._play_replay())
+        tree.bind("<Double-1>", lambda e: self._play_replay_ingame())
         tree.bind("<<TreeviewSelect>>", lambda e: self._show_replay_summary())
         self.replay_tree = tree
         self.replay_summary = tk.Text(frame, height=12, wrap="word", relief="flat", font=("Malgun Gothic", 9))
@@ -1832,6 +1836,53 @@ class App(tk.Tk):
         except (OSError, ValueError, EOFError, tk.TclError) as e:
             messagebox.showerror("리플레이", f"리플레이를 열 수 없습니다.\n{e}")
 
+    def _play_replay_ingame(self):
+        """실제 게임 화면 리플레이: 시작 저장을 불러와 기록된 명령을 게임에 다시 넣는다."""
+        path = self._selected_replay()
+        if not path:
+            messagebox.showinfo("리플레이", "재생할 리플레이를 고르세요.")
+            return
+        try:
+            rp = replay_model.load(path)
+            data = replay_model.ingame_data(rp)
+        except (OSError, ValueError, EOFError) as e:
+            messagebox.showerror("리플레이", f"리플레이를 읽을 수 없습니다.\n{e}")
+            return
+        if isinstance(data, str):
+            if messagebox.askyesno("리플레이", data + "\n\n대신 간단 보기로 열까요?"):
+                self._play_replay()
+            return
+        game_dir = pathlib.Path(self.cfg.get("game_dir", DEFAULT_GAME_DIR))
+        try:
+            (game_dir / "RKREPLAY.RKP").write_bytes(replay_record_patch.build_rkp(data["start"], data["records"]))
+            users = game_dir / "USERs"
+            profiles = {p.name for p in users.iterdir() if p.is_dir()} if users.is_dir() else set()
+            local = data["start"].get("local", 0)
+            names = [p["name"] for p in rp.players if p["index"] == local]
+            profiles |= set(names) | {self._last_game_user()} - {""}
+            for prof in profiles:
+                (users / prof).mkdir(parents=True, exist_ok=True)
+                (users / prof / "RKREPLAY.SAV").write_bytes(data["save"])
+        except (OSError, ValueError) as e:
+            messagebox.showerror("리플레이", f"재생 준비 실패: {e}")
+            return
+        self.recorder.pause_for_playback()
+        self._replay_play = True
+        self._on_single_play()
+        messagebox.showinfo("게임 화면으로 재생",
+                            "게임이 켜지면 싱글플레이 → 불러오기 → RKREPLAY 를 고르세요.\n\n"
+                            "1·2·4 키: 1배·2배·4배속   맵 전체 공개\n"
+                            "끝내기: Esc(게임 메뉴) → 나가기\n"
+                            "원래 경기와 달라지면 리플레이 탭 위쪽에 표시됩니다.")
+
+    def _last_game_user(self):
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\TriggerSoft\RhakMu") as k:
+                return str(winreg.QueryValueEx(k, "LastUser")[0])
+        except OSError:
+            return ""
+
     def _replay_stats_window(self):
         path = self._selected_replay()
         if not path:
@@ -1873,7 +1924,8 @@ class App(tk.Tk):
         if rec is not None:
             was = getattr(self, "_replay_was_recording", False)
             now = rec.writer is not None
-            self.replay_status.set(rec.status if self.cfg.get("replay_record", True) else "자동 기록 꺼짐")
+            play = rec.play_status()
+            self.replay_status.set(play or (rec.status if self.cfg.get("replay_record", True) else "자동 기록 꺼짐"))
             if was and not now:
                 self._refresh_replays()                 # 경기 끝: 새 파일 목록에 표시
             self._replay_was_recording = now
