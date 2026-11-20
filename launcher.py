@@ -53,7 +53,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9056"
+APP_VERSION = "0.9057"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1598,7 +1598,7 @@ class App(tk.Tk):
         record = bool(self.cfg.get("replay_record", True))
         play = bool(getattr(self, "_replay_play", False))       # 게임 화면 리플레이로 띄우는 한 번만
         self._replay_play = False
-        start_save = record and not play and bool(self.cfg.get("replay_start_save", False))
+        start_save = record and not play and bool(self.cfg.get("replay_start_save", True))
         minimap_patch.prepare(exe, highres, self._rally_setting(), hotkeys, select24, record, start_save, play)
         self.cfg['command_cadence_99ms'] = False
         installed = exe.read_bytes()
@@ -1769,8 +1769,8 @@ class App(tk.Tk):
         self.replay_record_var = tk.BooleanVar(value=self.cfg.get("replay_record", True))
         ttk.Checkbutton(btns, text="경기 자동 기록", variable=self.replay_record_var,
                         command=self._on_replay_record_toggle).pack(side="right")
-        self.replay_start_save_var = tk.BooleanVar(value=self.cfg.get("replay_start_save", False))
-        ttk.Checkbutton(btns, text="실험: 경기 시작 저장(실제 화면 리플레이용)", variable=self.replay_start_save_var,
+        self.replay_start_save_var = tk.BooleanVar(value=self.cfg.get("replay_start_save", True))
+        ttk.Checkbutton(btns, text="경기 시작 저장(게임 화면 재생에 필요)", variable=self.replay_start_save_var,
                         command=self._on_replay_start_save_toggle).pack(side="right", padx=(0, 8))
         ttk.Label(frame, text="런처를 켜 둔 채 게임하면 경기마다 자동 저장됩니다. 더블클릭하면 재생합니다 "
                               "(1·2·4 속도, Space 정지, ←→ 10초, S 통계, Esc 종료, 맵 전체 공개).",
@@ -1855,36 +1855,20 @@ class App(tk.Tk):
         game_dir = pathlib.Path(self.cfg.get("game_dir", DEFAULT_GAME_DIR))
         try:
             (game_dir / "RKREPLAY.RKP").write_bytes(replay_record_patch.build_rkp(data["start"], data["records"]))
-            users = game_dir / "USERs"
-            profiles = {p.name for p in users.iterdir() if p.is_dir()} if users.is_dir() else set()
-            local = data["start"].get("local", 0)
-            names = [p["name"] for p in rp.players if p["index"] == local]
-            profiles |= set(names) | {self._last_game_user()} - {""}
-            for prof in profiles:
-                (users / prof).mkdir(parents=True, exist_ok=True)
-                (users / prof / "RKREPLAY.SAV").write_bytes(data["save"])
+            # 재생 패치가 계정 이름을 RKREPLAY 로 두므로 USERs\RKREPLAY\RKREPLAY.SAV 를 불러온다
+            (game_dir / "USERs" / "RKREPLAY").mkdir(parents=True, exist_ok=True)
+            (game_dir / "USERs" / "RKREPLAY" / "RKREPLAY.SAV").write_bytes(data["save"])
         except (OSError, ValueError) as e:
             messagebox.showerror("리플레이", f"재생 준비 실패: {e}")
             return
         self.recorder.pause_for_playback()
         self._replay_play = True
         self._on_single_play()
-        mapname = pathlib.Path(rp.header.get("map", "").replace("\\", "/")).stem
         messagebox.showinfo("게임 화면으로 재생",
-                            "게임이 켜지면 싱글플레이로 게임을 시작하세요"
-                            + (f" (맵: {mapname})" if mapname else "") + ".\n"
-                            "게임이 시작되는 순간 리플레이의 경기 시작 저장을 자동으로 불러와 재생합니다.\n\n"
+                            "게임이 켜지면 로그인 없이 바로 리플레이가 재생됩니다.\n\n"
                             "1·2·4 키: 1배·2배·4배속   맵 전체 공개\n"
-                            "끝내기: Esc(게임 메뉴) → 나가기\n"
+                            "끝내기: Esc(게임 메뉴) → 나가기, 또는 게임 창 닫기\n"
                             "원래 경기와 달라지면 리플레이 탭 위쪽에 표시됩니다.")
-
-    def _last_game_user(self):
-        try:
-            import winreg
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\TriggerSoft\RhakMu") as k:
-                return str(winreg.QueryValueEx(k, "LastUser")[0])
-        except OSError:
-            return ""
 
     def _replay_stats_window(self):
         path = self._selected_replay()

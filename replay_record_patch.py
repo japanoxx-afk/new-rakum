@@ -15,8 +15,18 @@ WangGun 리플레이(WGReplay.dll)와 같은 방식: 시작 상태는 게임 자
   2) 0x4D7554 (게임 루프 직전) -> 기록: 시작 기록(0xFE) + (켜져 있으면) SaveGameData("RKREPLAY")
                                   재생: RKREPLAY.RKP 읽기, 난수·시드·프레임 되돌리기, 지도 공개
   3) 0x44A840 (턴 처리 시작) -> 기록: 검사값(0xFD) / 재생: 원래 턴 처리 건너뜀 (내 클릭·네트워크 무시)
-  4) 0x447AF0 (내 턴 보내기) -> 재생: 5프레임마다만 원래 함수(rand 1회) + 기록된 명령 주입·검사값 비교·1/2/4 배속
-  5) 0x4D7319 (Game_Loop 시작) -> 재생(싱글): 게임 자체 '저장 불러오기' 경로를 켬 ([0x6DFF8D]=1, 이름 0x6E62F4 = RKREPLAY)
+  2") 재생: 저장에는 건물 시야 지도(0xDD5C0A, 건설 가능 판정 0x4373E0 이 씀)가 없어 불러온 뒤 비어 있다 ->
+      살아 있는 유닛마다 0x4369F0(건물 시야 더하기; 건설 중 0x1004 제외)을 불러 다시 만든다.
+      없으면 '그곳엔 건설을 할 수 없습니다'로 기록된 건설 명령이 실패해 경기가 달라진다.
+  2') 재생: 저장을 불러온 뒤 [0xB412CB]=1 — 기록한 경기처럼 대전 루프(Game_Multi)로 돈다
+      (대전 여부에 따라 AI 등 시뮬레이션이 달라 싱글 루프로는 첫 검사에서 어긋남).
+  4) 0x447AF0 (내 턴 보내기) -> 재생: 5프레임마다 원래 함수와 같은 WinRandom(0, 0x7FFF, ...) 1회만 (보내기 0x4496C0 는
+     받는 쪽이 없어 32턴 뒤 멈춤) + 기록된 명령 주입·검사값 비교·1/2/4 배속
+  6) 0x4D6AA1 시작 방식 바이트 (원래 0 = 로그인 화면) -> 재생: 4 = 개발용 '저장 불러오기로 바로 게임' 방식
+     (로그인·로비 없이 상태 2 -> Game_Loop). 온라인 게임이라 싱글 메뉴가 없어서 실행하자마자 재생.
+  5) 0x4D7319 (Game_Loop 시작) -> 재생(싱글): 게임 자체 '저장 불러오기' 경로를 켬 ([0x6DFF8D]=1, 이름 0x6E62F4 = RKREPLAY,
+     계정 이름 0x6E61F4 = RKREPLAY -> 저장 위치 GamePath\\USERs\\RKREPLAY\\RKREPLAY.SAV).
+     시작 방식 4 에서는 [0xB412CB](대전 여부)가 0이 아니라서 재생 때는 0(싱글 루프)으로 둔다.
      -> 0x4D75A0, LoadGameData 0x4D8220(GamePath\\USERs\\<계정>\\RKREPLAY.SAV), 0x4D7880. 게임에 불러오기 메뉴가 없어서.
 
 링 버퍼 (섹션 + BUF, 기록): +0 total +4 pos +0xC 기록 수, +0x10.. [u32 프레임][u8 플레이어][0][u16 길이][내용] (4바이트 맞춤)
@@ -43,9 +53,9 @@ MAX_BATCH = 0x4000
 P_START, P_CHECK = 0xFE, 0xFD
 SAVE_NAME = b"RKREPLAY"
 PLAY_FILE = b"RKREPLAY.RKP"
-OFF = {"dispatch": 0x000, "start": 0x080, "turn": 0x280, "put": 0x300, "hash": 0x380, "send": 0x400, "feed": 0x480, "load": 0x600}
+OFF = {"dispatch": 0x000, "start": 0x080, "turn": 0x280, "put": 0x300, "hash": 0x380, "send": 0x400, "feed": 0x480, "load": 0x600, "vision": 0x6c0}
 NAME_OFF, PLAY_NAME_OFF, FLAGS_OFF, SCR_OFF = 0x800, 0x810, 0x820, 0x880
-F_NOSAVE, F_SAVED, F_PLAY, F_DIVERGED, F_FED = 0, 4, 8, 0xC, 0x10
+F_NOSAVE, F_SAVED, F_PLAY, F_DIVERGED, F_FED, F_ACTUAL = 0, 4, 8, 0xC, 0x10, 0x14   # ACTUAL: 첫 어긋남의 rand·해시·유닛 수
 START_FMT = "<II20sIB3x8s"            # 시드, rand, 난수 객체 0x14, 프레임, 내 번호, 대전 설정 8
 START_LEN = struct.calcsize(START_FMT)
 CHECK_FMT = "<IIIII"                  # 프레임, rand, LCG, 유닛 해시, 유닛 수
@@ -63,6 +73,7 @@ SITES = (
     (0xD7319, bytes.fromhex("0fbe058dff6d00"), OFF["load"], "call"),
 )
 SITE, SITE_VA, SITE_ORIGINAL = 0x4AABC, 0x44AABC, SITES[0][1]
+MODE_OFF, MODE_PLAY = 0xD6AA4, 4        # WinMain 'mov byte [ebp-0x10], 0' 의 값 (시작 방식)
 
 _BASE = """
     call L_here
@@ -191,18 +202,18 @@ L_play:
     mov dword ptr [ebp+{BUF + 8:#x}], 0
     mov eax, dword ptr [ebp+{BUF + 0x10:#x}]
     mov dword ptr [0x501ec0], eax
+    push dword ptr [0xb40ff0]
     lea esi, [ebp+{BUF + 0x14:#x}]
     mov edi, 0xb40fe8
     mov ecx, 5
     .byte 0xf3, 0xa5
+    pop dword ptr [0xb40ff0]
     mov eax, dword ptr [ebp+{BUF + 0x28:#x}]
     mov dword ptr [0x6e1a78], eax
     mov eax, dword ptr [ebp+{BUF + 0xc:#x}]
     mov dword ptr [{FRAME:#x}], eax
     mov dword ptr [ebp+{FLAGS_OFF + F_DIVERGED:#x}], 0
-    or word ptr [0xb412c8], 1
-    mov ecx, 0x915698
-    mov eax, 0x4991e0
+    lea eax, [ebp+{OFF['vision']:#x}]
     call eax
 L_out:
     popad
@@ -318,17 +329,23 @@ L_play:
     div ecx
     test edx, edx
     jne L_ret
-    call L_orig
+    push 0
+    push 0
+    push 0
+    push 0
+    movsx ecx, word ptr [0x4ff414]
+    add ecx, 4
+    push ecx
+    push 0x4ef080
+    push 0x7fff
+    push 0
+    mov ecx, 0xb40fe8
+    mov eax, 0x4c9c10
+    call eax
     lea eax, [ebp+{OFF['feed']:#x}]
     call eax
 L_ret:
     popad
-    ret
-L_orig:
-    push ebp
-    mov ebp, esp
-    sub esp, 0x40
-    push 0x447af6
     ret
 """,
     # feed (재생, 5프레임마다): 이 프레임의 기록된 묶음 주입, 검사값 비교, 배속 키. ebp = 섹션 시작.
@@ -368,10 +385,13 @@ L_loop:
     jne L_bad
     jmp L_ok
 L_bad:
-    pop edi
-    push edi
     cmp dword ptr [ebp+{FLAGS_OFF + F_DIVERGED:#x}], 0
     jne L_ok
+    mov dword ptr [ebp+{FLAGS_OFF + F_ACTUAL:#x}], eax
+    mov dword ptr [ebp+{FLAGS_OFF + F_ACTUAL + 4:#x}], ecx
+    mov dword ptr [ebp+{FLAGS_OFF + F_ACTUAL + 8:#x}], edi
+    pop edi
+    push edi
     mov dword ptr [ebp+{FLAGS_OFF + F_DIVERGED:#x}], edi
 L_ok:
     pop edi
@@ -418,19 +438,47 @@ L_kn:
     "load": "    pushad\n" + _base("load") + f"""
     cmp dword ptr [ebp+{FLAGS_OFF + F_PLAY:#x}], 0
     je L_lo
-    cmp byte ptr [0xb412cb], 0
-    jne L_lo
-    cmp byte ptr [0x6dff8d], 0
-    jne L_lo
+    mov byte ptr [0xb412cb], 0
+    cmp byte ptr [0x6dff8d], 2
+    je L_lo
     mov byte ptr [0x6dff8d], 1
+    cld
     lea esi, [ebp+{NAME_OFF:#x}]
     mov edi, 0x6e62f4
     mov ecx, {len(SAVE_NAME) + 1}
-    cld
+    rep movsb
+    lea esi, [ebp+{NAME_OFF:#x}]
+    mov edi, 0x6e61f4
+    mov ecx, {len(SAVE_NAME) + 1}
     rep movsb
 L_lo:
     popad
     movsx eax, byte ptr [0x6dff8d]
+    ret
+""",
+    # vision (재생 시작, 저장을 불러온 뒤): 대전 루프로, 건물 시야 다시 만들기(0x4369F0 — 저장에 시야 지도가 없음), 지도 공개.
+    "vision": f"""
+    mov byte ptr [0xb412cb], 1
+    mov esi, {0x775a38 + 0x138:#x}
+    mov ebx, 0x6a5
+L_vis:
+    movsx eax, word ptr [esi+8]
+    test eax, eax
+    jle L_vn
+    cmp word ptr [esi+6], 0x1004
+    je L_vn
+    push esi
+    mov eax, 0x4369f0
+    call eax
+    add esp, 4
+L_vn:
+    add esi, 0x138
+    dec ebx
+    jne L_vis
+    or word ptr [0xb412c8], 1
+    mov ecx, 0x915698
+    mov eax, 0x4991e0
+    call eax
     ret
 """,
 }
@@ -450,6 +498,51 @@ def assemble() -> bytes:
 
 
 CODE = bytes.fromhex(
+    "60e8000000005d81ed0600000083ed0083bd280800000075198b7424288b4c242c0fb65c242485f674088d85"
+    "00030000ffd06168e0074400c300000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000060e80000"
+    "00005d81ed0600000081ed8000000083bd28080000000f85000100008dbd80080000a1781a6e00aba1c01e50"
+    "00abbee80fb400b905000000f3a5a1b412b400ab0fb605cc12b400abbe88ff6d00b902000000f3a58db58008"
+    "0000b92c000000bbfe0000008d8500030000ffd083bd20080000000f85610100000fb605cc12b40069c0e011"
+    "00000510797f0089c3bef4616e008dbd00090000b908000000f3a589debff4616e00b908000000f3a5c60513"
+    "626e00008dbd40090000c7075553455266c74704735c83c70689deb91f000000acaa84c074064975f7c60700"
+    "6a008d854009000050ff1584c24e008d850008000050b820914d00ffd083c4040fb6c08985240800008db500"
+    "090000bff4616e00b908000000f3a5e9be000000c7852c080000ffffffff6a0068800000006a036a006a0168"
+    "000000808d851008000050ff157cc24e0083f8ff0f848c00000089c66a008d85800900005068000020008d85"
+    "001000005056ff1560c24e0056ff15acc14e0081bd00100000524b5031755bc78508100000000000008b8510"
+    "100000a3c01e5000ff35f00fb4008db514100000bfe80fb400b905000000f3a58f05f00fb4008b8528100000"
+    "a3781a6e008b850c100000a3b412b400c7852c080000000000008d85c0060000ffd0618b0da411b400c30000"
+    "00000000000000000000000000000000000000000000000060e8000000005d81ed0600000081ed8002000083"
+    "bd2808000000754c8d8580030000ffd08d9dc0080000a1b412b4008903a1c01e5000894304a1f80fb4008943"
+    "0889530c897b1089deb914000000bbfd0000008d8500030000ffd0615589e583ec446846a84400c361b001c3"
+    "000000000000000000000000000000000000000081f900400000775d8d510b83e2fc8dbd001000008b470453"
+    "8d1c1081fb00002000761bbb0000200029c383fb047208c7440710ffffffff011f31c08947048d5c071001d0"
+    "8947040117ff470ca1b412b400890358884304c643050066894b068d7b08fcf3a4c300000000000000000000"
+    "0000000000000000000000000000000031d231ffbe705b7700b9a50600000fbf460885c07e15476bd21f01c2"
+    "6bd21f0356126bd21f0fb7460e01c281c6380100004975dac300000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "00000000000000000000000060e8000000005d81ed0600000081ed0004000083bd2808000000750d615589e5"
+    "83ec4068f67a4400c3a1b412b40031d2b905000000f7f185d275336a006a006a006a000fbf0d14f44f0083c1"
+    "04516880f04e0068ff7f00006a00b9e80fb400b8109c4c00ffd08d8580040000ffd061c30000000000000000"
+    "00000000000000008b3db412b4008b9d081000003b9d041000000f83a40000008d941d401000008b0239f80f"
+    "87930000000fb74a068d410b83e0fc01c38b0239f872d10fb642043dfd000000754e5357528d8580030000ff"
+    "d089d15aa1c01e50003b420c750c3b4a1475073b7a187502eb2383bd2c08000000751a898534080000898d38"
+    "08000089bd3c0800005f5789bd2c0800005f5be978ffffff83f8080f836fffffff5357518d4a085150b8e007"
+    "4400ffd083c40cff85300800005f5be950ffffff899d08100000be31000000bb21000000e81f000000be3200"
+    "0000bb10000000e810000000be34000000bb08000000e801000000c356ff1550c34e006685c07906891db812"
+    "b400c30000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000060e80000"
+    "00005d81ed0600000081ed0006000083bd2808000000743cc605cb12b40000803d8dff6d0002742cc6058dff"
+    "6d0001fc8db500080000bff4626e00b909000000f3a48db500080000bff4616e00b909000000f3a4610fbe05"
+    "8dff6d00c3000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "000000000000000000000000c605cb12b40001be705b7700bba50600000fbf460885c07e1366817e06041074"
+    "0b56b8f0694300ffd083c40481c6380100004b75dc66830dc812b40001b998569100b8e0914900ffd0c3"
+)
+# 이전 판 — 이미 설치된 파일을 걷어낼 때 인식: (코드, 각 위치의 섹션 안 대상)
+LEGACY = (
+    (bytes.fromhex(
     "60e8000000005d81ed0600000083ed0083bd280800000075198b7424288b4c242c0fb65c242485f674088d85"
     "00030000ffd06168e0074400c300000000000000000000000000000000000000000000000000000000000000"
     "0000000000000000000000000000000000000000000000000000000000000000000000000000000060e80000"
@@ -487,9 +580,7 @@ CODE = bytes.fromhex(
     "0000000000000000000000000000000000000000000000000000000000000000000000000000000060e80000"
     "00005d81ed0600000081ed0006000083bd2808000000742c803dcb12b400007523803d8dff6d0000751ac605"
     "8dff6d00018db500080000bff4626e00b909000000fcf3a4610fbe058dff6d00c3"
-)
-# 이전 판 — 이미 설치된 파일을 걷어낼 때 인식: (코드, 각 위치의 섹션 안 대상)
-LEGACY = (
+    ), (0, 0x80, 0x280, 0x400, 0x600)),                                                                 # v0.9056
     (bytes.fromhex(
     "60e8000000005d81ed0600000083ed0083bd280800000075198b7424288b4c242c0fb65c242485f674088d85"
     "00030000ffd06168e0074400c300000000000000000000000000000000000000000000000000000000000000"
@@ -604,7 +695,7 @@ def _legacy_bodies():
             for v in (0, 1):
                 struct.pack_into("<I", base, 0x820, v)
                 out.append((bytes(base), targets))
-        if len(targets) == 4:                              # v0.9055: 이름 둘 + 저장 끄기 0/1 + 재생 0/1
+        if len(targets) >= 4:                              # v0.9055~: 이름 둘 + 저장 끄기 0/1 + 재생 0/1
             base[0x800:0x809] = SAVE_NAME + b"\0"
             base[0x810:0x81D] = PLAY_FILE + b"\0"
             for v in (0, 1):
@@ -626,12 +717,13 @@ def _kind(data):
               and _u32(data, soi) == va + VIRTUAL_SIZE and _u32(data, h + 36) == CHARACTERISTICS)
     if not ok_hdr:
         raise ValueError("리플레이 기록 패치가 불완전하거나 알 수 없는 변경이 있습니다.")
-    if raw in [body(s, p) for s in (False, True) for p in (False, True)] and \
+    mode = MODE_PLAY if _u32(raw, FLAGS_OFF + F_PLAY) == 1 else 0
+    if raw in [body(s, p) for s in (False, True) for p in (False, True)] and data[MODE_OFF] == mode and \
             all(data[o:o + len(b)] == _branch(o, va, t, k, len(b)) for o, b, t, k in SITES):
         return "new", (va, h, nsec)
     for legacy, targets in _legacy_bodies():
         n = len(targets)
-        if raw == legacy and all(data[o:o + len(b)] == _branch(o, va, t, k, len(b))
+        if raw == legacy and data[MODE_OFF] == 0 and all(data[o:o + len(b)] == _branch(o, va, t, k, len(b))
                                  for (o, b, _, k), t in zip(SITES[:n], targets)) \
                 and all(data[o:o + len(b)] == b for o, b, t, k in SITES[n:]):
             return "legacy", (va, h, nsec)
@@ -643,7 +735,7 @@ def state(data) -> bool:
     kind, _ = _kind(data)
     if kind:
         return True
-    if all(data[o:o + len(b)] == b for o, b, t, k in SITES):
+    if data[MODE_OFF] == 0 and all(data[o:o + len(b)] == b for o, b, t, k in SITES):
         return False
     raise ValueError("리플레이 기록 패치: 지원하지 않는 게임 파일이거나 다른 패치와 충돌합니다.")
 
@@ -673,6 +765,7 @@ def strip(data) -> bytes:
     out = bytearray(data[:secs[-1][3]])
     for o, b, t, k in SITES:
         out[o:o + len(b)] = b
+    out[MODE_OFF] = 0
     out[h:h + 40] = bytes(40)
     struct.pack_into("<H", out, nt + 6, nsec - 1)
     struct.pack_into("<I", out, soi, va)
@@ -699,6 +792,8 @@ def apply(data, enabled: bool = True, save: bool = False, play: bool = False) ->
     struct.pack_into("<I", out, soi, new_va + VIRTUAL_SIZE)
     for o, b, t, k in SITES:
         out[o:o + len(b)] = _branch(o, new_va, t, k, len(b))
+    if play:
+        out[MODE_OFF] = MODE_PLAY
     out += body(save, play)
     return bytes(out)
 
@@ -736,9 +831,10 @@ def find_section(read) -> int | None:
 
 
 def read_flags(read, section_va) -> dict:
-    raw = read(section_va + FLAGS_OFF, 0x14)
-    nosave, saved, play, diverged, fed = struct.unpack("<IIIII", raw)
-    return {"saved": saved, "play": play, "diverged": diverged, "fed": fed}
+    raw = read(section_va + FLAGS_OFF, 0x20)
+    nosave, saved, play, diverged, fed, a_rand, a_hash, a_count = struct.unpack("<8I", raw)
+    return {"saved": saved, "play": play, "diverged": diverged, "fed": fed,
+            "actual": (a_rand, a_hash, a_count)}
 
 
 def parse_start(blob: bytes) -> dict:

@@ -405,6 +405,11 @@ class InGameHookTests(unittest.TestCase):
             ("dispatch", arg(uc, 0) & 0xFF, bytes(uc.mem_read(arg(uc, 1), arg(uc, 2))))), begin=0x4407E0, end=0x4407E0)
         mu.mem_write(0x447AF6, b"\x8b\xe5\x5d\xc3")              # mov esp,ebp; pop ebp; ret (원래 함수 끝)
         mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: self.calls.append(("send",)), begin=0x447AF6, end=0x447AF6)
+        mu.mem_write(0x4369F0, b"\xc3")                               # 건물 시야 더하기 (cdecl)
+        mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: self.calls.append(("vision", arg(uc, 0))), begin=0x4369F0, end=0x4369F0)
+        mu.mem_write(0x4C9C10, b"\xc2\x20\x00")                       # WinRandom: ret 0x20
+        mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: self.calls.append(
+            ("winrandom", uc.reg_read(UC_X86_REG_ECX), arg(uc, 0), arg(uc, 1))), begin=0x4C9C10, end=0x4C9C10)
         self.regs = (UC_X86_REG_ESP, UC_X86_REG_ECX, UC_X86_REG_EBP)
         rd = rrp.CommandReader(lambda a, n: bytes(mu.mem_read(a, n)), self.BASE)
         rd.poll()
@@ -482,13 +487,29 @@ class InGameHookTests(unittest.TestCase):
         mu.mem_write(0xB412C8, struct.pack("<H", 0x8))
         self.run_entry(mu, "start", 0x4D7559)
         self.assertEqual(struct.unpack("<I", mu.mem_read(0x501EC0, 4))[0], 0x11111111)
-        self.assertEqual(bytes(mu.mem_read(0xB40FE8, 20)), bytes(range(40, 60)))
+        mu.mem_write(0xB40FF0, struct.pack("<I", 0x12345678))              # 이 프로세스의 난수 기록 표 주소
+        self.run_entry(mu, "start", 0x4D7559)
+        want = bytearray(range(40, 60))
+        want[8:12] = struct.pack("<I", 0x12345678)                         # 기록 때 주소는 쓰면 안 됨(충돌)
+        self.assertEqual(bytes(mu.mem_read(0xB40FE8, 20)), bytes(want))
         self.assertEqual(struct.unpack("<I", mu.mem_read(0x6E1A78, 4))[0], 0x2222)
         self.assertEqual(struct.unpack("<I", mu.mem_read(rrp.FRAME, 4))[0], 100)
         self.assertEqual(struct.unpack("<H", mu.mem_read(0xB412C8, 2))[0], 0x9)          # 지도 공개 비트
         self.assertIn(("reveal", 0x915698), self.calls)
+        self.assertEqual([c for c in self.calls if c[0] == "vision"], [])        # 살아 있는 유닛 없음
         self.assertEqual(self.saved, [])                                                # 재생 땐 저장 안 함
         self.assertEqual(self.flags(mu)["diverged"], 0)
+        self.assertEqual(mu.mem_read(0xB412CB, 1)[0], 1)                      # 기록 때처럼 대전 루프
+
+    def test_play_start_rebuilds_building_vision(self):
+        """저장에 없는 건물 시야 지도: 살아 있는 유닛마다 0x4369F0 (건설 중 0x1004 는 빼고)."""
+        mu = self.play_machine([])
+        unit = lambda i: 0x775A38 + i * 0x138
+        for i, hp, order in ((1, 3000, 0), (5, 100, 0), (7, 0, 0), (9, 50, 0x1004), (0x6A5, 10, 0)):
+            mu.mem_write(unit(i) + 8, struct.pack("<h", hp))
+            mu.mem_write(unit(i) + 6, struct.pack("<H", order))
+        self.run_entry(mu, "start", 0x4D7559)
+        self.assertEqual([c[1] for c in self.calls if c[0] == "vision"], [unit(1), unit(5), unit(0x6A5)])
 
     def test_play_start_without_file_flags_missing_data(self):
         mu = self.play_machine([])
@@ -512,13 +533,15 @@ class InGameHookTests(unittest.TestCase):
             if frame % 5:
                 self.assertEqual(self.calls, [], frame)                   # 5프레임마다만 (멀티 루프와 같은 rand 소비)
             else:
-                self.assertEqual(self.calls[0], ("send",), frame)        # 원래 0x447AF0 (rand 1회)
+                self.assertEqual(self.calls[0], ("winrandom", 0xB40FE8, 0, 0x7FFF), frame)   # 원래 0x447AF0 의 rand 1회
+                self.assertNotIn(("send",), self.calls)                   # 보내기는 안 함 (받는 쪽이 없어 멈춤)
                 got = [c[1:] for c in self.calls if c[0] == "dispatch"]
                 want = {100: [], 105: [(0, b1), (1, b2)], 110: [(0, b3)]}[frame]
                 self.assertEqual(got, want, frame)
         f = self.flags(mu)
         self.assertEqual(f["fed"], 3)
         self.assertEqual(f["diverged"], 110)                              # 첫 어긋남
+        self.assertEqual(f["actual"], (0x11111111, 0, 0))                   # 그때 실제 rand·해시·유닛 수
         self.assertEqual(struct.unpack("<I", mu.mem_read(0xB412B8, 4))[0], 16)   # 2 키 -> 2배속
 
     def test_play_turn_hook_skips_live_dispatch(self):
@@ -532,30 +555,58 @@ class InGameHookTests(unittest.TestCase):
         """게임에 불러오기 메뉴가 없음: 재생 모드 싱글 게임이면 Game_Loop 의 저장 불러오기 경로를 켠다."""
         from unicorn.x86_const import UC_X86_REG_EAX
         for play, multi, already, want_flag, want_name in (
-                (True, 0, 0, 1, b"RKREPLAY\0"), (False, 0, 0, 0, b"\0" * 9),
-                (True, 1, 0, 0, b"\0" * 9), (True, 0, 2, 2, b"\0" * 9)):
+                (True, 0, 0, 1, b"RKREPLAY\0"), (True, 0, 1, 1, b"RKREPLAY\0"),   # 1: 시작 방식 4 가 이미 켬
+                (False, 0, 0, 0, b"\0" * 9), (True, 1, 0, 1, b"RKREPLAY\0"), (True, 0, 2, 2, b"\0" * 9)):
             mu = self.play_machine([]) if play else self.machine()[0]
             mu.mem_write(0xB412CB, bytes([multi]))
             mu.mem_write(0x6DFF8D, bytes([already]))
             mu.mem_write(0x6E62F4, b"\0" * 16)
+            mu.mem_write(0x6E61F4, b"\0" * 16)
             self.run_entry(mu, "load", 0x4D731E)
             self.assertEqual(mu.mem_read(0x6DFF8D, 1)[0], want_flag, (play, multi, already))
             self.assertEqual(mu.reg_read(UC_X86_REG_EAX), want_flag)            # 원래 movsx eax, [0x6DFF8D]
             self.assertEqual(bytes(mu.mem_read(0x6E62F4, 9)), want_name)
+            self.assertEqual(bytes(mu.mem_read(0x6E61F4, 9)), want_name)         # 저장 폴더 USERs\RKREPLAY
+            self.assertEqual(mu.mem_read(0xB412CB, 1)[0], 0 if play else multi)  # 재생은 싱글 루프
 
-    def test_upgrade_from_v0_9055_install(self):
+    def test_play_mode_starts_game_directly(self):
+        """재생 모드: WinMain 시작 방식 0(로그인) -> 4(저장 불러오기로 바로 게임)."""
+        exe = Path(__file__).resolve().parent / "game_backup" / "Rhakmu.exe"
+        if not exe.is_file():
+            self.skipTest("game_backup/Rhakmu.exe 없음")
+        import minimap_patch as mm
+        o = mm.build(exe.read_bytes(), False, True, False, False, False)
+        self.assertEqual(o[rrp.MODE_OFF - 3:rrp.MODE_OFF + 1], bytes.fromhex("c645f000"))
+        for save in (False, True):
+            rec = rrp.apply(o, True, save, False)
+            play = rrp.apply(o, True, save, True)
+            self.assertEqual(rec[rrp.MODE_OFF], 0)
+            self.assertEqual(play[rrp.MODE_OFF], rrp.MODE_PLAY)
+            self.assertTrue(rrp.plays(play))
+            self.assertEqual(rrp.strip(play), o)
+            self.assertEqual(rrp.apply(play, True, save, False), rec)
+            bad = bytearray(rec)
+            bad[rrp.MODE_OFF] = rrp.MODE_PLAY                                   # 섹션은 기록인데 시작 방식만 바뀜
+            with self.assertRaises(ValueError):
+                rrp.state(bytes(bad))
+
+    def test_upgrade_from_v0_9055_and_v0_9056_installs(self):
         exe = Path(__file__).resolve().parent / "game_backup" / "Rhakmu.exe"
         if not exe.is_file():
             self.skipTest("game_backup/Rhakmu.exe 없음")
         import subprocess, types
-        src = subprocess.run(["git", "show", "0ae10e0:replay_record_patch.py"], capture_output=True,
-                             cwd=Path(__file__).resolve().parent).stdout.decode("utf-8")
-        if not src:
-            self.skipTest("git 기록 없음")
-        old = types.ModuleType("rrp_9055")
-        exec(compile(src, "rrp_9055", "exec"), old.__dict__)
         import minimap_patch as mm
         o = mm.build(exe.read_bytes(), False, True, False, False, False)      # 단축키 없음, 기록 없음
+        for commit in ("0ae10e0", "5b6a921"):                                  # v0.9055, v0.9056
+            src = subprocess.run(["git", "show", commit + ":replay_record_patch.py"], capture_output=True,
+                                 cwd=Path(__file__).resolve().parent).stdout.decode("utf-8")
+            if not src:
+                self.skipTest("git 기록 없음")
+            old = types.ModuleType("rrp_old")
+            exec(compile(src, "rrp_old", "exec"), old.__dict__)
+            self._upgrade_from(old, o)
+
+    def _upgrade_from(self, old, o):
         for save in (False, True):
             for play in (False, True):
                 installed = old.apply(o, True, save, play)
