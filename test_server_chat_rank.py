@@ -232,6 +232,22 @@ class ChannelAndLobbyTests(TmpMatches):
         b._cleanup()
         self.assertNotIn('nyai', self.parse_users(a.writer.data))
 
+    def test_room_list_request_in_lobby_also_sends_user_list(self):
+        a = sess('26.0.0.1', 'seo')
+        sess('26.0.0.2', 'nyai')
+        asyncio.run(a._handle(server.P_ROOM_LIST_REQ, b''))
+        types = [t for t, _ in packets(a.writer.data)]
+        self.assertEqual(types[:2], [0x0CFF, 0x0DFF])          # room list first, unchanged
+        self.assertEqual(self.parse_users(a.writer.data[8:]), ['nyai', 'seo'])   # after the two 4-byte room list packets
+        self.assertTrue(a.lobby_list)
+
+    def test_room_list_request_in_room_or_game_sends_no_user_list(self):
+        a = sess('26.0.0.1', 'seo'); a.room_title = 'r'
+        b = sess('26.0.0.2', 'nyai'); b.in_game = True
+        for c in (a, b):
+            asyncio.run(c._handle(server.P_ROOM_LIST_REQ, b''))
+            self.assertEqual([t for t, _ in packets(c.writer.data)], [0x0CFF, 0x0DFF])
+
     def test_room_member_list_unchanged(self):
         host = sess('26.0.0.1', 'seo')
         room = server.Room(id=1, title='seo', map_name='m', owner='seo', host_ip='26.0.0.1', max_players=4)

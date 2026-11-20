@@ -61,7 +61,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9014"
+SERVER_VERSION = "0.9015"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -711,6 +711,12 @@ class ClientSession:
                 self.send(P_ROOM_LIST_REQ, room.build_list_entry(
                     owner_conn.address_for(self) if owner_conn else room.host_ip))
             self.send(P_ROOM_LIST_END, b"")
+            # 게임은 로비에서 접속자 목록(0x1FFF)을 스스로 거의 요청하지 않는다(특정 버튼에서만, 0x410BC0).
+            # 방 목록은 로비에 들어오거나 방에서 나올 때 요청하므로(0x41CB20/0x41DD90), 이때 로비 폼
+            # ([[0x6E0CE0]+0x20], 실행 중 메모리에서 확인)이 떠 있다 → 바로 뒤에 접속자 목록을 붙여 보낸다.
+            if self.account and not self.room_title and not self.in_game:
+                self.lobby_list = True
+                self.writer.write(lobby_user_packets())
 
         elif ptype == P_CREATE_ROOM:
             await self._handle_create_room(payload)
