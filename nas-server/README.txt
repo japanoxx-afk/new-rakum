@@ -9,7 +9,7 @@
 - 이미지 빌드 없음: 공개 이미지 python:3.12-slim 을 쓰고, 코드는 NAS 폴더에서 읽는다.
   (File Station 에 Dockerfile 을 올려도 Portainer 가 자동 빌드하지 않는다. 그래서 빌드가
    필요 없는 방식을 골랐다. server.py 는 표준 라이브러리만 써서 추가 설치가 없다.)
-- 데이터(전적 matches.json, server.log, 선택 game_rules.json)는 NAS 의 game-servers/rakmu/data 에 남는다.
+- 데이터(전적 matches.json, server.log, 선택 game_rules.json)는 NAS 의 game-servers/rakmu-live/data 에 남는다.
   컨테이너를 지우거나 새로 만들어도 데이터는 그대로다.
 - 메모리 제한 128MB (실사용 약 30~40MB), CPU 0.5개, 도커 로그 5MB×3, server.log 1MB×6 으로 제한.
 - 기본 포트는 rakmu-test 와 겹치지 않는 TCP 30010, TCP 30011, UDP 30012.
@@ -26,9 +26,9 @@
 -----------------------------
 NAS File Station            VM 경로                               컨테이너 안 경로
 game-servers/               /mnt/game-servers                     /mnt/game-servers   (외부 볼륨 game_servers_data)
-game-servers/rakmu/app/     /mnt/game-servers/rakmu/app           /mnt/game-servers/rakmu/app    서버 코드
-game-servers/rakmu/data/    /mnt/game-servers/rakmu/data          /mnt/game-servers/rakmu/data   전적·로그 (작업 폴더)
-game-servers/rakmu/backups/ /mnt/game-servers/rakmu/backups       (서버는 쓰지 않음, 사람이 백업 보관용)
+game-servers/rakmu-live/app/     /mnt/game-servers/rakmu-live/app           /mnt/game-servers/rakmu-live/app    서버 코드
+game-servers/rakmu-live/data/    /mnt/game-servers/rakmu-live/data          /mnt/game-servers/rakmu-live/data   전적·로그 (작업 폴더)
+game-servers/rakmu-live/backups/ /mnt/game-servers/rakmu-live/backups       (서버는 쓰지 않음, 사람이 백업 보관용)
 game-servers/rakmu-test/    (기존 프로젝트 — 읽지도 쓰지도 않음. nas_entry.py 가 rakmu-test 경로를 데이터 폴더로 쓰는 것을 거부함)
 
 볼륨 주의: 외부 볼륨 game_servers_data 를 그대로 참조한다(compose 의 external: true).
@@ -39,7 +39,7 @@ game-servers/rakmu-test/    (기존 프로젝트 — 읽지도 쓰지도 않음.
 1) 저장소에서 nas-server-deploy 브랜치를 받는다.
 2) PowerShell 에서 업로드 폴더를 만든다:
      .\nas-server\Prepare-NasUpload.ps1
-   → nas-server\upload\rakmu\ 아래에 올릴 파일이 모인다.
+   → nas-server\upload\rakmu-live\ 아래에 올릴 파일이 모인다.
      app\server.py          (저장소 루트 server.py 복사본 = 런처가 쓰는 서버와 같음)
      app\nas_entry.py       (NAS 실행용 래퍼)
      app\DEPLOYED_VERSION.txt (서버 버전·커밋 기록)
@@ -50,15 +50,15 @@ game-servers/rakmu-test/    (기존 프로젝트 — 읽지도 쓰지도 않음.
 -----------------------------------------------
 [File Station]  https://akansas.synology.me:5001/  → File Station
 1) game-servers 를 연다. rakmu-test 폴더는 열거나 바꾸지 않는다.
-2) "생성 > 새 폴더 만들기" 로 rakmu 폴더를 만들고, 그 안에 app, data, backups 폴더를 만든다.
-3) rakmu 폴더에 compose.yaml, ports.txt, README.txt, HANDOFF.txt 를 올린다 ("업로드 > 업로드 - 덮어쓰기").
-4) rakmu/app 폴더에 server.py, nas_entry.py, DEPLOYED_VERSION.txt 를 올린다.
+2) "생성 > 새 폴더 만들기" 로 rakmu-live 폴더를 만들고, 그 안에 app, data, backups 폴더를 만든다.
+3) rakmu-live 폴더에 compose.yaml, ports.txt, README.txt, HANDOFF.txt 를 올린다 ("업로드 > 업로드 - 덮어쓰기").
+4) rakmu-live/app 폴더에 server.py, nas_entry.py, DEPLOYED_VERSION.txt 를 올린다.
    최종 모양:
-     game-servers/rakmu/compose.yaml ...
-     game-servers/rakmu/app/server.py
-     game-servers/rakmu/app/nas_entry.py
-     game-servers/rakmu/data/        (비어 있음 — 서버가 채움)
-     game-servers/rakmu/backups/     (비어 있음)
+     game-servers/rakmu-live/compose.yaml ...
+     game-servers/rakmu-live/app/server.py
+     game-servers/rakmu-live/app/nas_entry.py
+     game-servers/rakmu-live/data/        (비어 있음 — 서버가 채움)
+     game-servers/rakmu-live/backups/     (비어 있음)
 
 [Portainer]  https://akansas.synology.me:9443/
 5) 로그인 → 환경 목록에서 게임 서버 Docker 환경(rakmu-test 가 보이는 환경)을 고른다.
@@ -72,9 +72,9 @@ game-servers/rakmu-test/    (기존 프로젝트 — 읽지도 쓰지도 않음.
 12) "Deploy the stack" 클릭. 처음에는 python:3.12-slim 이미지를 받느라 1~2분 걸릴 수 있다.
 13) Containers → rakmu-server 의 상태가 running, 1분쯤 뒤 healthy 인지 확인.
 14) rakmu-server → "Logs" 에 아래 줄이 보이면 정상:
-      [nas_entry] data=/mnt/game-servers/rakmu/data ...
+      [nas_entry] data=/mnt/game-servers/rakmu-live/data ...
       [nas_entry] RhakMu server 0.9012 로비 TCP 0.0.0.0:11223 준비 완료
-15) File Station 에서 rakmu/data 에 server.log 가 생겼는지 확인 (= NAS 저장 확인).
+15) File Station 에서 rakmu-live/data 에 server.log 가 생겼는지 확인 (= NAS 저장 확인).
 
 4. 동작 확인 (내 PC, 외부에서)
 ------------------------------
@@ -85,7 +85,7 @@ game-servers/rakmu-test/    (기존 프로젝트 — 읽지도 쓰지도 않음.
      Test-NetConnection akansas.synology.me -Port 30010
    → TcpTestSucceeded : True
 3) UDP 30012 는 브라우저/Test-NetConnection 으로 확인할 수 없다. 실제 게임으로만 시험 가능.
-4) 컨테이너 교체 후 데이터 유지 확인: Stacks → rakmu → Stop → Start 후 rakmu/data 의 파일이 그대로인지 본다.
+4) 컨테이너 교체 후 데이터 유지 확인: Stacks → rakmu → Stop → Start 후 rakmu-live/data 의 파일이 그대로인지 본다.
 주의: 위 확인은 "서버가 떠 있고 포트가 열림" 까지다. 실제 멀티플레이 성공과는 다르다(6장).
 
 5. 운영 — 시작·중지·업데이트·복구·로그·백업
@@ -95,35 +95,35 @@ game-servers/rakmu-test/    (기존 프로젝트 — 읽지도 쓰지도 않음.
                    restart: unless-stopped 이므로 VM 재부팅 후 자동 시작, 직접 Stop 하면 꺼진 채로 유지.
 
 [서버 코드 업데이트] (server.py 가 바뀌었을 때 — 가장 흔한 경우)
- 1) 백업: File Station 에서 rakmu/app 폴더를 rakmu/backups/app-YYYYMMDD 로 "복사".
- 2) PC 에서 Prepare-NasUpload.ps1 실행 → upload\rakmu\app\ 의 파일을 rakmu/app 에 "덮어쓰기" 업로드.
+ 1) 백업: File Station 에서 rakmu-live/app 폴더를 rakmu-live/backups/app-YYYYMMDD 로 "복사".
+ 2) PC 에서 Prepare-NasUpload.ps1 실행 → upload\rakmu-live\app\ 의 파일을 rakmu-live/app 에 "덮어쓰기" 업로드.
  3) Portainer → Containers → rakmu-server → Restart.
  4) Logs 에서 "준비 완료" 와 새 서버 버전 확인. /version 확인.
 
 [스택 설정(compose.yaml) 변경]
  Portainer → Stacks → rakmu → Editor 탭 → 수정 → "Update the stack".
- (이미지 갱신까지 원하면 "Re-pull image and redeploy" 켬). 바꾼 compose.yaml 은 NAS rakmu/ 와 저장소에도 반영.
+ (이미지 갱신까지 원하면 "Re-pull image and redeploy" 켬). 바꾼 compose.yaml 은 NAS rakmu-live/ 와 저장소에도 반영.
 
 [이전 버전으로 복구 (롤백)]
  1) Stacks → rakmu → Stop.
- 2) File Station 에서 rakmu/backups/app-YYYYMMDD 안의 파일을 rakmu/app 으로 덮어쓰기 복사.
+ 2) File Station 에서 rakmu-live/backups/app-YYYYMMDD 안의 파일을 rakmu-live/app 으로 덮어쓰기 복사.
  3) Stacks → rakmu → Start. Logs 확인.
  compose 를 되돌릴 때는 저장소의 이전 커밋 compose.yaml 을 Editor 에 붙여 넣고 Update the stack.
 
 [로그 보기]
  - Portainer → Containers → rakmu-server → Logs (최근 출력. 도커 로그는 5MB×3 까지만 보관)
- - File Station → rakmu/data/server.log (+ server.log.1~5). 다운로드해서 문제 보고에 첨부.
+ - File Station → rakmu-live/data/server.log (+ server.log.1~5). 다운로드해서 문제 보고에 첨부.
    (로그에는 접속한 플레이어 IP 와 계정 이름이 들어 있으니 공개 게시하지 않는다)
 
 [백업]
- 대상: rakmu/data/matches.json (전적, 최근 500판), rakmu/data/game_rules.json (있을 때), rakmu/app/, rakmu/compose.yaml
- 방법: File Station 에서 rakmu/data 를 rakmu/backups/data-YYYYMMDD 로 복사 (가끔 PC 로도 다운로드).
+ 대상: rakmu-live/data/matches.json (전적, 최근 500판), rakmu-live/data/game_rules.json (있을 때), rakmu-live/app/, rakmu-live/compose.yaml
+ 방법: File Station 에서 rakmu-live/data 를 rakmu-live/backups/data-YYYYMMDD 로 복사 (가끔 PC 로도 다운로드).
  서버가 켜진 상태에서 복사해도 되지만, 게임이 끝나는 순간과 겹치지 않게 한가할 때 한다.
  오래된 백업은 직접 지운다 (1TB 는 모든 프로젝트 공용).
 
 [복원]
  1) Stacks → rakmu → Stop.
- 2) rakmu/backups/data-YYYYMMDD/matches.json 을 rakmu/data/ 로 덮어쓰기 복사.
+ 2) rakmu-live/backups/data-YYYYMMDD/matches.json 을 rakmu-live/data/ 로 덮어쓰기 복사.
  3) Stacks → rakmu → Start. http://akansas.synology.me:30011/matches.json 로 확인.
 
 [rakmu-test 를 대체할 때 (2026-11-21 결정: 대체하지 않고 나란히 실행. 아래는 나중에 필요할 때만)]
@@ -164,7 +164,7 @@ game-servers/rakmu-test/    (기존 프로젝트 — 읽지도 쓰지도 않음.
   두 군데(volumes: 아래 이름, 서비스의 game_servers_data:)를 같이 고친다. 새 볼륨을 만들지 않는다.
 - "port is already allocated" / "address already in use": 다른 컨테이너(예: rakmu-test)가 그 포트를 사용 중.
   다른 번호로 바꾸거나 5장의 대체 절차를 따른다.
-- 로그에 "can't open file '/mnt/game-servers/rakmu/app/nas_entry.py'": app 폴더 위치/파일 이름 확인.
+- 로그에 "can't open file '/mnt/game-servers/rakmu-live/app/nas_entry.py'": app 폴더 위치/파일 이름 확인.
 - 로그에 PermissionError (data 폴더에 쓸 수 없음): 전체 공개 권한으로 풀지 말고, 오류 문장을 그대로
   서버 소유자에게 전달해 NAS 폴더 권한 확인을 요청한다.
 - unhealthy: Logs 에서 HTTP 시작 실패(포트 11225) 메시지를 확인.

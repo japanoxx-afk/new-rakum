@@ -4,7 +4,7 @@
 #        자세한 순서는 같은 폴더의 README.txt 참고.
 #
 # 이미지 빌드가 필요 없다: 공개 이미지 python:3.12-slim 을 그대로 쓰고,
-# 서버 코드(server.py, nas_entry.py)는 NAS의 game-servers/rakmu/app/ 에서 읽는다.
+# 서버 코드(server.py, nas_entry.py)는 NAS의 game-servers/rakmu-live/app/ 에서 읽는다.
 # → 코드 업데이트 = File Station 에서 app/ 파일 교체 + 컨테이너 재시작.
 #
 # 외부 포트는 Portainer 의 "Environment variables" 로 바꾼다 (아래 기본값은 기존
@@ -21,12 +21,12 @@ services:
     image: python:3.12-slim
     container_name: rakmu-server
     restart: unless-stopped
-    working_dir: /mnt/game-servers/rakmu/data
-    command: ["python", "-u", "/mnt/game-servers/rakmu/app/nas_entry.py"]
+    working_dir: /mnt/game-servers/rakmu-live/data
+    command: ["python", "-u", "/mnt/game-servers/rakmu-live/app/nas_entry.py"]
     environment:
       TZ: Asia/Seoul
       PYTHONDONTWRITEBYTECODE: "1"
-      RAKMU_DATA_DIR: /mnt/game-servers/rakmu/data
+      RAKMU_DATA_DIR: /mnt/game-servers/rakmu-live/data
       RAKMU_LOG_MAX_BYTES: "1048576"
       RAKMU_LOG_BACKUPS: "5"
     ports:
@@ -35,7 +35,7 @@ services:
       - "${RELAY_PORT:-30012}:47584/udp"
     volumes:
       # NAS 공유 폴더 game-servers 전체가 연결된 기존 외부 볼륨.
-      # 서버는 rakmu/ 아래만 읽고 쓰며, rakmu-test/ 는 쓰지 않도록 코드에서 막아 두었다.
+      # 서버는 rakmu-live/ 아래만 읽고 쓰며, rakmu-test/ 는 쓰지 않도록 코드에서 막아 두었다.
       - game_servers_data:/mnt/game-servers
     read_only: true            # 컨테이너 자체 파일시스템은 읽기 전용 (데이터는 NAS 볼륨에만)
     tmpfs:

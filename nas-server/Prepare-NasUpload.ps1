@@ -1,11 +1,11 @@
-# Builds nas-server\upload\rakmu\ : exactly the files to upload to File Station game-servers/rakmu/.
+# Builds nas-server\upload\rakmu-live\ : exactly the files to upload to File Station game-servers/rakmu-live/.
 # server.py is copied from the repository root so the NAS runs the same server as the launcher.
 # The upload folder never contains data/ - uploading it can never overwrite game records on the NAS.
 # Usage (PowerShell, repository root or anywhere):  .\nas-server\Prepare-NasUpload.ps1
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repo = Split-Path -Parent $here
-$out = Join-Path $here 'upload\rakmu'
+$out = Join-Path $here 'upload\rakmu-live'
 
 if (Test-Path $out) { Remove-Item -Recurse -Force $out }
 New-Item -ItemType Directory -Force (Join-Path $out 'app') | Out-Null

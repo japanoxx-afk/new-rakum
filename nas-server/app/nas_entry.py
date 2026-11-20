@@ -11,7 +11,7 @@ server.py 는 런처가 로컬(127.0.0.1)에서 띄우는 것과 같은 파일�
      47584 그대로 둔다 — 수신 포트만 바뀐다.
 
 환경 변수 (모두 선택):
-  RAKMU_DATA_DIR      데이터 폴더 (기본 /mnt/game-servers/rakmu/data)
+  RAKMU_DATA_DIR      데이터 폴더 (기본 /mnt/game-servers/rakmu-live/data)
   RAKMU_LOBBY_PORT    로비 TCP 수신 포트 (기본 11223)
   RAKMU_HTTP_PORT     전적·버전 HTTP 수신 포트 (기본 11225)
   RAKMU_RELAY_PORT    방 찾기 UDP 수신 포트 (기본 47584)
@@ -27,7 +27,7 @@ import threading
 from http.server import ThreadingHTTPServer
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DATA_DIR = "/mnt/game-servers/rakmu/data"
+DEFAULT_DATA_DIR = "/mnt/game-servers/rakmu-live/data"
 PROTECTED = ("rakmu-test",)  # 기존 프로젝트 데이터는 절대 쓰지 않는다
 
 

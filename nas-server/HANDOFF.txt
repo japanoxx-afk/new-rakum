@@ -18,7 +18,10 @@ Synology NAS + Debian VM(Docker, Portainer, 2 vCPU, RAM 2GB)에서 24시간 운�
    - rakmu-test 경로를 데이터 폴더로 주면 거부하고 폴더를 만들지 않음
    - server.py 의 무제한 FileHandler 가 RotatingFileHandler 로 교체됨
 [미시험]   Docker 로 실제 실행 (이 PC 에 docker 없음). compose.yaml 은 문법·설정만 작성됨.
-[미배포]   NAS 업로드, Portainer 스택 생성 — 아무것도 하지 않았다. 사용자가 README.txt 3장대로 직접 한다.
+[업로드됨] 2026-11-21 사용자 보고: 업로드 폴더 내용을 NAS game-servers/rakmu-live/ 에 올림 (폴더 이름이 rakmu 가 아니라
+           rakmu-live 이므로 compose.yaml 과 문서 경로를 rakmu-live 로 맞춤). 업로드된 compose.yaml 은 이전(rakmu 경로)
+           판이라 NAS 의 사본만 교체 필요 — Portainer 에는 저장소의 최신 compose.yaml 을 붙여 넣는다.
+[미배포]   Portainer 스택 생성 — 아직. 사용자가 README.txt 3장 5번부터 직접 한다.
 [결정됨]   2026-11-21 사용자 결정: rakmu-test 는 그대로 두고 나란히 실행 (rakmu = TCP 30010, TCP 30011, UDP 30012).
            rakmu-test 를 중지·대체하지 않는다. 대체가 다시 필요해지면 README 5장 절차와 사용자 확인을 거친다.
 [미구현]   런처가 NAS 서버로 접속하는 기능, 인터넷 너머 P2P 주소 문제 해결 (아래 5, 6).
@@ -29,7 +32,7 @@ Synology NAS + Debian VM(Docker, Portainer, 2 vCPU, RAM 2GB)에서 24시간 운�
 추가만 했다. 기존 server.py / launcher.py 는 수정하지 않았다.
   nas-server/compose.yaml           Portainer 스택 (python:3.12-slim, bridge, 포트 게시, 외부 볼륨)
   nas-server/app/nas_entry.py       server.py 래퍼: 데이터 폴더로 chdir 후 import, 로그 회전, 포트 환경변수
-  nas-server/Prepare-NasUpload.ps1  nas-server/upload/rakmu/ 생성 (gitignore). 루트 server.py 를 복사
+  nas-server/Prepare-NasUpload.ps1  nas-server/upload/rakmu-live/ 생성 (gitignore). 루트 server.py 를 복사
   nas-server/test_nas_entry.py      시험
   nas-server/ports.txt, README.txt, HANDOFF.txt, .gitattributes(LF 유지), .gitignore(upload/)
 
@@ -38,11 +41,11 @@ Synology NAS + Debian VM(Docker, Portainer, 2 vCPU, RAM 2GB)에서 24시간 운�
 - 이미지: 공개 python:3.12-slim. 빌드가 필요 없다. 운영안내상 File Station 의 Dockerfile 을 Portainer 가 자동
   빌드하지 않으며, Portainer 에서 이미지 빌드/레지스트리 사용 가능 여부는 확인되지 않았다.
   server.py 는 표준 라이브러리만 사용 → 코드 폴더 마운트 방식이 가장 단순. (slim 은 tzdata 포함 → TZ=Asia/Seoul 적용)
-- 코드 위치: NAS game-servers/rakmu/app (VM /mnt/game-servers/rakmu/app, 컨테이너 동일 경로)
-- 데이터: game-servers/rakmu/data — matches.json(최근 500판), server.log(1MB×6), game_rules.json(선택, 서버가 읽기만 함)
+- 코드 위치: NAS game-servers/rakmu-live/app (VM /mnt/game-servers/rakmu-live/app, 컨테이너 동일 경로)
+- 데이터: game-servers/rakmu-live/data — matches.json(최근 500판), server.log(1MB×6), game_rules.json(선택, 서버가 읽기만 함)
 - 볼륨: 외부 볼륨 game_servers_data 를 /mnt/game-servers 에 통째로 마운트(운영안내 지시대로 기존 외부 볼륨 참조).
   공유 폴더 전체가 보이므로 nas_entry.py 가 rakmu-test 를 데이터 폴더로 쓰는 것을 거부한다.
-  개선 여지: Docker Engine 26+ / Compose 2.26+ 이면 volume.subpath: rakmu 로 rakmu 폴더만 마운트 가능 (버전 확인 필요).
+  개선 여지: Docker Engine 26+ / Compose 2.26+ 이면 volume.subpath: rakmu-live 로 rakmu-live 폴더만 마운트 가능 (버전 확인 필요).
 - 네트워크: bridge + 포트 게시 (rakmu-test 는 host). 이유: 컨테이너 안 포트를 server.py 기본값(11223/11225/47584)
   그대로 두고 외부 번호만 compose 변수로 바꿀 수 있고, 다른 게임과 격리된다. 외부→VM 인바운드는 DNAT 이라
   서버가 보는 클라이언트 IP 는 실제 공인 IP 로 유지된다(확인 필요: 실제 배포 후 로그의 Connected: 줄).
@@ -96,8 +99,8 @@ rakmu-test 의 실제 compose/코드는 확인하지 못했다(확인 필요). �
 
 7. 복구 방법
 ------------
-- 서버가 이상하면: Portainer → Stacks → rakmu → Stop. 데이터는 rakmu/data 에 남는다.
-- 코드 롤백: rakmu/backups/app-YYYYMMDD → rakmu/app 덮어쓰기 → Start (README 5장).
+- 서버가 이상하면: Portainer → Stacks → rakmu → Stop. 데이터는 rakmu-live/data 에 남는다.
+- 코드 롤백: rakmu-live/backups/app-YYYYMMDD → rakmu-live/app 덮어쓰기 → Start (README 5장).
 - 데이터 복원: Stop → backups/data-YYYYMMDD/matches.json → data/ → Start.
 - 스택 완전 제거: Stacks → rakmu → Delete (외부 볼륨 game_servers_data 와 NAS 파일은 지워지지 않는다.
   "Remove volumes" 같은 선택지가 나오면 체크하지 않는다).
