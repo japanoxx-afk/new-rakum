@@ -87,7 +87,7 @@ unit_ok:
     cmp word ptr [ebx+8], 0
     jle uo_ret
     cmp word ptr [ebx+2], 0
-    je uo_ret
+    jne uo_ret
     mov cl, byte ptr [ebx+0x10]
     cmp cl, byte ptr [0xb412cc]
     jne uo_ret

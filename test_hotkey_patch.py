@@ -109,9 +109,9 @@ class HotkeyPatchTests(unittest.TestCase):
             mu.mem_write(info + t * 0x100 + 0x40, struct.pack('<h', cls_))
             mu.mem_write(TYPEPTR + t * 0x1C, struct.pack('<I', info + t * 0x100))
 
-        def unit(uid, t, owner=1, order=2, hp=50, mobile=1, hidden=0):
+        def unit(uid, t, owner=1, order=2, hp=50, building=0, hidden=0):
             b = UNIT + uid * STRIDE
-            mu.mem_write(b + 2, struct.pack('<H', mobile))
+            mu.mem_write(b + 2, struct.pack('<H', building))   # +2: 건물 분류 (0 = 일반 유닛)
             mu.mem_write(b + 6, struct.pack('<H', order))
             mu.mem_write(b + 8, struct.pack('<h', hp))
             mu.mem_write(b + 0xE, struct.pack('<h', t))
@@ -152,7 +152,7 @@ class HotkeyPatchTests(unittest.TestCase):
         unit(13, SOLDIER)                   # 군사
         unit(14, WORKER, hp=0)              # 죽음
         unit(15, WORKER, hidden=1)          # 금광 안
-        unit(16, WORKER, mobile=0)          # (건물 취급)
+        unit(16, WORKER, building=1)        # 건물 분류
         unit(17, WORKER, order=0x1002)      # 사망 처리 중
         unit(20, WORKER)                    # 쉬는 일꾼
         set_selection([13])
@@ -182,7 +182,7 @@ class HotkeyPatchTests(unittest.TestCase):
         unit(11, SOLDIER, order=0x2003)
         unit(12, ARCHER)
         unit(13, SOLDIER, owner=3)
-        unit(14, BUILDING_T, mobile=0)
+        unit(14, BUILDING_T, building=1)
         calls = press(0x71)
         self.assertEqual(selection(), (2, [11, 12] + [0] * 10))
         self.assertEqual(struct.unpack('<h', mu.mem_read(LEADER, 2))[0], 0)   # 종류가 섞이면 0

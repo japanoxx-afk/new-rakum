@@ -118,9 +118,9 @@ class SelectionPatchTests(unittest.TestCase):
             mu.emu_start(fn, RET, count=2000000)
             return mu.reg_read(UC_X86_REG_ESP) - esp, mu.reg_read(UC_X86_REG_EAX)
 
-        def unit(uid, t=7, owner=1, hp=50, x=0, y=0, mobile=0, order=2):
+        def unit(uid, t=7, owner=1, hp=50, x=0, y=0, building=0, order=2):
             b = UNIT + uid * STRIDE
-            mu.mem_write(b + 2, struct.pack('<H', mobile))
+            mu.mem_write(b + 2, struct.pack('<H', building))
             mu.mem_write(b + 6, struct.pack('<H', order))
             mu.mem_write(b + 8, struct.pack('<h', hp))
             mu.mem_write(b + 0xE, struct.pack('<h', t))
@@ -277,7 +277,7 @@ class SelectionPatchTests(unittest.TestCase):
         mu.mem_write(0x4EC520, struct.pack('<I', STUB + 0x10))       # IME 비활성
         mu.mem_write(STUB + 0x10, b'\x31\xc0\xc3')
         for i in range(30, 60):
-            unit(i, t=5, mobile=1)                                   # 쉬는 일꾼 30
+            unit(i, t=5)                                             # 쉬는 일꾼 30
         self._sel(mu, [])
         call(0x42EF90, 0xBE, 0)
         self.assertEqual(rd16(SEL_N), [24])
