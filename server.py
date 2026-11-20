@@ -61,7 +61,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9015"
+SERVER_VERSION = "0.9016"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -298,41 +298,40 @@ def build_user_entry(account: str, ip: str, index: int = 1) -> bytes:
 CHANNEL_NAME = "자유채널".encode("cp949").decode("latin-1")   # 패킷 문자열은 CP949 바이트를 latin-1 로 보관
 
 
-def lobby_user_packets() -> bytes:
-    """로비 접속자 목록 0x20FF, 0x1FFF..., 0x21FF.
-
-    클라 파서 (Rhakmu.exe 0x44DC40): payload[0]=flag(1 이면 무시), 이후 끝까지
-    {등급값 i16, 이름\\0, 둘째 문자열\\0} 반복. 등급값은 랭킹과 같은 '승 수'로 아이콘이 정해지고,
-    둘째 문자열이 비어 있지 않으면 다른 색으로 그린다 → 상대 IP 는 넣지 않고 비운다.
-    """
-    wins = {r["name"]: r["win"] for r in ranking_rows()}
-    names = sorted({c.account for c in STATE.clients if c.account}, key=lambda n: n.lower())
-    pkts = [pack_pkt(P_USER_LIST_ACK, b"")]
-    chunk = b""
-    for n in names:
-        entry = struct.pack("<h", max(0, min(32767, wins.get(n, 0)))) + nul(n) + nul("")
-        if len(chunk) + len(entry) > 4000:
-            pkts.append(pack_pkt(P_USER_LIST_REQ, bytes([0]) + chunk))
-            chunk = b""
-        chunk += entry
-    if chunk:
-        pkts.append(pack_pkt(P_USER_LIST_REQ, bytes([0]) + chunk))
-    pkts.append(pack_pkt(P_USER_LIST_END, b""))
-    return b"".join(pkts)
+# ── 로비 접속자 목록: 0x12FF 서버메시지 타입 (Rhakmu.exe 0x44C2B0 switch) ──
+# 로비 오른쪽 목록(로비 폼 [[0x6E0CE0]+8] 의 리스트 0xC)은 0x1FFF 가 아니라 0x12FF 타입으로 채워진다.
+#   type 4 (13 도 같음) 입장: [4][0][0] name\0 + 18바이트 {내공 i32, 승 i32, 패 i32, 무 i32, 등급값 i16} + str\0
+#          (0x42CBF0 이 목록에 추가. 이름이 '나'면 내 정보로 저장하고 대기창을 닫은 뒤 '/status' 를 보낸다)
+#   type 5 퇴장: [5][0][0] name\0                      (0x42CEF0 이 목록에서 지움)
+#   type 14 상태: [14][0][0] \0 + {접속인원 i16, 개설된채널 i16, 개설된방 i16}  ('/status' 응답, 채팅창에 표시)
+# (0x1FFF 는 방 폼 [+0x20] 의 멤버 목록 9번용이라 로비 목록에는 쓰지 않는다)
+MSG_CHAT, MSG_ENTER, MSG_LEAVE, MSG_STATUS = 1, 4, 5, 14
 
 
-def push_lobby_users(exclude=None) -> None:
-    """누가 들어오거나 나가면 로비 화면에 있는 사람들의 접속자 목록을 새로 보낸다.
-    목록을 한 번이라도 요청한(=로비 폼이 있는) 사람만, 방·게임 중인 사람은 제외 (게임 중 전송은 크래시)."""
-    data = None
-    for c in list(STATE.clients):
-        if c is exclude or not c.account or not c.lobby_list or c.room_title or c.in_game:
-            continue
-        data = data or lobby_user_packets()
-        try:
-            c.writer.write(data)
-        except Exception as e:
-            log.warning(f"lobby user push -> {c.peer}: {e}")
+def _stats(name: str, rows: Optional[list] = None) -> dict:
+    rows = ranking_rows() if rows is None else rows
+    return next((r for r in rows if r["name"] == name), None) or         {"points": BASE_POINTS, "win": 0, "lose": 0, "draw": 0}
+
+
+def build_enter_payload(name: str, rows: Optional[list] = None) -> bytes:
+    r = _stats(name, rows)
+    info = struct.pack("<iiiih", _i32(r["points"]), _i32(r["win"]), _i32(r["lose"]), _i32(r["draw"]),
+                       max(0, min(32767, r["win"])))
+    return bytes([MSG_ENTER, 0, 0]) + nul(name) + info + nul("")
+
+
+def build_leave_payload(name: str) -> bytes:
+    return bytes([MSG_LEAVE, 0, 0]) + nul(name)
+
+
+def build_status_payload() -> bytes:
+    users = sum(1 for c in STATE.clients if c.account)
+    return bytes([MSG_STATUS, 0, 0]) + nul("") + struct.pack("<hhh", min(users, 32767), 1, min(len(STATE.rooms), 32767))
+
+
+def lobby_viewers(exclude=None) -> list:
+    """로비 목록 메시지를 받아도 되는 사람: 채널에 들어온 뒤(로비 폼이 있음), 게임 중이 아님(게임 중엔 폼이 없어 크래시)."""
+    return [c for c in STATE.clients if c is not exclude and c.account and c.in_channel and not c.in_game]
 
 
 def read_cstrings(data: bytes) -> List[str]:
@@ -537,7 +536,7 @@ class ClientSession:
         self.room_title: str = ""
         self.in_game = False
         self.game_version = 0          # handshake 0x01FF: Rhakmu.exe 1.000d -> 1003, older 1.000 -> 1000
-        self.lobby_list = False        # 로비 접속자 목록을 요청한 적 있음 → 로비 화면이 떠 있어 갱신을 보내도 안전
+        self.in_channel = False        # 채널 입장(0x07FF) 완료 → 로비 폼이 있어 로비 목록 메시지를 받아도 안전
         self._buf = b""
 
     @property
@@ -604,8 +603,10 @@ class ClientSession:
                     STATE.rooms.remove(r)
                     log.info(f"Room removed (disconnect) id={r.id} title={r.title!r}")
         log.info(f"Disconnected: {self.peer} account={self.account!r}")
-        if self.account:
-            push_lobby_users()
+        if self.account and self.in_channel and not any(c.account == self.account for c in STATE.clients):
+            pkt = pack_pkt(P_CHAT, build_leave_payload(self.account))   # 로비 목록에서 지움 (type 5)
+            for c in lobby_viewers(exclude=self):
+                c.writer.write(pkt)
 
     async def _process(self):
         while len(self._buf) >= 4:
@@ -659,7 +660,6 @@ class ClientSession:
                 # Remove stale rooms from previous sessions
                 STATE.remove_rooms_for(account)
                 log.info(f"Login OK: {self.peer} account={account!r}")
-                push_lobby_users(exclude=self)
             else:
                 log.info(f"Login FAIL: {self.peer} account={account!r} result={result}")
             self.send(P_LOGIN, struct.pack("<I", result))
@@ -668,6 +668,23 @@ class ClientSession:
             # 채널은 하나뿐 — 어떤 이름이 와도 성공(0)으로 답하고 그 이름을 돌려준다.
             names = read_cstrings(payload[2:]) if len(payload) > 2 else []
             self.send(P_CHAN_SEL, bytes([0]) + nul(names[0] if names else CHANNEL_NAME))
+            if self.account:
+                # 로비 접속자 목록: 나에게 다른 사람 전원 → 마지막에 나 자신(클라가 내 정보 저장 후 '/status' 요청),
+                # 로비에 있는 다른 사람에게는 내 입장. (게임은 0x1FFF 가 아니라 0x12FF type 4/5 로 목록을 채운다)
+                rows = ranking_rows()
+                first_join = not self.in_channel
+                self.in_channel = True
+                others = sorted({c.account for c in STATE.clients
+                                 if c.account and c.in_channel and c.account != self.account})
+                for name in others:
+                    self.send(P_CHAT, build_enter_payload(name, rows))
+                mine = pack_pkt(P_CHAT, build_enter_payload(self.account, rows))
+                self.writer.write(mine)
+                if first_join:
+                    for c in lobby_viewers(exclude=self):
+                        if c.account != self.account:
+                            c.writer.write(mine)
+                log.info(f"  Channel join {_kr(self.account)!r}: lobby list {len(others) + 1} users")
 
         elif ptype == P_CHAN_LIST:
             # 'Channel' 버튼 (Rhakmu.exe 0x44E5B0 요청 / 0x44CC60 응답 파서)
@@ -711,12 +728,6 @@ class ClientSession:
                 self.send(P_ROOM_LIST_REQ, room.build_list_entry(
                     owner_conn.address_for(self) if owner_conn else room.host_ip))
             self.send(P_ROOM_LIST_END, b"")
-            # 게임은 로비에서 접속자 목록(0x1FFF)을 스스로 거의 요청하지 않는다(특정 버튼에서만, 0x410BC0).
-            # 방 목록은 로비에 들어오거나 방에서 나올 때 요청하므로(0x41CB20/0x41DD90), 이때 로비 폼
-            # ([[0x6E0CE0]+0x20], 실행 중 메모리에서 확인)이 떠 있다 → 바로 뒤에 접속자 목록을 붙여 보낸다.
-            if self.account and not self.room_title and not self.in_game:
-                self.lobby_list = True
-                self.writer.write(lobby_user_packets())
 
         elif ptype == P_CREATE_ROOM:
             await self._handle_create_room(payload)
@@ -822,10 +833,11 @@ class ClientSession:
         self.send(P_CREATE_ROOM, struct.pack("<I", 0))
 
     async def _handle_user_list(self):
-        # Send channel user list: start(0x20FF), [entries 0x1FFF], end(0x21FF)
+        # Send room/channel user list: start(0x20FF), [entries 0x1FFF], end(0x21FF).
+        # 이 목록은 방 폼([+0x20])의 멤버 목록용. 로비 접속자 목록은 0x12FF type 4/5 (채널 입장 때 보냄).
+        self.send(P_USER_LIST_ACK, b"")
         room = STATE.find_room_by_title(self.room_title) if self.room_title else None
         if room:
-            self.send(P_USER_LIST_ACK, b"")
             # Send owner
             owner_client = next((c for c in STATE.clients if c.account == room.owner), None)
             owner_ip = owner_client.address_for(self) if owner_client else room.host_ip
@@ -835,14 +847,9 @@ class ClientSession:
                 mc = next((c for c in STATE.clients if c.account == member), None)
                 member_ip = mc.address_for(self) if mc else self.peer_ip
                 self.send(P_USER_LIST_REQ, build_user_entry(member, member_ip, 2 + i))
-            self.send(P_USER_LIST_END, b"")
         elif self.account:
-            # 로비(채널) 접속자 목록: 로그인한 모든 사람. 상대 IP 는 보내지 않는다.
-            self.lobby_list = True
-            self.writer.write(lobby_user_packets())
-        else:
-            self.send(P_USER_LIST_ACK, b"")
-            self.send(P_USER_LIST_END, b"")
+            self.send(P_USER_LIST_REQ, build_user_entry(self.account, self.peer_ip, 1))
+        self.send(P_USER_LIST_END, b"")
 
     async def _broadcast_member_list(self, room: "Room", exclude: "ClientSession" = None):
         """Send updated member list to all room members except the excluded client.
@@ -978,6 +985,10 @@ class ClientSession:
         log.info(f"Chat from={_kr(account)!r}: {_kr(message)!r}")
 
         # 클라가 자동/명령으로 보내는 '/status', '/whereis x', '/ignore x' 등은 방송하지 않는다.
+        if message == "/status":
+            # 채널 입장 때 자기 입장(type 4)을 받으면 클라가 자동으로 보냄 → type 14 (접속인원·채널·방 수)
+            self.send(P_CHAT, build_status_payload())
+            return
         if not message or message.startswith("/"):
             return
 

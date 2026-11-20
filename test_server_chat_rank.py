@@ -81,8 +81,11 @@ class ChatTests(TmpMatches):
     def test_slash_commands_are_not_broadcast(self):
         a = sess('26.0.0.1', 'seo')
         b = sess('26.0.0.2', 'nyai')
-        asyncio.run(a._handle(server.P_CHAT, server.nul('/status') + server.nul('seo')))
+        asyncio.run(a._handle(server.P_CHAT, server.nul('/whereis nyai') + server.nul('seo')))
         self.assertEqual(a.writer.data + b.writer.data, b'')
+        asyncio.run(a._handle(server.P_CHAT, server.nul('/status') + server.nul('seo')))
+        self.assertEqual(b.writer.data, b'')                 # status goes to the sender only
+        self.assertEqual(packets(a.writer.data)[0][1][0], 14)
 
 
 class ResultTests(TmpMatches):
@@ -190,63 +193,81 @@ class ChannelAndLobbyTests(TmpMatches):
     def test_channel_join_returns_ok_and_name(self):
         c = sess('26.0.0.1', 'seo')
         asyncio.run(c._handle(server.P_CHAN_SEL, struct.pack('<H', 0x8001) + server.nul(server.CHANNEL_NAME)))
-        (t, p), = packets(c.writer.data)
+        t, p = packets(c.writer.data)[0]
         self.assertEqual((t, p[0]), (0x07FF, 0))
         self.assertEqual(cstrings(p[1:]), [server.CHANNEL_NAME])
 
-    def parse_users(self, data):
-        pk = packets(data)
-        self.assertEqual(pk[0][0], 0x20FF)
-        self.assertEqual(pk[-1][0], 0x21FF)
-        names = []
-        for t, p in pk[1:-1]:
-            self.assertEqual((t, p[0]), (0x1FFF, 0))
-            off = 1
-            while off < len(p):                      # same walk as Rhakmu.exe 0x44DC40
-                off += 2
-                end = p.index(b'\0', off); names.append(p[off:end].decode('latin-1')); off = end + 1
-                end = p.index(b'\0', off); self.assertEqual(p[off:end], b''); off = end + 1   # no IPs
-        return names
+    @staticmethod
+    def lobby_msgs(data):
+        """0x12FF server messages as (type, name, info) like Rhakmu.exe 0x44C2B0 reads them."""
+        out = []
+        for t, p in packets(data):
+            if t != 0x12FF:
+                continue
+            kind = p[0]
+            end = p.index(b'\0', 3)
+            name = p[3:end].decode('latin-1')
+            info = None
+            if kind in (4, 13):
+                info = struct.unpack_from('<iiiih', p, end + 1)       # 18 bytes
+                rest = p[end + 1 + 18:]
+                assert rest.endswith(b'\0')
+            elif kind == 14:
+                info = struct.unpack_from('<hhh', p, end + 1)
+            out.append((kind, name, info))
+        return out
 
-    def test_lobby_user_list_shows_everyone_without_ips(self):
+    def join(self, c):
+        asyncio.run(c._handle(server.P_CHAN_SEL, struct.pack('<H', 0x8001) + server.nul(server.CHANNEL_NAME)))
+
+    def test_channel_join_sends_lobby_list_with_self_last(self):
+        self.write_matches([{"time": "t", "players": ["seo", "x"],
+                             "results": {"seo": {"code": 1}, "x": {"code": 2}}}])
+        b = sess('26.0.0.2', 'nyai'); self.join(b)
         a = sess('26.0.0.1', 'seo')
+        b.writer.data = b''
+        self.join(a)
+        msgs = self.lobby_msgs(a.writer.data)
+        self.assertEqual([(k, n) for k, n, _ in msgs], [(4, 'nyai'), (4, 'seo')])
+        self.assertEqual(msgs[1][2], (1010, 1, 0, 0, 1))             # 내공, 승, 패, 무, 등급값
+        self.assertEqual([(k, n) for k, n, _ in self.lobby_msgs(b.writer.data)], [(4, 'seo')])
+        self.assertNotIn(b'26.0.0', a.writer.data + b.writer.data)  # no IPs
+
+    def test_status_reply_type14(self):
+        a = sess('26.0.0.1', 'seo'); self.join(a)
         sess('26.0.0.2', 'nyai')
-        sess('26.0.0.3', '')                         # not logged in yet
-        asyncio.run(a._handle(server.P_USER_LIST_REQ, b''))
-        self.assertEqual(self.parse_users(a.writer.data), ['nyai', 'seo'])
-        self.assertNotIn(b'26.0.0', a.writer.data)
-
-    def test_join_and_leave_push_to_lobby_viewers_only(self):
-        a = sess('26.0.0.1', 'seo')
-        asyncio.run(a._handle(server.P_USER_LIST_REQ, b''))
-        busy = sess('26.0.0.3', 'gamer'); busy.lobby_list = True; busy.in_game = True
-        roomy = sess('26.0.0.4', 'roomy'); roomy.lobby_list = True; roomy.room_title = 'r'
-        fresh = sess('26.0.0.5', 'fresh')            # never asked: lobby form may not exist yet
-        a.writer.data = busy.writer.data = roomy.writer.data = fresh.writer.data = b''
-        b = server.ClientSession(None, W('26.0.0.2'))
-        server.STATE.clients.append(b)
-        asyncio.run(b._handle(server.P_LOGIN, server.nul('nyai') + server.nul('pw')))
-        self.assertIn('nyai', self.parse_users(a.writer.data))
-        self.assertEqual(busy.writer.data + roomy.writer.data + fresh.writer.data, b'')
         a.writer.data = b''
-        b._cleanup()
-        self.assertNotIn('nyai', self.parse_users(a.writer.data))
+        asyncio.run(a._handle(server.P_CHAT, server.nul('/status') + server.nul('seo')))
+        self.assertEqual(self.lobby_msgs(a.writer.data), [(14, '', (2, 1, 0))])
 
-    def test_room_list_request_in_lobby_also_sends_user_list(self):
+    def test_leave_and_game_players_skipped(self):
+        a = sess('26.0.0.1', 'seo'); self.join(a)
+        busy = sess('26.0.0.3', 'gamer'); self.join(busy); busy.in_game = True
+        fresh = sess('26.0.0.4', 'fresh')            # logged in, not in the channel yet: no lobby form
+        b = sess('26.0.0.2', 'nyai')
+        a.writer.data = busy.writer.data = fresh.writer.data = b''
+        self.join(b)
+        self.assertEqual([(k, n) for k, n, _ in self.lobby_msgs(a.writer.data)], [(4, 'nyai')])
+        self.assertEqual(busy.writer.data + fresh.writer.data, b'')
+        a.writer.data = b''
+        server.STATE.clients.remove(b)
+        b._cleanup()
+        self.assertEqual([(k, n) for k, n, _ in self.lobby_msgs(a.writer.data)], [(5, 'nyai')])
+
+    def test_rejoin_does_not_rebroadcast(self):
+        a = sess('26.0.0.1', 'seo'); self.join(a)
+        b = sess('26.0.0.2', 'nyai'); self.join(b)
+        a.writer.data = b''
+        self.join(b)                                 # e.g. back from a room
+        self.assertEqual(a.writer.data, b'')
+
+    def test_lobby_user_list_request_unchanged(self):
         a = sess('26.0.0.1', 'seo')
         sess('26.0.0.2', 'nyai')
-        asyncio.run(a._handle(server.P_ROOM_LIST_REQ, b''))
-        types = [t for t, _ in packets(a.writer.data)]
-        self.assertEqual(types[:2], [0x0CFF, 0x0DFF])          # room list first, unchanged
-        self.assertEqual(self.parse_users(a.writer.data[8:]), ['nyai', 'seo'])   # after the two 4-byte room list packets
-        self.assertTrue(a.lobby_list)
-
-    def test_room_list_request_in_room_or_game_sends_no_user_list(self):
-        a = sess('26.0.0.1', 'seo'); a.room_title = 'r'
-        b = sess('26.0.0.2', 'nyai'); b.in_game = True
-        for c in (a, b):
-            asyncio.run(c._handle(server.P_ROOM_LIST_REQ, b''))
-            self.assertEqual([t for t, _ in packets(c.writer.data)], [0x0CFF, 0x0DFF])
+        asyncio.run(a._handle(server.P_USER_LIST_REQ, b''))
+        pk = packets(a.writer.data)
+        self.assertEqual([t for t, _ in pk], [0x20FF, 0x1FFF, 0x21FF])
+        self.assertEqual(pk[1][1], server.build_user_entry('seo', '26.0.0.1', 1))
 
     def test_room_member_list_unchanged(self):
         host = sess('26.0.0.1', 'seo')
