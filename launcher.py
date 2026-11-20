@@ -53,7 +53,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9058"
+APP_VERSION = "0.9059"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1871,6 +1871,7 @@ class App(tk.Tk):
                             "1·2·4 키: 1배·2배·4배속   맵 전체 공개\n"
                             "I 키: 화면 정보(HUD) 숨기기/보이기\n"
                             "오른쪽 위: 참가자별 자원과 생산·업그레이드 진행\n"
+                            "상대 건물을 클릭하면 아래 정보창에 그 생산·업그레이드 진행이 보입니다\n"
                             "끝내기: Esc(게임 메뉴) → 나가기, 또는 게임 창 닫기\n"
                             "원래 경기와 달라지면 리플레이 탭 위쪽에 표시됩니다.")
 
