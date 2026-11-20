@@ -2,7 +2,7 @@
 =================================
 형식: 이름 / 프로토콜 / 외부(VM) 포트 / 컨테이너 포트 / 용도
 
-[이 스택(rakmu) — 기본값: rakmu-test 와 나란히 실행]
+[이 스택(rakmu) — 사용 중인 설정 (2026-11-21 결정: rakmu-test 와 나란히 실행)]
 rakmu  / TCP / 30010 / 11223 / 로비 (로그인·채팅·방 목록·방 만들기/참가)
 rakmu  / TCP / 30011 / 11225 / 전적·랭킹·서버버전·게임규칙 HTTP (/matches.json /ranking /version /rules)
 rakmu  / UDP / 30012 / 47584 / 방 찾기 요청(DP8 EnumHosts) 릴레이 수신

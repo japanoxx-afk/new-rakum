@@ -67,7 +67,7 @@ game-servers/rakmu-test/    (기존 프로젝트 — 읽지도 쓰지도 않음.
 8) 왼쪽 "Stacks" → "+ Add stack".
 9) Name: rakmu   (소문자)
 10) Build method: "Web editor" → nas-server\compose.yaml 내용 전체를 붙여 넣는다.
-11) (포트를 바꿀 때만) 아래 "Environment variables" → "+ Add an environment variable":
+11) (결정: 나란히 실행 → 이 단계는 건너뛴다. 포트를 바꿀 때만) 아래 "Environment variables" → "+ Add an environment variable":
       LOBBY_PORT / HTTP_PORT / RELAY_PORT  (안 넣으면 30010 / 30011 / 30012)
 12) "Deploy the stack" 클릭. 처음에는 python:3.12-slim 이미지를 받느라 1~2분 걸릴 수 있다.
 13) Containers → rakmu-server 의 상태가 running, 1분쯤 뒤 healthy 인지 확인.
@@ -126,7 +126,7 @@ game-servers/rakmu-test/    (기존 프로젝트 — 읽지도 쓰지도 않음.
  2) rakmu/backups/data-YYYYMMDD/matches.json 을 rakmu/data/ 로 덮어쓰기 복사.
  3) Stacks → rakmu → Start. http://akansas.synology.me:30011/matches.json 로 확인.
 
-[rakmu-test 를 대체할 때 (사용자 결정 필요 — 아직 하지 않음)]
+[rakmu-test 를 대체할 때 (2026-11-21 결정: 대체하지 않고 나란히 실행. 아래는 나중에 필요할 때만)]
  영향: rakmu-test 를 중지하는 동안 30000~30002 를 쓰는 기존 서버가 멈춘다. rakmu-test/data 는 그대로 둔다.
  1) Portainer 에서 rakmu-test 의 현재 설정(Stacks → rakmu-test → Editor, 또는 컨테이너 Inspect)을 PC 에 복사해 둔다(복구용).
  2) rakmu-test → Stop (Delete 하지 않는다).
