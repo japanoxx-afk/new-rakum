@@ -49,7 +49,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9046"
+APP_VERSION = "0.9047"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -571,6 +571,58 @@ class HostsManager:
 # ═══════════════════════════════════════════════════════
 #  GUI
 # ═══════════════════════════════════════════════════════
+
+VERSION_WARNING_TITLE = "최신버젼 확인 실패"   # 원본 Launcher.exe 의 업데이트 서버(종료됨) 확인 실패 창
+
+
+def dismiss_version_warning(proc, timeout=30.0, title=VERSION_WARNING_TITLE):
+    """원본 Launcher.exe 가 띄우는 '최신 버전 확인을 하지 못했습니다' 창을 자동으로 [확인] 한다.
+
+    TriggerSoft 업데이트 서버가 없어져 매번 실패하는 확인이며, [확인] 을 누르면 원래대로 진행된다.
+    proc 의 창(대화상자 #32770, 제목 일치)만 닫는다. 닫았으면 True.
+    """
+    if os.name != 'nt':
+        return False
+    from ctypes import wintypes
+    user32 = ctypes.WinDLL('user32', use_last_error=True)
+    user32.FindWindowExW.restype = wintypes.HWND
+    user32.FindWindowExW.argtypes = (wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR)
+    user32.SendMessageW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+    user32.PostMessageW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+    WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    found = []
+
+    def visit(hwnd, _):
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value != proc.pid or not user32.IsWindowVisible(hwnd):
+            return True
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, buf, 256)
+        if buf.value != '#32770':
+            return True
+        user32.GetWindowTextW(hwnd, buf, 256)
+        if buf.value == title:
+            found.append(hwnd)
+        return True
+
+    callback = WNDENUMPROC(visit)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and proc.poll() is None:
+        found.clear()
+        user32.EnumWindows(callback, 0)
+        if found:
+            for hwnd in found:
+                # OK 한 개짜리 메시지 상자: 버튼을 누른다 (BM_CLICK). 버튼을 못 찾으면 WM_CLOSE.
+                button = user32.FindWindowExW(hwnd, None, 'Button', None)
+                if button:
+                    user32.SendMessageW(button, 0x00F5, 0, 0)
+                else:
+                    user32.PostMessageW(hwnd, 0x0010, 0, 0)
+            return True
+        time.sleep(0.2)
+    return False
+
 
 class App(tk.Tk):
     def __init__(self):
@@ -1436,9 +1488,12 @@ class App(tk.Tk):
             self._refresh_hosts_view()
         self._pin_game_address(game_dir, ip, multiplayer)
         try:
-            subprocess.Popen([exe], cwd=game_dir)
+            proc = subprocess.Popen([exe], cwd=game_dir)
         except OSError as e:
             messagebox.showerror("실행 오류", str(e))
+            return
+        if self.cfg.get('skip_version_warning', True):
+            threading.Thread(target=dismiss_version_warning, args=(proc,), daemon=True).start()
 
     def _pin_game_address(self, game_dir, ip, multiplayer):
         """Keep TG_Net.dll original (v0.9031 behaviour, verified on Radmin and Hamachi).
@@ -1824,6 +1879,12 @@ class App(tk.Tk):
                                    "게임 진행 규칙이 바뀌므로 멀티는 모든 PC가 같은 런처 버전이어야 하며, 접속 PC는 서버 PC 설정을 따릅니다.",
                   style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(4, 0))
 
+        self.skip_warn_var = tk.BooleanVar(value=self.cfg.get("skip_version_warning", True))
+        ttk.Checkbutton(play_frame, text="게임 실행 때 '최신버젼 확인 실패' 창 자동으로 넘기기",
+                        variable=self.skip_warn_var, command=self._on_skip_warn_toggle).pack(anchor="w", pady=(10, 0))
+        ttk.Label(play_frame, text="원래 업데이트 서버가 없어져 매번 뜨는 경고입니다. [확인]을 자동으로 누릅니다.",
+                  style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(4, 0))
+
         # ── 라드민 네트워크 최적화 ──
         try:
             cadence_current = pathlib.Path(self.latency.exe).read_bytes()[0xd7b97] == 3
@@ -1971,6 +2032,10 @@ class App(tk.Tk):
         self.cfg["hotkeys"] = bool(self.hotkeys_var.get())
         save_config(self.base_dir, self.cfg)
         messagebox.showinfo("단축키 확장", "다음 게임 실행 때 적용됩니다.")
+
+    def _on_skip_warn_toggle(self):
+        self.cfg["skip_version_warning"] = bool(self.skip_warn_var.get())
+        save_config(self.base_dir, self.cfg)
 
     def _on_select24_toggle(self):
         self.cfg["select_24"] = bool(self.select24_var.get())
