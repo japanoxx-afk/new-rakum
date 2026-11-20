@@ -69,16 +69,16 @@ def replace(path,original,changed):
 def apply(path,enabled=True):
     path=Path(path);data=path.read_bytes();replace(path,data,transform(data,enabled))
 
-def prepare(path,highres,rally_gold=True,hotkeys=True,select24=False,record=False):
+def prepare(path,highres,rally_gold=True,hotkeys=True,select24=False,record=False,start_save=False):
     import viewport_patch
     path=Path(path);original=path.read_bytes()
     if highres:
         for name,digest in viewport_patch.manifest()['dll_hashes'].items():
             if hashlib.sha256((path.parent/name).read_bytes()).hexdigest()!=digest:raise ValueError(f'지원하지 않는 {name}')
         if not (path.parent/'ddraw.dll').is_file():raise ValueError('ddraw.dll이 필요합니다.')
-    replace(path,original,build(original,highres,rally_gold,hotkeys,select24,record))
+    replace(path,original,build(original,highres,rally_gold,hotkeys,select24,record,start_save))
 
-def build(original,highres,rally_gold=True,hotkeys=True,select24=False,record=False):
+def build(original,highres,rally_gold=True,hotkeys=True,select24=False,record=False,start_save=False):
     """설치 파일 바이트 -> 실행용 최종 바이트 (메모리 안에서만; 파일은 건드리지 않음)."""
     import viewport_patch,peer_address_patch,sync_port_patch,panel_guard_patch,rally_gold_patch,hotkey_patch,selection_patch,menu_free_guard_patch,replay_record_patch
     data=menu_free_guard_patch.transform(rally_gold_patch.strip(underlying(original)),False)
@@ -95,5 +95,5 @@ def build(original,highres,rally_gold=True,hotkeys=True,select24=False,record=Fa
     data=rally_gold_patch.apply(data,rally_gold)   # 다른 패치 검증은 원본 기준
     data=menu_free_guard_patch.transform(data,True)   # 메뉴 해제 크래시 보호 (항상, 고해상도 검증 뒤)
     data=selection_patch.apply(data,select24)      # 미니맵 섹션 뒤 .sel24 (선택 한도 24)
-    data=replay_record_patch.apply(data,record)    # 그 뒤 .rkrec (리플레이 명령 기록)
+    data=replay_record_patch.apply(data,record,start_save)    # 그 뒤 .rkrec (리플레이 기록; 시작 저장은 실험 기능)
     return hotkey_patch.apply(data,hotkeys)        # 맨 뒤에 단축키 섹션 (.sel24 가 있으면 24칸 판)
