@@ -127,8 +127,8 @@ table.grid input[type=number]{width:64px}
         <div class="easy" id="easyBtns"></div>
         <div class="row"><label>모양</label><div class="btns" id="shapeBtns">
           <button data-shape="circle" title="둥근 붓 (드래그로 자유롭게)">● 붓</button><button data-shape="rect" title="드래그한 사각형 영역 채우기">■ 사각형</button><button data-shape="line" title="드래그한 직선을 따라 그리기 (강·길)">╱ 직선</button></div></div>
-        <div class="row"><label>크기</label><input type="range" id="brushSize" min="1" max="16" value="3"><span id="brushSizeLbl">3</span></div>
-        <div class="hint">언덕을 칠하면 절벽이, 물을 칠하면 물가가 자동으로 둘러집니다. 언덕 위에 <b>높은 언덕</b>을 칠하면 2단 고지대가 됩니다.</div>
+        <div class="row"><label>크기</label><input type="range" id="brushSize" min="0" max="16" value="3"><span id="brushSizeLbl">3</span></div>
+        <div class="hint">언덕을 칠하면 절벽이, 물을 칠하면 물가가 자동으로 둘러집니다. 언덕 위에 <b>높은 언덕</b>을 칠하면 2단 고지대가 됩니다.<br>크기를 맨 왼쪽 <b>벽</b>으로 하면 언덕·높은 언덕·고지대 물이 꼭대기 없이 가장 얇은 절벽 경계만 그려집니다. <b>╱ 직선</b>과 함께 쓰면 지나갈 수 없는 벽이 됩니다.</div>
         <div class="subhead">언덕길 · 다리 · 폭포</div>
         <div class="objgrid" id="subBtns"></div>
         <div class="row"><button data-tool="ramp" title="언덕 가장자리를 클릭하면 방향에 맞는 언덕길을 골라 놓습니다">⛰ 자동 언덕길</button></div>
