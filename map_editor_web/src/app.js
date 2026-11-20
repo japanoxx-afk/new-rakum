@@ -440,17 +440,17 @@
       let shape;
       if (S.shapeDrag) {
         const g = S.shapeDrag;
-        shape = S.shape === 'rect' ? { type: 'rect', x0: g.x0, y0: g.y0, x1: g.x1, y1: g.y1 } : { type: 'line', pts: [{ x: g.x0, y: g.y0 }, { x: g.x1, y: g.y1 }], size: S.brushSize };
+        shape = S.shape === 'rect' ? { type: 'rect', x0: g.x0, y0: g.y0, x1: g.x1, y1: g.y1 } : { type: 'line', pts: [{ x: g.x0, y: g.y0 }, { x: g.x1, y: g.y1 }], size: paintSize() };
         ctx.strokeStyle = '#fff'; ctx.setLineDash([10 / z, 6 / z]);
         if (S.shape === 'rect') ctx.strokeRect(Math.min(g.x0, g.x1), Math.min(g.y0, g.y1), Math.abs(g.x1 - g.x0), Math.abs(g.y1 - g.y0));
         else { ctx.beginPath(); ctx.moveTo(g.x0, g.y0); ctx.lineTo(g.x1, g.y1); ctx.stroke(); }
         ctx.setLineDash([]);
       } else {
         const v = vertexAt(h.x, h.y); if (!v) return;
-        shape = { type: S.shape === 'square' ? 'square' : 'circle', u: v[0], v: v[1], size: S.brushSize };
+        shape = { type: S.shape === 'square' ? 'square' : 'circle', u: v[0], v: v[1], size: paintSize() };
       }
       const list = R.shapeVerts(S.map, shape);
-      ctx.fillStyle = FALLBACK[S.brush]; ctx.globalAlpha = .55;
+      ctx.fillStyle = FALLBACK[paintBrush()]; ctx.globalAlpha = .55;
       for (const [A, B] of list) { const [u, vv] = R.fromAB(A, B); drawDiamond(ctx, u * 128, vv * 64, 64, 32); ctx.fill(); }
       ctx.globalAlpha = 1;
     } else if (S.tool === 'ramp') {
@@ -514,10 +514,16 @@
   mm.addEventListener('mousedown', (e) => { mmMove(e); const mv = (ev) => mmMove(ev), up = () => { removeEventListener('mousemove', mv); removeEventListener('mouseup', up); }; addEventListener('mousemove', mv); addEventListener('mouseup', up); });
 
   // ----------------------------------------------------------------- editing
+  // 크기 0 = '벽': 언덕류는 꼭대기 없이 둘레의 절벽(경계) 브러시만 칠해 가장 얇은 벽을 만든다.
+  // 언덕(5)·고지대 땅의 경계는 2층 절벽(4), 높은 언덕(7)·고지대 물(8)의 경계는 3층 절벽(6).
+  const WALL_BAND = { 5: 4, 7: 6, 8: 6 };
+  function paintBrush() { return S.brushSize === 0 && WALL_BAND[S.brush] != null ? WALL_BAND[S.brush] : S.brush; }
+  function paintSize() { return Math.max(1, S.brushSize); }
   function applyShape(shape) {
     const m = S.map, list = R.shapeVerts(m, shape); if (!list.length) return;
-    let ch = R.paintVerts(m, list, S.brush);
-    ch = ch.concat(R.smoothDiagonals(m, ch, S.brush));
+    const brush = paintBrush();
+    let ch = R.paintVerts(m, list, brush);
+    ch = ch.concat(R.smoothDiagonals(m, ch, brush));
     for (const [i, b] of ch) noteVert(i, b);
     const verts = ch.map(c => c[0]);
     for (const [A, B] of list) for (let dA = -1; dA <= 1; dA++) for (let dB = -1; dB <= 1; dB++) { const [u, vv] = R.fromAB(A + dA, B + dB); const i = R.vIndex(m, u, vv); if (i >= 0) verts.push(i); }
@@ -526,7 +532,7 @@
   }
   function paintAt(wx, wy) {
     const v = vertexAt(wx, wy); if (!v) return;
-    applyShape({ type: S.shape === 'square' ? 'square' : 'circle', u: v[0], v: v[1], size: S.brushSize });
+    applyShape({ type: S.shape === 'square' ? 'square' : 'circle', u: v[0], v: v[1], size: paintSize() });
   }
   function placeRamp(wx, wy) {
     const m = S.map, r = R.suggestRamp(m, wx, wy);
@@ -672,7 +678,7 @@
     if (S.shapeDrag && S.map) {
       const g = S.shapeDrag; S.shapeDrag = null;
       if (S.shape === 'rect') applyShape({ type: 'rect', x0: g.x0, y0: g.y0, x1: g.x1, y1: g.y1 });
-      else applyShape({ type: 'line', pts: [{ x: g.x0, y: g.y0 }, { x: g.x1, y: g.y1 }], size: S.brushSize });
+      else applyShape({ type: 'line', pts: [{ x: g.x0, y: g.y0 }, { x: g.x1, y: g.y1 }], size: paintSize() });
     }
     if (S.drag && S.drag.o.kind === R.KIND.SUB) { subTerrain(S.drag.o); draw(); drawMinimap(); }
     if (S.act) endAct(); S.painting = false; S.drag = null; });
@@ -780,7 +786,7 @@
   }
   document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => { if (b.dataset.res) S.res = b.dataset.res; if (b.dataset.res) $('resAmount').value = b.dataset.res === 'gold' ? 5000 : 3000; setTool(b.dataset.tool); });
   document.querySelectorAll('#shapeBtns button').forEach(b => b.onclick = () => { S.shape = b.dataset.shape; if (S.tool !== 'brush') S.tool = 'brush'; setTool('brush'); });
-  $('brushSize').oninput = (e) => { S.brushSize = +e.target.value; $('brushSizeLbl').textContent = S.brushSize; draw(); };
+  $('brushSize').oninput = (e) => { S.brushSize = +e.target.value; $('brushSizeLbl').textContent = S.brushSize || '벽'; draw(); };
   document.querySelectorAll('.grp>h3').forEach(h => h.onclick = () => h.parentElement.classList.toggle('closed'));
   ['lyObj', 'lyStart', 'lyMapEdge'].forEach(id => $(id).onchange = () => draw());
 

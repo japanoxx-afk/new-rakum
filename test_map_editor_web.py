@@ -18,6 +18,20 @@ def _req(url, data=None, method=None):
         return e.code, e.read()
 
 
+class EditorBuildTests(unittest.TestCase):
+    """배포되는 editor/RhakMuMapEditor.html 이 src 로 다시 만든 것과 같고, 벽(최소 경계) 모드가 들어 있는지."""
+
+    def test_built_page_matches_sources_and_has_wall_mode(self):
+        src = HERE / 'map_editor_web' / 'src'
+        rd = lambda name: (src / name).read_text(encoding='utf-8').replace('\r\n', '\n')
+        core = rd('core.js').replace('__SEC6__', (src / 'sec6_default.b64').read_text().strip())
+        page = rd('index.html').replace('/*__CORE__*/', core).replace('/*__APP__*/', rd('app.js'))
+        built = (HERE / 'map_editor_web' / 'editor' / mew.EDITOR_PAGE).read_text(encoding='utf-8').replace('\r\n', '\n')
+        self.assertEqual(built, page, 'python map_editor_web/src/build.py 로 다시 빌드하세요')
+        self.assertIn('id="brushSize" min="0"', page)                 # 크기 0 = 벽
+        self.assertIn('const WALL_BAND = { 5: 4, 7: 6, 8: 6 };', page)  # 언덕/높은 언덕/고지대 물 -> 경계 절벽
+
+
 class EditorServerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
