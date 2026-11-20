@@ -319,7 +319,7 @@ class RecordPatchTests(unittest.TestCase):
         import hotkey_patch as hk, minimap_patch as mm, selection_patch as sp
         o = exe.read_bytes()
         try:
-            self.assertEqual(rrp.assemble(), rrp.CODE.ljust(rrp.NAME_OFF, b"\0"))
+            self.assertEqual(rrp.assemble(), rrp.CODE.ljust(rrp.CODE_SIZE, b"\0"))
         except ImportError:
             pass
         for wide in (False, True):
@@ -350,7 +350,7 @@ class InGameHookTests(unittest.TestCase):
         except ImportError as e:
             self.skipTest(str(e))
         mu = Uc(UC_ARCH_X86, UC_MODE_32)
-        mu.mem_map(0x400000, 0xC00000)                 # 게임 코드·데이터 (0x400000..0x1000000)
+        mu.mem_map(0x400000, 0xC84000)                 # 게임 코드·데이터 (0x400000..섹션 앞 0x1084000)
         mu.mem_map(self.BASE, rrp.VIRTUAL_SIZE)
         mu.mem_map(0x2000000, 0x100000)
         mu.mem_write(self.BASE, rrp.body())
@@ -365,7 +365,7 @@ class InGameHookTests(unittest.TestCase):
         mu.hook_add(UC_HOOK_CODE, save, begin=0x4D9120, end=0x4D9120)
         # Windows API 대체 (stdcall): 주소 -> (인자 수, 처리)
         STUB = 0x3000000
-        mu.mem_map(STUB, 0x1000)
+        mu.mem_map(STUB, 0x4000)
         self.files, self.dirs, self.keys, self.calls = {}, [], set(), []
         self.names_at_save = []
 
@@ -389,8 +389,15 @@ class InGameHookTests(unittest.TestCase):
             uc.mem_write(arg(uc, 3), struct.pack("<I", len(data)))
             return 1
 
+        self.texts, self.dc_state = [], []
+
+        def text_out(uc):
+            self.texts.append((arg(uc, 1), arg(uc, 2), bytes(uc.mem_read(arg(uc, 3), arg(uc, 4))).decode("cp949")))
+            return 1
+
         apis = {0x4EC284: (2, create_dir), 0x4EC27C: (7, create_file), 0x4EC260: (5, read_file),
-                0x4EC1AC: (1, lambda uc: 1), 0x4EC350: (1, lambda uc: 0xFF80 if arg(uc, 0) in self.keys else 0)}
+                0x4EC1AC: (1, lambda uc: 1), 0x4EC350: (1, lambda uc: 0xFF80 if arg(uc, 0) in self.keys else 0),
+                0x4EC020: (2, lambda uc: 1), 0x4EC038: (2, lambda uc: 1), 0x4EC03C: (2, lambda uc: 1), 0x4EC034: (5, text_out)}
         for k, (imp, (n, fn)) in enumerate(apis.items()):
             at = STUB + 0x20 * k
             mu.mem_write(at, b"\xc2" + struct.pack("<H", 4 * n))
@@ -407,6 +414,44 @@ class InGameHookTests(unittest.TestCase):
         mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: self.calls.append(("send",)), begin=0x447AF6, end=0x447AF6)
         mu.mem_write(0x4369F0, b"\xc3")                               # 건물 시야 더하기 (cdecl)
         mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: self.calls.append(("vision", arg(uc, 0))), begin=0x4369F0, end=0x4369F0)
+        # 뒤 화면 (iCARUS +0x18): GetDC(+0x44) / ReleaseDC(+0x68) 표, sprintf(0x4DE774) 는 파이썬으로
+        SURF, VT = 0x3001000, 0x3001100
+        mu.mem_write(0x4EC438, struct.pack("<I", 0x3001200))
+        mu.mem_write(0x3001200 + 0x18, struct.pack("<I", SURF))
+        mu.mem_write(SURF, struct.pack("<I", VT))
+        mu.mem_write(VT + 0x44, struct.pack("<I", STUB + 0x400))
+        mu.mem_write(VT + 0x68, struct.pack("<I", STUB + 0x420))
+        mu.mem_write(STUB + 0x400, b"\xc2\x08\x00")
+        mu.mem_write(STUB + 0x420, b"\xc2\x08\x00")
+
+        def get_dc(uc, a, sz, _):
+            uc.mem_write(arg(uc, 1), struct.pack("<I", 0xDC))
+            self.dc_state.append("get")
+            uc.reg_write(UC_X86_REG_EAX, 0)
+        mu.hook_add(UC_HOOK_CODE, get_dc, begin=STUB + 0x400, end=STUB + 0x400)
+        mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: self.dc_state.append(("release", arg(uc, 1))),
+                    begin=STUB + 0x420, end=STUB + 0x420)
+
+        def sprintf(uc, a, sz, _):
+            buf, fmt = arg(uc, 0), cstr(uc, arg(uc, 1)).decode("cp949")
+            out, k, i = "", 2, 0
+            while i < len(fmt):
+                if fmt[i] == "%":
+                    c = fmt[i + 1]
+                    if c == "%":
+                        out += "%"
+                    elif c == "s":
+                        out += cstr(uc, arg(uc, k)).decode("cp949"); k += 1
+                    else:
+                        out += str(struct.unpack("<i", struct.pack("<I", arg(uc, k)))[0]); k += 1
+                    i += 2
+                else:
+                    out += fmt[i]; i += 1
+            raw = out.encode("cp949")
+            uc.mem_write(buf, raw + b"\0")
+            uc.reg_write(UC_X86_REG_EAX, len(raw))
+        mu.mem_write(0x4DE774, b"\xc3")
+        mu.hook_add(UC_HOOK_CODE, sprintf, begin=0x4DE774, end=0x4DE774)
         mu.mem_write(0x4C9C10, b"\xc2\x20\x00")                       # WinRandom: ret 0x20
         mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: self.calls.append(
             ("winrandom", uc.reg_read(UC_X86_REG_ECX), arg(uc, 0), arg(uc, 1))), begin=0x4C9C10, end=0x4C9C10)
@@ -461,11 +506,11 @@ class InGameHookTests(unittest.TestCase):
         self.assertEqual(self.names_at_save, [b"big"])                 # 저장 경로 USERs\big\RKREPLAY.SAV
         self.assertEqual(bytes(mu.mem_read(0x6E61F4, 7)), b"RhakMu\0")   # 계정 이름 되돌림
 
-    def play_machine(self, records, start_frame=100):
+    def play_machine(self, records, start_frame=100, name=""):
         mu, rd = self.machine()
         mu.mem_write(self.BASE, rrp.body(play=True))
         start = {"frame": start_frame, "rand": 0x11111111, "rng": bytes(range(40, 60)).hex(), "seed": 0x2222}
-        self.files[b"RKREPLAY.RKP"] = rrp.build_rkp(start, records)
+        self.files[b"RKREPLAY.RKP"] = rrp.build_rkp(start, records, name)
         return mu
 
     def run_entry(self, mu, entry, ret):
@@ -501,6 +546,14 @@ class InGameHookTests(unittest.TestCase):
         self.assertEqual(self.flags(mu)["diverged"], 0)
         self.assertEqual(mu.mem_read(0xB412CB, 1)[0], 1)                      # 기록 때처럼 대전 루프
 
+    def test_play_start_restores_local_player_name(self):
+        """불러오기가 내 이름을 계정 이름(RKREPLAY)으로 덮어쓰므로 .rkp 의 이름으로 되돌린다."""
+        mu = self.play_machine([], name="빅보스")
+        mu.mem_write(0xB412CC, b"\x01")
+        mu.mem_write(0x7F7910 + 0x11E0, b"RKREPLAY\0")
+        self.run_entry(mu, "start", 0x4D7559)
+        self.assertEqual(bytes(mu.mem_read(0x7F7910 + 0x11E0, 8)).split(b"\0")[0].decode("cp949"), "빅보스")
+
     def test_play_start_rebuilds_building_vision(self):
         """저장에 없는 건물 시야 지도: 살아 있는 유닛마다 0x4369F0 (건설 중 0x1004 는 빼고)."""
         mu = self.play_machine([])
@@ -510,6 +563,71 @@ class InGameHookTests(unittest.TestCase):
             mu.mem_write(unit(i) + 6, struct.pack("<H", order))
         self.run_entry(mu, "start", 0x4D7559)
         self.assertEqual([c[1] for c in self.calls if c[0] == "vision"], [unit(1), unit(5), unit(0x6A5)])
+
+    def overlay_machine(self):
+        mu = self.play_machine([])
+        mu.mem_write(0x106A5E0, struct.pack("<h", 1280))
+        unit = lambda i: 0x775A38 + i * 0x138
+        player = lambda p: 0x7F7908 + p * 0x11E0
+        for p_, name, flag, res, pop in ((0, b"aa", 0x20, (150, 50, 3, 7), (6, 15)), (1, b"", 0x10, (90, 40, 0, 1), (5, 15))):
+            mu.mem_write(player(p_) + 6, bytes([flag]))
+            mu.mem_write(player(p_) + 8, name + b"\0")
+            mu.mem_write(player(p_) + 0x864, struct.pack("<iiii", res[0], res[1], res[3], res[2]))
+            mu.mem_write(player(p_), struct.pack("<hh", pop[1], pop[0]))
+        # 0번 성(건물): 일꾼(51) 생산 100/400, 1번 건물: 업그레이드(종류 60) 진행 30, 전체 시간 없음
+        for i, owner, order, prod, prog in ((1, 0, 0x1005, 51, 100.0), (8, 1, 0x1006, 60, 30.0), (9, 1, 0, 51, 5.0)):
+            mu.mem_write(unit(i) + 2, struct.pack("<H", 0x8000))
+            mu.mem_write(unit(i) + 6, struct.pack("<H", order))
+            mu.mem_write(unit(i) + 8, struct.pack("<h", 1000))
+            mu.mem_write(unit(i) + 0x10, bytes([owner]))
+            mu.mem_write(unit(i) + 0x4C, struct.pack("<f", prog))
+            mu.mem_write(unit(i) + 0x50, struct.pack("<h", prod))
+        mu.mem_write(0x5038EC + 51 * 0x80, "일꾼".encode("cp949") + b"\0")
+        mu.mem_write(0x5038EC + 60 * 0x80, "갑옷".encode("cp949") + b"\0")
+        mu.mem_write(0x4FCD88 + 51 * 0x1C, struct.pack("<I", 0x3002000))
+        mu.mem_write(0x3002000 + 0x28, struct.pack("<h", 400))
+        mu.mem_write(rrp.FLAGS_OFF + self.BASE + rrp.F_PLAY, struct.pack("<I", 1))
+        return mu
+
+    def test_overlay_draws_resources_and_production(self):
+        mu = self.overlay_machine()
+        mu.mem_write(0x4D4440, b"\xc3")
+        self.run_entry(mu, "overlay", 0x4D660C)
+        lines = [t for x, y, t in self.texts[1::2]]                       # 그림자 다음 색 글자
+        self.assertEqual(lines, ["aa   금 150  물 50  카르마 3  글로리 7  인구 6/15", "   생산 일꾼 25%",
+                                 "컴퓨터   금 90  물 40  카르마 0  글로리 1  인구 5/15", "   업그레이드 갑옷 0%"])
+        self.assertEqual(self.texts[0][:2], (1280 - 370 + 1, 31))         # 오른쪽 위, 그림자 +1
+        self.assertEqual(self.dc_state, ["get", ("release", 0xDC)])
+
+    def test_i_key_toggles_hud(self):
+        mu = self.overlay_machine()
+        mu.mem_write(0x4D4440, b"\xc3")
+        flags = lambda: bytes(mu.mem_read(self.BASE + rrp.FLAGS_OFF + rrp.F_HIDE, 1))[0]
+        self.keys = {0x49}
+        self.run_entry(mu, "overlay", 0x4D660C)
+        self.assertEqual(flags(), 1)
+        self.assertEqual(self.texts, [])                                  # 숨김: 글자 없음
+        self.run_entry(mu, "overlay", 0x4D660C)                           # 계속 누르고 있으면 그대로
+        self.assertEqual(flags(), 1)
+        self.keys = set()
+        self.run_entry(mu, "overlay", 0x4D660C)
+        self.keys = {0x49}
+        self.run_entry(mu, "overlay", 0x4D660C)
+        self.assertEqual(flags(), 0)
+        # 패널: 숨김이면 원래 그리기(0x463A20) 를 부르지 않음
+        mu.mem_write(0x463A20, b"\xcc")
+        mu.mem_write(0x46A3B0, b"\xcc")
+        mu.mem_write(self.BASE + rrp.FLAGS_OFF + rrp.F_HIDE, b"\x01")
+        self.run_entry(mu, "panel", 0x4D65F8)
+        self.run_entry(mu, "panel2", 0x4D6607)                           # 미니맵도
+
+    def test_overlay_off_when_recording(self):
+        mu, rd = self.machine()
+        mu.mem_write(0x4D4440, b"\xc3")
+        self.keys = {0x49}
+        self.run_entry(mu, "overlay", 0x4D660C)
+        self.assertEqual(self.texts, [])
+        self.assertEqual(bytes(mu.mem_read(self.BASE + rrp.FLAGS_OFF + rrp.F_HIDE, 1))[0], 0)
 
     def test_play_start_without_file_flags_missing_data(self):
         mu = self.play_machine([])
@@ -589,6 +707,15 @@ class InGameHookTests(unittest.TestCase):
             bad[rrp.MODE_OFF] = rrp.MODE_PLAY                                   # 섹션은 기록인데 시작 방식만 바뀜
             with self.assertRaises(ValueError):
                 rrp.state(bytes(bad))
+            self.assertEqual(play[rrp.RES_OFF:rrp.RES_OFF + 10], rrp.RES_800)     # 고해상도 아님: 800x600 그대로
+        hi = bytearray(o)                                                       # 고해상도 패치: 대전 화면 1280x720
+        hi[rrp.HIGHRES_MARK:rrp.HIGHRES_MARK + 10] = rrp.RES_1280
+        hi = bytes(hi)
+        play = rrp.apply(hi, True, False, True)
+        self.assertEqual(play[rrp.RES_OFF:rrp.RES_OFF + 10], rrp.RES_1280)
+        self.assertTrue(rrp.plays(play))
+        self.assertEqual(rrp.strip(play), hi)
+        self.assertEqual(rrp.apply(hi, True, False, False)[rrp.RES_OFF:rrp.RES_OFF + 10], rrp.RES_800)
 
     def test_upgrade_from_v0_9055_and_v0_9056_installs(self):
         exe = Path(__file__).resolve().parent / "game_backup" / "Rhakmu.exe"

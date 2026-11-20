@@ -53,7 +53,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9057"
+APP_VERSION = "0.9058"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1854,7 +1854,9 @@ class App(tk.Tk):
             return
         game_dir = pathlib.Path(self.cfg.get("game_dir", DEFAULT_GAME_DIR))
         try:
-            (game_dir / "RKREPLAY.RKP").write_bytes(replay_record_patch.build_rkp(data["start"], data["records"]))
+            local = data["start"].get("local", 0)
+            name = next((p["name"] for p in rp.players if p["index"] == local), "")
+            (game_dir / "RKREPLAY.RKP").write_bytes(replay_record_patch.build_rkp(data["start"], data["records"], name))
             # 재생 패치가 계정 이름을 RKREPLAY 로 두므로 USERs\RKREPLAY\RKREPLAY.SAV 를 불러온다
             (game_dir / "USERs" / "RKREPLAY").mkdir(parents=True, exist_ok=True)
             (game_dir / "USERs" / "RKREPLAY" / "RKREPLAY.SAV").write_bytes(data["save"])
@@ -1867,6 +1869,8 @@ class App(tk.Tk):
         messagebox.showinfo("게임 화면으로 재생",
                             "게임이 켜지면 로그인 없이 바로 리플레이가 재생됩니다.\n\n"
                             "1·2·4 키: 1배·2배·4배속   맵 전체 공개\n"
+                            "I 키: 화면 정보(HUD) 숨기기/보이기\n"
+                            "오른쪽 위: 참가자별 자원과 생산·업그레이드 진행\n"
                             "끝내기: Esc(게임 메뉴) → 나가기, 또는 게임 창 닫기\n"
                             "원래 경기와 달라지면 리플레이 탭 위쪽에 표시됩니다.")
 
