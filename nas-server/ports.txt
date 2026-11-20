@@ -1,0 +1,32 @@
+라크무(rakmu) NAS 서버 포트 목록
+=================================
+형식: 이름 / 프로토콜 / 외부(VM) 포트 / 컨테이너 포트 / 용도
+
+[이 스택(rakmu) — 기본값: rakmu-test 와 나란히 실행]
+rakmu  / TCP / 30010 / 11223 / 로비 (로그인·채팅·방 목록·방 만들기/참가)
+rakmu  / TCP / 30011 / 11225 / 전적·랭킹·서버버전·게임규칙 HTTP (/matches.json /ranking /version /rules)
+rakmu  / UDP / 30012 / 47584 / 방 찾기 요청(DP8 EnumHosts) 릴레이 수신
+
+[rakmu-test 를 대체할 때 (rakmu-test 를 먼저 중지해야 함)]
+rakmu  / TCP / 30000 / 11223 / 로비
+rakmu  / TCP / 30001 / 11225 / 전적·버전 확인
+rakmu  / UDP / 30002 / 47584 / 방 찾기 요청
+→ Portainer 스택의 Environment variables 에 LOBBY_PORT=30000, HTTP_PORT=30001, RELAY_PORT=30002
+
+[기존 — 건드리지 않음]
+rakmu-test / TCP 30000, TCP 30001, UDP 30002 / host 네트워크 / 서버 소유자 운영안내 기준
+
+[게임 클라이언트·런처가 실제로 쓰는 고정 포트 — 중요]
+Rhakmu.exe 로비 접속      TCP 11223  (게임 실행파일에 고정, SYNC_PORT_ANALYSIS.txt 참고)
+런처 전적/규칙 조회        TCP 11225  (launcher.py 에 고정)
+WG_IPX.dll 방 찾기 방송    UDP 47584  (클라이언트 쪽 고정)
+게임 중 P2P 동기화         UDP 11223  (플레이어 PC 끼리 직접, 서버 경유 아님)
+공유기는 30000~30999 만 VM 으로 전달하므로, 위 고정 포트로는 NAS 에 바로 닿지 않는다.
+연결 방법은 README.txt 의 "6. 런처/게임에서 접속하는 방법" 참고.
+
+[사용 금지]
+5001 (NAS 관리), 9443 (Portainer 관리)
+
+[새 포트를 쓰기 전에]
+30010~30012 를 다른 게임이 쓰고 있지 않은지 Portainer > Containers 에서 Published Ports 를 확인한다.
+겹치면 Environment variables 로 다른 번호(30000~30999 안)를 지정하고 이 파일도 고친다.
