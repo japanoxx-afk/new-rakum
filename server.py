@@ -1036,8 +1036,11 @@ class _HistoryHandler(BaseHTTPRequestHandler):
             except (OSError, ValueError):
                 rules = {}
             self._json({"server_version": SERVER_VERSION, **rules})
-        else:  # /matches.json, /matches, /
-            self._json(_load_matches())
+        else:  # /matches.json, /matches, /   (승/패는 결과코드로 다시 판정해 보여 줌)
+            matches = _load_matches()
+            for rec in matches:
+                _recompute_winloss(rec)
+            self._json(matches)
 
     def log_message(self, *a):
         pass  # quiet

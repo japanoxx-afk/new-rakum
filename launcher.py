@@ -53,12 +53,16 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9060"
+APP_VERSION = "0.9061"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
 DEFAULT_DOMAINS = [GAME_HOST]
 DEFAULT_IP = "127.0.0.1"
+# 공식 프리서버: 서버 소유자의 NAS(akansas.synology.me)에서 Docker 로 운영 (nas-server/ 참고).
+# 공유기가 TCP 11223(로비)·11225(전적) 을 NAS 컨테이너로 전달한다. hosts 는 IP 만 받으므로 IP 로 둔다.
+DEFAULT_SERVER_IP = "112.159.73.235"
+DEFAULT_SERVER_MARK = "default_server_ip_applied"
 SERVER_PORT = 11223   # 서버 실행 여부 확인용 (로비 TCP)
 SERVER_LOOPBACK = "127.0.0.1"
 HOSTS_PATH = r"C:\Windows\System32\drivers\etc\hosts"
@@ -232,6 +236,27 @@ def load_config(base_dir):
         except (OSError, ValueError):
             pass
     return cfg
+
+
+def apply_default_server(cfg):
+    """처음 한 번만 서버 VPN IP 를 공식 프리서버(DEFAULT_SERVER_IP)로 맞춘다.
+
+    이후에는 사용자가 '서버 VPN IP' 칸에서 바꾼 값을 그대로 유지한다(표시 키로 한 번만 적용).
+    바뀌었으면 True (호출한 쪽이 저장).
+    """
+    if cfg.get(DEFAULT_SERVER_MARK):
+        return False
+    cfg['last_server_ip'] = DEFAULT_SERVER_IP
+    cfg[DEFAULT_SERVER_MARK] = True
+    return True
+
+
+def display_name(name):
+    """서버 JSON 의 계정 이름(CP949 바이트를 latin-1 로 보관)을 한글로 보이게."""
+    try:
+        return str(name).encode('latin-1').decode('cp949')
+    except (UnicodeError, ValueError):
+        return str(name)
 
 
 def config_path(base_dir):
@@ -640,6 +665,11 @@ class App(tk.Tk):
         self.base_dir = get_base_dir()
         self.server = ServerManager(self.base_dir)
         self.cfg = load_config(self.base_dir)
+        if apply_default_server(self.cfg):
+            try:
+                save_config(self.base_dir, self.cfg)
+            except OSError:
+                pass
         self.radmin_session = None
         self.domains = list(self.cfg.get("domains", DEFAULT_DOMAINS))
 
@@ -1377,7 +1407,20 @@ class App(tk.Tk):
                        "   rhakmugame.hangame.naver.com 줄만 바뀌고 나머지는 보존됩니다.",
                   style="Muted.TLabel").pack(anchor="w", pady=(8, 0))
 
+        self._apply_saved_host()
         self._refresh_hosts_view()
+
+    def _apply_saved_host(self):
+        """런처 시작 시: hosts 의 게임 주소를 저장된 서버 VPN IP 로 맞춘다(관리자 권한일 때만, 조용히)."""
+        ip = self.cfg.get('last_server_ip', '').strip()
+        if not ip or not is_admin():
+            return
+        try:
+            if HostsManager.read_current_ip([GAME_HOST]) != ip:
+                HostsManager.set_game_host(ip)
+                self._last_applied_ip = ip
+        except OSError:
+            pass   # 게임 실행 직전에 다시 확인·적용하고 실패하면 그때 알린다
 
     def _refresh_hosts_view(self):
         if not hasattr(self, "cur_ip_var"):
@@ -1488,7 +1531,12 @@ class App(tk.Tk):
                 f"{GAME_EXE}를 찾을 수 없습니다.\n({exe})\n\n설정 탭에서 게임 경로를 확인하세요.")
             return
         try:
-            HostsManager.set_game_host(ip)
+            # 실행 전 확인: hosts 의 게임 주소가 이번 접속 IP 와 다르면 고쳐 쓰고 다시 읽어 검증한다.
+            if HostsManager.read_current_ip([GAME_HOST]) != ip:
+                HostsManager.set_game_host(ip)
+            current = HostsManager.read_current_ip([GAME_HOST])
+            if current != ip:
+                raise OSError(f"hosts 의 {GAME_HOST} 주소가 {current} 입니다 ({ip} 로 바꾸지 못함).")
         except PermissionError:
             messagebox.showwarning("권한 오류",
                 "hosts 파일 수정에 관리자 권한이 필요합니다.\n런처를 관리자 권한으로 실행해 주세요.")
@@ -1956,9 +2004,10 @@ class App(tk.Tk):
         self._refresh_history()
 
     def _server_ip(self):
-        # 전적/랭킹 조회용 서버 IP = 현재 hosts의 게임 호스트 IP (없으면 마지막 입력/기본)
-        return (HostsManager.read_current_ip([GAME_HOST])
-                or self.cfg.get("last_server_ip", "") or DEFAULT_IP)
+        # 전적/랭킹 조회용 서버 IP = 저장된 서버 VPN IP (없으면 hosts 의 게임 주소).
+        # 싱글 플레이 뒤 hosts 가 127.0.0.1 이어도 멀티 서버의 전적을 보여 준다.
+        return (self.cfg.get("last_server_ip", "")
+                or HostsManager.read_current_ip([GAME_HOST]) or DEFAULT_IP)
 
     def _fetch_json(self, path):
         """서버 HTTP(11225)에서 전적/랭킹을 받아온다. 실패 시 로컬 파일 폴백."""
@@ -1988,7 +2037,7 @@ class App(tk.Tk):
                 mark = {"win": "승", "lose": "패", "draw": "무"}.get(wl, "?")
             else:
                 mark = "승" if str(v).startswith("win") else "패"
-            out.append(f"{a}:{mark}")
+            out.append(f"{display_name(a)}:{mark}")
         return ", ".join(out)
 
     def _refresh_history(self):
@@ -2013,7 +2062,7 @@ class App(tk.Tk):
             messagebox.showinfo("랭킹", "아직 집계된 전적이 없습니다.")
             return
         rows = sorted(rank.items(), key=lambda kv: (-kv[1].get("win", 0), kv[1].get("lose", 0)))
-        lines = [f"{a:12} {v.get('win',0)}승 {v.get('lose',0)}패 {v.get('draw',0)}무" for a, v in rows]
+        lines = [f"{display_name(a):12} {v.get('win',0)}승 {v.get('lose',0)}패 {v.get('draw',0)}무" for a, v in rows]
         messagebox.showinfo("랭킹 (승순)", "\n".join(lines))
 
     # ── 설정 탭 ──
