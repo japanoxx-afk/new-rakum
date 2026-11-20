@@ -10,10 +10,13 @@ All game command types have the pattern 0xXXFF.
 Confirmed protocol flow (from packet captures):
   0x01FF  Handshake    : client -> "RHAK"+version1000, server -> 4-byte ok
   0x03FF  Announcement : server -> uint32(0) (no announcement)
-  0x02FF  Username     : server -> uint32(0)
+  0x02FF  Account info : client -> [flag][account\0]; server -> [3][내공,승,패,무 int32][등급점수 int16]
+                         + 3 strings (Rhakmu.exe 0x44BB60, '승/패:%d/%d 내공:%d ...')
   0x05FF  Login        : payload=account\0password\0hash; server -> uint32(result)
   0x07FF  Channel sel  : server -> uint32(result)
-  0x15FF  Rank list    : server -> 0x16FF + 0x17FF (empty)
+  0x15FF  Rank list    : client -> [sort][start int32][end int32]; server -> 0x16FF(start),
+                         0x15FF [sort] + N x {22B record + str\0 + name\0}, 0x17FF(end)  (Rhakmu.exe 0x44D0B0)
+  0x14FF  Rank search  : client -> name\0; server -> [sort][rank int32][name\0]     (Rhakmu.exe 0x44D270)
   0x18FF  Guild list   : server -> 0x19FF + 0x1AFF (empty)
   0x0BFF  Room list    : server -> 0x0CFF, [0x0BFF entries], 0x0DFF
   0x0EFF  Create room  : server -> uint32(0)
@@ -21,8 +24,10 @@ Confirmed protocol flow (from packet captures):
   0x10FF  Join room    : server -> [0x00, account\0, host_ip\0]
   0x11FF  Leave room   : remove room/member
   0x0FFF  Game start   : relay to all in room + send sync-ok
-  0x12FF  Chat         : broadcast as 0x13FF
-  0x24FF  Post-game    : server -> 0x25FF [02 00]
+  0x12FF  Chat         : client -> message\0 account\0; server -> 0x12FF [1,0,0] sender\0 message\0
+                         (the client has no 0x13FF case; type byte 1 = lobby chat, Rhakmu.exe 0x44C2B0)
+  0x24FF  Post-game    : client -> [code][score int32]; code&0x7F 1=win 2=lose 3/4=draw/no contest
+                         (0x8x = ladder); server -> 0x25FF [02 00]
   0x27FF  Post-game2   : suppress (no reply)
   0xFEFE  Crash report : log only
 """
@@ -56,7 +61,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9012"
+SERVER_VERSION = "0.9013"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -139,7 +144,7 @@ def record_match_start(map_name: str, players: list, room_title: str) -> None:
 
 def record_match_result(account: str, code: int, score: int) -> None:
     """post-game 0x24FF: 해당 플레이어의 결과코드·점수를 가장 최근 매치에 기록.
-    승/패는 같은 매치 내 점수 비교로 판정(높은 쪽 승)."""
+    승/패는 결과코드로 판정(result_wl), 코드를 모를 때만 점수 비교."""
     matches = _load_matches()
     for rec in reversed(matches):
         if account in rec.get("players", []) and account not in rec.get("results", {}):
@@ -148,34 +153,107 @@ def record_match_result(account: str, code: int, score: int) -> None:
             _save_matches(matches)
             return
 
+# 0x24FF 결과코드 (Rhakmu.exe 0x41A9B0 에서 확인): 일반전 1=승 2=패 3=무승부(중도 이탈 포함) 4=기타 무효,
+# 래더전은 같은 값에 0x80 이 더해진다(0x81 승, 0x82 패 ...). 점수는 대부분 0 이라 승패 판정에 쓰지 않는다.
+RESULT_WL = {1: "win", 2: "lose", 3: "draw", 4: "draw"}
+
+def result_wl(code) -> Optional[str]:
+    try:
+        return RESULT_WL.get(int(code) & 0x7F)
+    except (TypeError, ValueError):
+        return None
+
 def _recompute_winloss(rec: dict) -> None:
-    """점수 비교로 win/lose 판정(동점이면 무승부)."""
+    """결과코드로 win/lose/draw 판정. 코드를 모르면 예전처럼 점수 비교(동점이면 무승부)."""
     res = rec.get("results", {})
     if not res:
         return
-    scores = {a: v["score"] for a, v in res.items() if isinstance(v, dict)}
-    if not scores:
+    unknown = {}
+    for a, v in res.items():
+        if not isinstance(v, dict):
+            continue
+        wl = result_wl(v.get("code"))
+        if wl:
+            v["wl"] = wl
+        else:
+            unknown[a] = v
+    if not unknown:
         return
+    scores = {a: v.get("score", 0) for a, v in unknown.items()}
     top = max(scores.values())
     n_top = sum(1 for s in scores.values() if s == top)
-    for a, v in res.items():
-        if isinstance(v, dict):
-            if n_top > 1 and v["score"] == top:
-                v["wl"] = "draw"
-            else:
-                v["wl"] = "win" if v["score"] == top else "lose"
+    for a, v in unknown.items():
+        if n_top > 1 and v.get("score", 0) == top:
+            v["wl"] = "draw"
+        else:
+            v["wl"] = "win" if v.get("score", 0) == top else "lose"
 
 def compute_ranking() -> dict:
-    """matches.json에서 계정별 승/패/무 집계."""
+    """matches.json에서 계정별 승/패/무 집계.
+
+    - 기록마다 결과코드로 다시 판정한다(예전 버전이 점수로 잘못 매긴 기록도 바로잡힘).
+    - 혼자 한 게임(플레이어 1명)은 랭킹에 넣지 않는다.
+    """
     tally = {}
     for rec in _load_matches():
+        if len(set(rec.get("players", []))) < 2:
+            continue
+        _recompute_winloss(rec)
         for a, v in rec.get("results", {}).items():
             wl = v.get("wl") if isinstance(v, dict) else None
             if wl not in ("win", "lose", "draw"):
                 continue
             t = tally.setdefault(a, {"win": 0, "lose": 0, "draw": 0})
             t[wl] += 1
+            t["last"] = rec.get("time", "")
     return tally
+
+BASE_POINTS = 1000          # 내공 시작값 (게임은 1000 미만이면 등급 아이콘을 '없음'으로 그림)
+WIN_POINTS, LOSE_POINTS = 10, 10
+RANK_PAGE = 17              # 게임 랭킹 창 한 페이지 줄 수 (Rhakmu.exe 0x42CFA0: index < 0x11)
+
+def ranking_rows() -> list:
+    """게임 랭킹 창용 정렬 목록: [{rank, name, points, win, lose, draw, last}] (내공 → 승 → 이름 순)."""
+    rows = []
+    for name, t in compute_ranking().items():
+        if not name:
+            continue
+        points = max(0, BASE_POINTS + WIN_POINTS * t["win"] - LOSE_POINTS * t["lose"])
+        rows.append({"name": name, "points": points, "win": t["win"], "lose": t["lose"],
+                     "draw": t["draw"], "last": t.get("last", "")})
+    rows.sort(key=lambda r: (-r["points"], -r["win"], r["lose"], r["name"]))
+    for i, r in enumerate(rows, 1):
+        r["rank"] = i
+    return rows
+
+def _i32(v: int) -> int:
+    return max(-2**31, min(2**31 - 1, int(v)))
+
+def build_rank_record(row: dict) -> bytes:
+    """0x15FF 한 줄: 22바이트 {순위, 내공, 승, 패, 무 (int32), 등급점수 int16} + 마지막칸 문자열 + 이름."""
+    grade = max(0, min(32767, row["win"]))      # 등급 아이콘(0x42CA20)은 이 값의 구간으로 정해짐
+    rec = struct.pack("<iiiiih", _i32(row["rank"]), _i32(row["points"]), _i32(row["win"]),
+                      _i32(row["lose"]), _i32(row["draw"]), grade)
+    return rec + nul(row["last"][:10]) + nul(row["name"])
+
+def build_rank_list(sort: int, start: int, end: int, rows: Optional[list] = None) -> bytes:
+    """0x15FF 응답 payload. 클라는 [start, end) 순위를 요청한다(보통 end = start + 17)."""
+    rows = ranking_rows() if rows is None else rows
+    first = max(1, int(start))
+    count = int(end) - int(start)
+    count = RANK_PAGE if count <= 0 else min(count, RANK_PAGE)
+    page = [r for r in rows if first <= r["rank"] < first + count]
+    return bytes([sort & 0xFF]) + b"".join(build_rank_record(r) for r in page)
+
+def build_account_info(account: str, rows: Optional[list] = None) -> bytes:
+    """0x02FF 응답 type 3: 사용자 정보 창 '승/패:%d/%d 내공:%d 승률 로그인시간:%s'."""
+    rows = ranking_rows() if rows is None else rows
+    row = next((r for r in rows if r["name"] == account), None) or \
+        {"rank": 0, "points": BASE_POINTS, "win": 0, "lose": 0, "draw": 0, "last": ""}
+    grade = max(0, min(32767, row["win"]))
+    return (bytes([3]) + struct.pack("<iiiih", _i32(row["points"]), _i32(row["win"]), _i32(row["lose"]),
+                                     _i32(row["draw"]), grade)
+            + nul(account) + nul(f"#{row['rank']}" if row["rank"] else "") + nul(row["last"]))
 
 
 def pack_pkt(ptype: int, payload: bytes = b"") -> bytes:
@@ -185,6 +263,19 @@ def pack_pkt(ptype: int, payload: bytes = b"") -> bytes:
 
 def nul(s: str) -> bytes:
     return s.encode("latin-1") + b"\x00"
+
+
+def _kr(s: str) -> str:
+    """패킷 문자열(latin-1 로 그대로 보관한 CP949 바이트)을 로그용 한글로."""
+    try:
+        return s.encode("latin-1").decode("cp949")
+    except (UnicodeError, AttributeError):
+        return s
+
+
+def build_chat_payload(sender: str, message: str) -> bytes:
+    """로비 채팅 0x12FF 응답 payload: [type=1][0][0] sender\\0 message\\0."""
+    return bytes([1, 0, 0]) + nul(sender) + nul(message)
 
 
 def build_user_entry(account: str, ip: str, index: int = 1) -> bytes:
@@ -505,11 +596,12 @@ class ClientSession:
             self.send(P_ANNOUNCE, struct.pack("<I", 0))
 
         elif ptype == P_USERNAME:
-            # payload: 1 byte flag + account\0
+            # 0x02FF "Check Account Info" (Rhakmu.exe 0x44E890): payload = 1 byte flag + account\0.
+            # 응답 type 3 이면 사용자 정보 창에 승/패·내공·승률을 보여 준다(0x44BB60).
             strings = read_cstrings(payload[1:] if payload else b"")
-            if strings:
-                log.info(f"{self.peer}: username={strings[0]!r}")
-            self.send(P_USERNAME, struct.pack("<I", 0))
+            target = strings[0] if strings else self.account
+            log.info(f"{self.peer}: account info {_kr(target)!r}")
+            self.send(P_USERNAME, build_account_info(target or ""))
 
         elif ptype == P_LOGIN:
             strings = read_cstrings(payload)
@@ -528,12 +620,28 @@ class ClientSession:
         elif ptype == P_CHAN_SEL:
             self.send(P_CHAN_SEL, struct.pack("<I", 0))
 
-        elif ptype == P_RANK_LIST or ptype == P_RANK_SEARCH:
-            # 랭킹 목록(0x15FF) / 검색(0x14FF): 빈 결과로 응답해 '요청중' 멈춤 해제.
-            # (실제 엔트리 채우기는 클라 파서 형식 확인 후 구현 예정)
-            log.info(f"  Rank query 0x{ptype:04X} payload={payload.hex()} -> empty ack")
-            self.send(P_RANK_ACK1, b"")
-            self.send(P_RANK_ACK2, b"")
+        elif ptype == P_RANK_LIST:
+            # 랭킹 목록 요청 (Rhakmu.exe 0x44EDC0): [sort][start int32][end int32]
+            sort = payload[0] if payload else 0
+            start, end = struct.unpack_from("<ii", payload, 1) if len(payload) >= 9 else (1, 1 + RANK_PAGE)
+            body = build_rank_list(sort, start, end)
+            log.info(f"  Rank list sort={sort} start={start} end={end} -> {(len(body) - 1) // 22 if len(body) > 1 else 0} rows")
+            self.send(P_RANK_ACK1, b"")              # 0x16FF: 목록 비우기
+            if len(body) > 1:
+                self.send(P_RANK_LIST, body)         # 0x15FF: 줄들
+            self.send(P_RANK_ACK2, b"")              # 0x17FF: 화면 갱신
+
+        elif ptype == P_RANK_SEARCH:
+            # 랭킹 검색 (Rhakmu.exe 0x44ED30): name\0 -> [sort][rank int32][name\0], 클라가 그 페이지를 다시 요청
+            strings = read_cstrings(payload)
+            name = strings[0] if strings else ""
+            row = next((r for r in ranking_rows() if r["name"] == name), None)
+            log.info(f"  Rank search {_kr(name)!r} -> {row['rank'] if row else 'not found'}")
+            if row:
+                self.send(P_RANK_SEARCH, bytes([0]) + struct.pack("<i", row["rank"]) + nul(name))
+            else:
+                self.send(P_RANK_ACK1, b"")
+                self.send(P_RANK_ACK2, b"")
 
         elif ptype == P_GUILD_LIST:
             self.send(P_GUILD_ACK1, b"")
@@ -568,7 +676,7 @@ class ClientSession:
         elif ptype == P_POST_GAME:
             # 0x24FF = SendGameReport: byte[0]=결과코드, byte[1..4]=점수(uint32)
             code = payload[0] if len(payload) >= 1 else 0
-            score = struct.unpack_from("<I", payload, 1)[0] if len(payload) >= 5 else 0
+            score = struct.unpack_from("<i", payload, 1)[0] if len(payload) >= 5 else 0   # 래더 패배는 음수
             log.info(f"  Post-game 0x24FF from {self.account!r}: code={code} score={score} raw={payload.hex()}")
             if self.account:
                 record_match_result(self.account, code, score)
@@ -799,15 +907,19 @@ class ClientSession:
         if not account:
             account = self.account
 
-        log.info(f"Chat from={account!r}: {message!r}")
+        log.info(f"Chat from={_kr(account)!r}: {_kr(message)!r}")
 
-        # Build server message: [0x00 0x00 0x00][account\0][message\0]
-        msg_payload = bytes([0, 0, 0]) + nul(account) + nul(message)
-        chat_pkt = pack_pkt(P_CHAT_REPLY, msg_payload)
+        # 클라가 자동/명령으로 보내는 '/status', '/whereis x', '/ignore x' 등은 방송하지 않는다.
+        if not message or message.startswith("/"):
+            return
 
-        # Broadcast to all connected clients with accounts
-        for c in STATE.clients:
-            if c.account:
+        # 클라 수신 형식 (Rhakmu.exe 0x44C2B0): 0x12FF [type=1][0][0] sender\0 message\0
+        # → 로비 채팅창에 "sender>>message" 로 표시. (0x13FF 는 클라 디스패처에 없어 무시됨)
+        chat_pkt = pack_pkt(P_CHAT, build_chat_payload(account, message))
+
+        # 로그인한 로비 사용자에게만 (게임 중인 사람에게 로비 패킷을 보내지 않는다)
+        for c in list(STATE.clients):
+            if c.account and not c.in_game:
                 c.writer.write(chat_pkt)
                 await c.flush()
 
