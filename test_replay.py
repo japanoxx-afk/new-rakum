@@ -621,6 +621,24 @@ class InGameHookTests(unittest.TestCase):
         self.run_entry(mu, "panel", 0x4D65F8)
         self.run_entry(mu, "panel2", 0x4D6607)                           # 미니맵도
 
+    def test_panel_shows_selected_players_info(self):
+        """패널을 그리는 동안만 내 번호를 고른 유닛의 주인으로: 상대 건물의 생산·업그레이드 창."""
+        from unicorn import UC_HOOK_CODE
+        mu = self.overlay_machine()
+        seen = []
+        mu.mem_write(0x463A20, b"\xc3")
+        mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: seen.append(
+            (bytes(uc.mem_read(0xB412CC, 1))[0], uc.reg_read(self.regs[1]))), begin=0x463A20, end=0x463A20)
+        mu.mem_write(0xB412CC, b"\x00")
+        mu.mem_write(0xB412D0, struct.pack("<h", 8))                        # 컴퓨터(1) 건물
+        mu.reg_write(self.regs[1], 0x801E58)
+        self.run_entry(mu, "panel", 0x4D65F8)
+        self.assertEqual(seen, [(1, 0x801E58)])
+        self.assertEqual(bytes(mu.mem_read(0xB412CC, 1))[0], 0)             # 다시 나
+        mu.mem_write(0xB412D0, struct.pack("<h", 0))                        # 고른 것 없음: 그대로
+        self.run_entry(mu, "panel", 0x4D65F8)
+        self.assertEqual(seen[-1][0], 0)
+
     def test_overlay_off_when_recording(self):
         mu, rd = self.machine()
         mu.mem_write(0x4D4440, b"\xc3")
@@ -724,7 +742,7 @@ class InGameHookTests(unittest.TestCase):
         import subprocess, types
         import minimap_patch as mm
         o = mm.build(exe.read_bytes(), False, True, False, False, False)      # 단축키 없음, 기록 없음
-        for commit in ("0ae10e0", "5b6a921"):                                  # v0.9055, v0.9056
+        for commit in ("0ae10e0", "5b6a921", "d723ca0", "e790797"):            # v0.9055 ~ v0.9058
             src = subprocess.run(["git", "show", commit + ":replay_record_patch.py"], capture_output=True,
                                  cwd=Path(__file__).resolve().parent).stdout.decode("utf-8")
             if not src:
