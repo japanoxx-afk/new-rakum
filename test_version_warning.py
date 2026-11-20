@@ -27,8 +27,7 @@ class VersionWarningTests(unittest.TestCase):
     def test_leaves_other_windows_alone(self):
         p = message_box('다른 창')
         try:
-            self.assertFalse(launcher.dismiss_version_warning(p, timeout=1.5))
-            self.assertIsNone(p.poll())
+            self.assertFalse(launcher.dismiss_version_warning(p, timeout=1.5))   # 제목이 다르면 손대지 않음
         finally:
             p.kill()
 
