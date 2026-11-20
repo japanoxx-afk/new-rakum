@@ -11,6 +11,20 @@ Synology NAS + Debian VM(Docker, Portainer, 2 vCPU, RAM 2GB)에서 24시간 운�
 
 2. 상태 구분 (중요)
 -------------------
+[최신 — 2026-11-21 03:30 KST 경, 브랜치 launcher-v0.9061-nas-online]
+  - 소유자가 외부 TCP 11223, 11225 를 이 스택(30010/30011)으로 전달함 (개발 PC 에서 확인: 11225/version 과
+    30011/version 이 같은 0.9012, matches.json 동일). 30000/30001 은 닫힘(rakmu-test 응답 없음).
+  - 사용자 보고: NAS 프리서버 접속·게임 정상. 문제 2개 → 원인 찾아 수정(서버 0.9013, 아래):
+    a) 로비 채팅이 안 보임: 서버가 0x13FF 로 보냈는데 Rhakmu.exe 로비 디스패처(0x44B1D0)에 0x13FF 가 없음.
+       클라 수신은 0x12FF [type=1][0][0] sender\0 message\0 (0x44C2B0). → 고침.
+    b) 랭킹 반영 안 됨: 게임 랭킹 창 요청(0x15FF)에 빈 응답만 보냄 + 결과 점수가 항상 0 이라 2인전이 모두 무승부.
+       0x15FF/0x14FF/0x02FF 응답 형식을 Rhakmu.exe 에서 확인해 구현, 결과코드(1 승/2 패/3·4 무, +0x80 래더)로 판정.
+       기존 matches.json 기록도 조회 시 결과코드로 다시 판정(파일은 그대로).
+  - 런처 v0.9061: 서버 VPN IP 기본값 112.159.73.235(1회 적용, 이후 사용자 값 유지), 실행 직전 hosts 확인·적용.
+  - [NAS 미반영] 새 server.py(0.9013)는 아직 NAS 에 올리지 않음 → README 5장 "서버 코드 업데이트" 절차로 반영 필요.
+  - [미시험] 실제 게임에서 채팅 표시·랭킹 창 표시. PC 단위시험(test_server_chat_rank.py 10개)만 통과.
+  - [미푸시] launcher-v0.9061-nas-online 브랜치는 로컬 커밋만 있음(푸시하면 CI 가 exe 빌드).
+
 [구현 완료]  nas-server/ 폴더 (compose.yaml, app/nas_entry.py, Prepare-NasUpload.ps1, 테스트, 문서)
 [PC 시험 완료] test_nas_entry.py 3개 통과 (Windows, Python 3.12.10, Docker 없이):
    - 임시 포트로 로비 TCP 핸드셰이크(0x01FF → OK), HTTP /version, /matches.json, UDP 수신 생존
@@ -45,9 +59,17 @@ Synology NAS + Debian VM(Docker, Portainer, 2 vCPU, RAM 2GB)에서 24시간 운�
 [미구현]   런처가 NAS 서버로 접속하는 기능, 인터넷 너머 P2P 주소 문제 해결 (아래 5, 6).
 [사용자 시험] 없음.
 
-3. 바꾼 파일 (브랜치 nas-server-deploy, origin/main fbc8c2a 기준)
-------------------------------------------------------------------
-추가만 했다. 기존 server.py / launcher.py 는 수정하지 않았다.
+3. 바꾼 파일
+------------
+브랜치 launcher-v0.9061-nas-online (= nas-server-deploy + origin/main be71823 병합 + 아래):
+  server.py                 0.9013: 채팅 0x12FF type1, 랭킹 0x15FF/0x14FF, 사용자 정보 0x02FF type3, 결과코드 판정,
+                            /matches.json 도 결과코드로 판정해 응답
+  test_server_chat_rank.py  위 형식을 클라 파서 방식대로 검증 (10개)
+  launcher.py               APP_VERSION 0.9061, DEFAULT_SERVER_IP, apply_default_server(), 실행 직전 hosts 확인,
+                            시작 시 hosts 적용(관리자일 때), 전적 조회 IP = 저장된 서버 IP, 한글 아이디 표시
+  test_default_server.py, RhakMuLauncher_v0.9061.spec, release_notes.py
+  (test_launch_pipeline 2개·test_auto_game_launch 1개 실패는 origin/main 에서도 똑같이 실패 — 이 PC 의 Rhakmu.exe 상태 때문)
+브랜치 nas-server-deploy (origin/main fbc8c2a 기준): nas-server/ 추가만.
   nas-server/compose.yaml           Portainer 스택 (python:3.12-slim, bridge, 포트 게시, 외부 볼륨)
   nas-server/app/nas_entry.py       server.py 래퍼: 데이터 폴더로 chdir 후 import, 로그 회전, 포트 환경변수
   nas-server/Prepare-NasUpload.ps1  nas-server/upload/rakmu-live/ 생성 (gitignore). 루트 server.py 를 복사
@@ -96,7 +118,11 @@ rakmu-test 의 실제 compose/코드는 확인하지 못했다(확인 필요). �
     30010~30012 가 다른 컨테이너에서 쓰이지 않는지는 배포 전에 Portainer 에서 확인(README 3장 7번).
 (2) [완료] 배포 및 외부 HTTP/로비 TCP 확인 (2장 기록). 남은 확인: File Station 에서 rakmu-live/data/server.log 생성 여부,
     스택 Stop→Start 후 데이터 유지.
-(3) 접속 경로 선택 (README 6장):
+(2-1) [다음 할 일] NAS 에 server.py 0.9013 반영 → 컨테이너 Restart → /version 이 0.9013 인지 확인
+      → 2명이 로비 채팅, 게임 1판, 게임 안 랭킹 창 확인. 결과를 2장에 기록.
+(2-2) [다음 할 일] launcher-v0.9061-nas-online 푸시 → CI exe 빌드 → main 병합 (기존 릴리스 절차).
+(3) [완료 — A 방식] 소유자가 외부 TCP 11223→30010, 11225→30011 전달. 런처는 112.159.73.235 로 바로 접속.
+    (아래 A/B 는 기록용)
     A) 서버 소유자에게 외부 TCP 11223→VM 30010, TCP 11225→VM 30011, UDP 47584→VM 30012 전달 요청 (코드 수정 없음)
     B) 런처 변경안 (미구현, 선택):
        - launcher.py 에 NAS 서버 설정 추가: nas_host="akansas.synology.me", nas_lobby_port=30010, nas_http_port=30011
@@ -114,6 +140,9 @@ rakmu-test 의 실제 compose/코드는 확인하지 못했다(확인 필요). �
           그 주소를 사용. UDP 47584 방송은 런처(또는 기존 radmin_session)가 로컬에서 캡처해 VPN 상대에게 직접 보내는 방식 검토.
           새 HTTP 쓰기 API 를 만들면 인증 없이 공개하지 말 것(운영안내). 공유 토큰을 쓰면 Portainer 환경변수로 넣고 저장소에 넣지 않는다.
     이 작업 전까지 NAS 서버는 "로비·채팅·전적 서버" 수준으로 본다. 실제 대전 성공은 사용자 시험으로만 판정.
+    → 2026-11-21 사용자 보고로는 NAS 서버로 게임이 정상 동작(전적에 2인전 기록 있음). 어떤 VPN 조합에서 됐는지는 미기록.
+(4-1) 랭킹 계산 규칙(server.py): 내공 = 1000 + 10×승 − 10×패 (최소 0), 정렬 내공→승→패→이름,
+      등급 아이콘 값 = 승 수, 마지막 칸 = 마지막 경기 날짜. 혼자 한 게임 제외. 바꾸려면 BASE_POINTS 등 상수 수정.
 (5) 실제 다중 접속 시험: 서로 다른 계정 2명 이상 로그인 → 방 생성/참가 → 게임 시작. 결과를 여기에 기록.
 
 7. 복구 방법
@@ -128,7 +157,7 @@ rakmu-test 의 실제 compose/코드는 확인하지 못했다(확인 필요). �
 
 8. 다른 PC 에서 이어서 작업하기
 -------------------------------
-  git fetch origin && git switch nas-server-deploy
+  git fetch origin && git switch launcher-v0.9061-nas-online   (푸시 전이면 nas-server-deploy)
   python nas-server\test_nas_entry.py        (Docker 없이 래퍼 시험)
   .\nas-server\Prepare-NasUpload.ps1         (업로드 폴더 생성)
 이 파일의 2장(상태)과 6장(다음 작업)을 먼저 갱신한 뒤 작업을 시작할 것.
