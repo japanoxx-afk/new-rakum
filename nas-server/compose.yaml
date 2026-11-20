@@ -40,8 +40,8 @@ services:
     read_only: true            # 컨테이너 자체 파일시스템은 읽기 전용 (데이터는 NAS 볼륨에만)
     tmpfs:
       - /tmp:size=16m
-    security_opt:
-      - no-new-privileges:true
+    # security_opt(no-new-privileges)는 이 Portainer 에서 관리자만 쓸 수 있어 넣지 않는다
+    # ("security-opt setting disabled for non administrator users" 오류).
     mem_limit: 128m            # VM 메모리 2GB 보호 (실사용은 보통 30~40MB)
     cpus: 0.5
     pids_limit: 64
