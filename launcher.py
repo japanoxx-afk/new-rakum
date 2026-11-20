@@ -53,7 +53,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9055"
+APP_VERSION = "0.9056"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1869,8 +1869,11 @@ class App(tk.Tk):
         self.recorder.pause_for_playback()
         self._replay_play = True
         self._on_single_play()
+        mapname = pathlib.Path(rp.header.get("map", "").replace("\\", "/")).stem
         messagebox.showinfo("게임 화면으로 재생",
-                            "게임이 켜지면 싱글플레이 → 불러오기 → RKREPLAY 를 고르세요.\n\n"
+                            "게임이 켜지면 싱글플레이로 게임을 시작하세요"
+                            + (f" (맵: {mapname})" if mapname else "") + ".\n"
+                            "게임이 시작되는 순간 리플레이의 경기 시작 저장을 자동으로 불러와 재생합니다.\n\n"
                             "1·2·4 키: 1배·2배·4배속   맵 전체 공개\n"
                             "끝내기: Esc(게임 메뉴) → 나가기\n"
                             "원래 경기와 달라지면 리플레이 탭 위쪽에 표시됩니다.")

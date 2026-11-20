@@ -528,6 +528,44 @@ class InGameHookTests(unittest.TestCase):
         self.run_entry(mu, "turn", 0x4D7A18)
         self.assertEqual(mu.reg_read(UC_X86_REG_EAX) & 0xFF, 1)
 
+    def test_play_game_loop_hook_turns_on_save_loading(self):
+        """게임에 불러오기 메뉴가 없음: 재생 모드 싱글 게임이면 Game_Loop 의 저장 불러오기 경로를 켠다."""
+        from unicorn.x86_const import UC_X86_REG_EAX
+        for play, multi, already, want_flag, want_name in (
+                (True, 0, 0, 1, b"RKREPLAY\0"), (False, 0, 0, 0, b"\0" * 9),
+                (True, 1, 0, 0, b"\0" * 9), (True, 0, 2, 2, b"\0" * 9)):
+            mu = self.play_machine([]) if play else self.machine()[0]
+            mu.mem_write(0xB412CB, bytes([multi]))
+            mu.mem_write(0x6DFF8D, bytes([already]))
+            mu.mem_write(0x6E62F4, b"\0" * 16)
+            self.run_entry(mu, "load", 0x4D731E)
+            self.assertEqual(mu.mem_read(0x6DFF8D, 1)[0], want_flag, (play, multi, already))
+            self.assertEqual(mu.reg_read(UC_X86_REG_EAX), want_flag)            # 원래 movsx eax, [0x6DFF8D]
+            self.assertEqual(bytes(mu.mem_read(0x6E62F4, 9)), want_name)
+
+    def test_upgrade_from_v0_9055_install(self):
+        exe = Path(__file__).resolve().parent / "game_backup" / "Rhakmu.exe"
+        if not exe.is_file():
+            self.skipTest("game_backup/Rhakmu.exe 없음")
+        import subprocess, types
+        src = subprocess.run(["git", "show", "0ae10e0:replay_record_patch.py"], capture_output=True,
+                             cwd=Path(__file__).resolve().parent).stdout.decode("utf-8")
+        if not src:
+            self.skipTest("git 기록 없음")
+        old = types.ModuleType("rrp_9055")
+        exec(compile(src, "rrp_9055", "exec"), old.__dict__)
+        import minimap_patch as mm
+        o = mm.build(exe.read_bytes(), False, True, False, False, False)      # 단축키 없음, 기록 없음
+        for save in (False, True):
+            for play in (False, True):
+                installed = old.apply(o, True, save, play)
+                self.assertTrue(rrp.state(installed))
+                self.assertFalse(rrp.plays(installed))
+                self.assertEqual(rrp.strip(installed), o)
+                new = rrp.apply(installed, True, save, play)
+                self.assertEqual(new, rrp.apply(o, True, save, play))
+                self.assertEqual(rrp.plays(new), play)
+
     def test_recorded_match_plays_back_identically(self):
         """기록(가짜 게임) -> 리플레이 파일 -> .rkp -> 실제 재생 코드: 같은 명령이 같은 프레임·순서로 실행."""
         t = RecordAndModelTests("test_record_load_and_stats")
