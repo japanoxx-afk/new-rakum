@@ -10,7 +10,7 @@
   플레이어  0x7F7908 + p*0x11E0 (RhakMU.ERR 기록 0x440199)
             +0 인구 최대, +2 인구 현재 (상단 '%d/%d', 0x46444B)
             +5 종족, +6 참가 표시, +8 계정 이름
-            +0x864, +0x868, +0x870, +0x86C 상단 자원 4칸 (0x464216 ...; 치트 0x404ACC)
+            +0x864 금, +0x868 물, +0x870 카르마, +0x86C 글로리 (상단 자원 4칸) (0x464216 ...; 치트 0x404ACC)
             +0x1F8 / +0x39C 종류별 카운트 210칸, +0x880/+0x890, +0x50/+0x52, +0x540/+0x544 (결과 화면 0x41B499)
   맵 파일   0x6E10F6 (문자열)      경기 시간(초) 0x6E669C
   내 번호   0xB412CC               유닛 이름 0x5038EC + 종류*0x80 (정보 창 0x4587EE)
@@ -24,11 +24,13 @@ from dataclasses import dataclass, field
 UNITS, UNIT_SIZE, UNIT_COUNT = 0x775A38, 0x138, 0x6A6
 PLAYERS, PLAYER_SIZE, PLAYER_COUNT = 0x7F7908, 0x11E0, 8
 MAP_NAME, PLAY_SECONDS, LOCAL_PLAYER = 0x6E10F6, 0x6E669C, 0xB412CC
+FRAME, SEED, GAME_OPTIONS = 0xB412B4, 0x6E1A78, 0x6DFF88   # 프레임 번호, 대전 난수 시드(srand), 대전 설정 바이트
 UNIT_NAMES, NAME_SIZE, TYPE_COUNT = 0x5038EC, 0x80, 0xD2
 TYPE_INFO, TYPE_INFO_STRIDE = 0x4FCD88, 0x1C
 TYPE_STATS, TYPE_STATS_STRIDE = 0x4FE474, 0x14
 RACES = ("무휼", "아렌", "마르두크")
-RESOURCE_NAMES = ("금", "물", "자원3", "자원4")   # 상단 표시 순서
+RESOURCE_NAMES = ("금", "물", "카르마", "글로리")   # 상단 표시 순서 (다섯째 칸은 인구)
+# 카르마: 유닛이 죽을 때 쌓임, 글로리: 건물 건설·유닛 생산 때 쌓임
 
 F_BUILDING, F_INSIDE, F_IN_PRODUCTION = 1, 2, 4
 
@@ -185,6 +187,15 @@ class GameReader:
 
     def units(self) -> list[Unit]:
         return parse_units(self.mem.read(UNITS, UNIT_SIZE * UNIT_COUNT))
+
+    def frame(self) -> int:
+        return self.u32(FRAME)
+
+    def seed(self) -> int:
+        return self.u32(SEED)
+
+    def options(self) -> bytes:
+        return self.mem.read(GAME_OPTIONS, 8)
 
     def local_player(self) -> int:
         return self.mem.read(LOCAL_PLAYER, 1)[0]

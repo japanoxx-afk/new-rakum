@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 RACES = ("무휼", "아렌", "마르두크")
-RESOURCE_NAMES = ("금", "물", "자원3", "자원4")
+RESOURCE_NAMES = ("금", "물", "카르마", "글로리")
 COLORS = ("#e02020", "#2060ff", "#ff9020", "#40c0c0", "#f0f0f0", "#f0e020", "#a040e0", "#20c040")
 F_BUILDING, F_INSIDE = 1, 2
 

@@ -37,6 +37,7 @@ import rally_gold_patch
 import hotkey_patch
 import selection_patch
 import game_version
+import replay_record_patch
 import replay_recorder
 import replay_model
 import game_address_patch
@@ -52,7 +53,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9051"
+APP_VERSION = "0.9053"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1099,7 +1100,7 @@ class App(tk.Tk):
             try:
                 raw_game = pathlib.Path(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE).read_bytes()
                 hotkeys_state = hotkey_patch.state(raw_game)
-                select24_state = selection_patch.state(hotkey_patch.strip(raw_game))
+                select24_state = selection_patch.state(replay_record_patch.strip(hotkey_patch.strip(raw_game)))
                 game_data = minimap_patch.underlying(raw_game)
                 patch_status = {'peer_address': peer_address_patch.state(game_data), 'sync_port': sync_port_patch.state(game_data),
                                 'peer_reply_8814': game_data[0xeb420:0xeb420+len(peer_address_patch.CODE)] == peer_address_patch.CODE,
@@ -1594,12 +1595,15 @@ class App(tk.Tk):
         # Build and validate the complete result in memory; one atomic replacement.
         hotkeys = bool(self.cfg.get('hotkeys', True))
         select24 = bool(self._select24_setting())
-        minimap_patch.prepare(exe, highres, self._rally_setting(), hotkeys, select24)
+        record = bool(self.cfg.get("replay_record", True))
+        minimap_patch.prepare(exe, highres, self._rally_setting(), hotkeys, select24, record)
         self.cfg['command_cadence_99ms'] = False
         installed = exe.read_bytes()
         if hotkey_patch.state(installed) != hotkeys:
             raise RuntimeError('단축키 확장 패치 검증 실패. 게임을 실행하지 않았습니다.')
-        if selection_patch.state(hotkey_patch.strip(installed)) != select24:
+        if replay_record_patch.state(hotkey_patch.strip(installed)) != record:
+            raise RuntimeError('리플레이 명령 기록 패치 검증 실패. 게임을 실행하지 않았습니다.')
+        if selection_patch.state(replay_record_patch.strip(hotkey_patch.strip(installed))) != select24:
             raise RuntimeError('선택 한도 24 패치 검증 실패. 게임을 실행하지 않았습니다.')
         verified = minimap_patch.underlying(installed)
         if rally_gold_patch.state(verified) != bool(self._rally_setting()):

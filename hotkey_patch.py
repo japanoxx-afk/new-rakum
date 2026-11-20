@@ -129,10 +129,9 @@ def state(data) -> bool:
 
 
 def _code_for(data) -> bytes:
-    """단축키 섹션 바로 아래 섹션이 선택 한도 24 섹션(.sel24)이면 CODE24."""
+    """선택 한도 24 섹션(.sel24)이 있으면 CODE24 (그 뒤에 리플레이 기록 섹션이 올 수 있음)."""
     nt, nsec, table, salign, falign, soi, secs = _layout(data)
-    below = secs[-2] if secs[-1][0] == SECTION_NAME else secs[-1]
-    return CODE24 if below[0] == b".sel24" + bytes(2) else CODE
+    return CODE24 if any(s[0] == b".sel24" + bytes(2) for s in secs) else CODE
 
 
 def strip(data) -> bytes:
