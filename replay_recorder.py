@@ -1,0 +1,214 @@
+"""경기 자동 기록: 런처가 켜져 있는 동안 게임 메모리를 읽어 리플레이 파일(.rkr)로 저장한다.
+
+파일 = gzip 으로 압축한 JSON 줄:
+  1줄: 머리 {"format": 1, "date", "map", "map_rkm"(base64), "players": [...], "types": {...}, "local"}
+  나머지: 장면 {"t": 경기 초, "k": [유닛 전체] | "c": [바뀐 유닛], "x": [사라진 번호],
+               "p": [[자원4, 인구 현재, 인구 최대] * 참가자], "b": [[건물, 만드는 종류, 진행]], "s": [카운터]}
+  유닛 = [번호, 종류, 소유, x, y, 체력, 표시]  (표시: 1 건물, 2 건물·금광 안, 4 생산 중)
+게임 시계가 멈추면(일시정지·로비) 기록하지 않고, 시계가 줄어들거나 맵이 바뀌면 새 파일을 연다.
+"""
+from __future__ import annotations
+
+import base64
+import datetime
+import gzip
+import json
+import os
+import re
+import threading
+import time
+from pathlib import Path
+
+import replay_memory as rm
+
+FORMAT = 1
+KEYFRAME_EVERY = 20.0
+COUNTERS_EVERY = 5.0
+POLL = 0.5
+
+
+def replay_dir(base_dir) -> Path:
+    d = Path(base_dir) / "replays"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _safe(s: str) -> str:
+    return re.sub(r'[\\/:*?"<>|\s]+', "_", s).strip("_")[:60] or "map"
+
+
+class MatchWriter:
+    """한 경기의 장면을 파일에 이어 쓴다."""
+
+    def __init__(self, path: Path, header: dict):
+        self.path = path
+        self.f = gzip.open(path, "wt", encoding="utf-8", compresslevel=6)
+        self.f.write(json.dumps(header, ensure_ascii=False, separators=(",", ":")) + "\n")
+        self.last_units: dict = {}
+        self.last_key = -1e9
+        self.last_counters = -1e9
+        self.frames = 0
+
+    def frame(self, t: float, units, players, active):
+        rows = {u.id: u.row() for u in units if not u.flags & rm.F_IN_PRODUCTION}
+        fr = {"t": round(t, 2)}
+        if t - self.last_key >= KEYFRAME_EVERY:
+            fr["k"] = list(rows.values())
+            self.last_key = t
+        else:
+            changed = [r for i, r in rows.items() if self.last_units.get(i) != r]
+            gone = [i for i in self.last_units if i not in rows]
+            if changed:
+                fr["c"] = changed
+            if gone:
+                fr["x"] = gone
+        self.last_units = rows
+        fr["p"] = [players[i].resources + list(players[i].pop) for i in active]
+        b = [[u.id, prod.type, round(max(0.0, min(1.0, u.progress if u.progress <= 1.5 else u.progress / 100)), 3)]
+             for u in units if u.producing for prod in [next((v for v in units if v.id == u.producing), None)] if prod]
+        if b:
+            fr["b"] = b
+        if t - self.last_counters >= COUNTERS_EVERY:
+            fr["s"] = [players[i].counters for i in active]
+            self.last_counters = t
+        self.f.write(json.dumps(fr, separators=(",", ":")) + "\n")
+        self.frames += 1
+
+    def close(self):
+        if self.f:
+            self.f.close()
+            self.f = None
+            if self.frames < 4:                     # 너무 짧은 기록(바로 나간 경기)은 남기지 않음
+                try:
+                    self.path.unlink()
+                except OSError:
+                    pass
+
+
+class Recorder:
+    """게임 프로세스를 지켜보며 경기마다 리플레이 파일을 만든다."""
+
+    def __init__(self, base_dir, game_dir_fn, open_memory=None, find_pid=None, clock=time.monotonic):
+        self.base_dir = base_dir
+        self.game_dir_fn = game_dir_fn
+        self.open_memory = open_memory or rm.ProcessMemory
+        self.find_pid = find_pid or rm.find_game_pid
+        self.clock = clock
+        self.mem = None
+        self.reader = None
+        self.writer: MatchWriter | None = None
+        self.last_seconds = -1
+        self.seconds_at = None                 # 게임 시계가 마지막으로 늘어난 때 (늘어나는 걸 봐야 기록 시작)
+        self.map = ""
+        self.active: list = []
+        self.status = "대기"
+        self._stop = threading.Event()
+        self.thread = None
+
+    # ---- 한 번 살펴보기 (테스트에서 직접 부름) ----
+    def poll(self):
+        if self.mem is None:
+            pid = self.find_pid()
+            if not pid:
+                self._finish("게임 꺼짐")
+                return
+            try:
+                self.mem = self.open_memory(pid)
+                self.reader = rm.GameReader(self.mem)
+            except OSError:
+                self.mem = None
+                return
+        try:
+            secs = self.reader.play_seconds()
+            mapname = self.reader.map_name()
+        except OSError:
+            self._drop()
+            return
+        now = self.clock()
+        if self.writer and (secs < self.last_seconds or (mapname and mapname != self.map)):
+            self._finish("새 경기")
+        if secs != self.last_seconds:
+            if secs > self.last_seconds >= 0:
+                self.seconds_at = now
+            self.last_seconds = secs
+        running = secs > 0 and self.seconds_at is not None and now - self.seconds_at < 2.0 and bool(mapname)
+        if not running:
+            return
+        try:
+            players = self.reader.players()
+            units = self.reader.units()
+        except OSError:
+            self._drop()
+            return
+        active = [p.index for p in players if p.active and p.name]
+        if not active:
+            return
+        if self.writer is None:
+            self._start(mapname, players, active)
+        t = secs + min(0.99, now - self.seconds_at)
+        self.writer.frame(t, units, players, self.active)
+        self.status = f"기록 중: {os.path.basename(self.map)} {int(t) // 60}:{int(t) % 60:02d}"
+
+    def _start(self, mapname, players, active):
+        self.map, self.active = mapname, active
+        rkm = b""
+        try:
+            gd = self.game_dir_fn()
+            p = Path(gd) / mapname.replace("\\", os.sep) if gd else None
+            if p and p.is_file():
+                rkm = p.read_bytes()
+        except OSError:
+            pass
+        try:
+            types = self.reader.type_table()
+            local = self.reader.local_player()
+        except OSError:
+            types, local = {}, -1
+        stamp = datetime.datetime.now()
+        header = {"format": FORMAT, "date": stamp.isoformat(timespec="seconds"), "map": mapname,
+                  "map_rkm": base64.b64encode(rkm).decode() if rkm else "",
+                  "players": [{"index": i, "name": players[i].name, "race": players[i].race} for i in active],
+                  "types": {str(k): v for k, v in types.items()}, "local": local}
+        name = f"{stamp:%Y%m%d_%H%M%S}_{_safe(Path(mapname.replace(chr(92), '/')).stem)}.rkr"
+        self.writer = MatchWriter(replay_dir(self.base_dir) / name, header)
+
+    def _finish(self, why=""):
+        if self.writer:
+            self.writer.close()
+            self.writer = None
+        self.last_seconds = -1
+        self.seconds_at = None
+        self.status = "대기" if not why else f"대기 ({why})"
+
+    def _drop(self):
+        self._finish("게임 꺼짐")
+        if self.mem:
+            try:
+                self.mem.close()
+            except OSError:
+                pass
+        self.mem = self.reader = None
+
+    # ---- 백그라운드 ----
+    def start(self):
+        if self.thread and self.thread.is_alive():
+            return
+        self._stop.clear()
+        self.thread = threading.Thread(target=self._run, name="replay-recorder", daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self._stop.set()
+        if self.thread:
+            self.thread.join(timeout=3)
+        self._drop()
+
+    def _run(self):
+        while not self._stop.is_set():
+            try:
+                self.poll()
+                if self.mem is not None and not self.mem.alive():
+                    self._drop()
+            except Exception:                      # 기록 실패가 런처를 멈추면 안 됨
+                self._drop()
+            self._stop.wait(POLL)
