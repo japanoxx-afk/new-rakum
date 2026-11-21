@@ -61,7 +61,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9017"
+SERVER_VERSION = "0.9018"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -532,11 +532,45 @@ class ServerState:
             self.rooms.remove(r)
             log.info(f"Room removed id={r.id} title={r.title!r} owner={r.owner}")
 
+    def prune_rooms(self):
+        """방장이 접속해 있지 않은 방은 지운다 (끊긴 접속 정리가 늦거나 방장 이름이 어긋난 경우)."""
+        online = {c.account for c in self.clients if c.account}
+        for r in list(self.rooms):
+            if r.owner not in online:
+                self.rooms.remove(r)
+                log.info(f"Room removed (owner not connected) id={r.id} title={r.title!r} owner={r.owner!r}")
+            else:
+                r.members = [m for m in r.members if m in online]
+
     def clients_in_room(self, room_title: str) -> List["ClientSession"]:
         return [c for c in self.clients if c.room_title == room_title]
 
 
 STATE = ServerState()
+
+
+# 끊긴 줄 모르는 접속 찾기 + 공유기(NAT)가 조용한 접속을 끊지 않게: TCP keepalive.
+# 게임은 로비에서 아무 것도 안 보내고 가만히 있을 수 있다. 그러면 중간 공유기가 몇 분 뒤 접속을 잊어
+# 플레이어가 튕기고, 게임을 강제로 끈 사람의 접속은 서버에 영원히 남아 빈 방이 로비에 보인다.
+# 60초 조용하면 10초 간격으로 확인 패킷(데이터 없음, 게임은 모름), 6번 무응답이면 끊긴 것으로 정리.
+KEEPALIVE_IDLE, KEEPALIVE_INTERVAL, KEEPALIVE_COUNT = 60, 10, 6
+
+
+def enable_keepalive(sock) -> bool:
+    if sock is None:
+        return False
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        if hasattr(socket, "TCP_KEEPIDLE"):            # Linux (NAS), 최근 Windows
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, KEEPALIVE_IDLE)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, KEEPALIVE_INTERVAL)
+            if hasattr(socket, "TCP_KEEPCNT"):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, KEEPALIVE_COUNT)
+        elif hasattr(socket, "SIO_KEEPALIVE_VALS"):    # 예전 Windows
+            sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, KEEPALIVE_IDLE * 1000, KEEPALIVE_INTERVAL * 1000))
+        return True
+    except (OSError, AttributeError, ValueError):
+        return False
 
 
 class ClientSession:
@@ -552,6 +586,10 @@ class ClientSession:
         self.game_version = 0          # handshake 0x01FF: Rhakmu.exe 1.000d -> 1003, older 1.000 -> 1000
         self.in_channel = False        # 채널 입장(0x07FF) 완료 → 로비 폼이 있어 로비 목록 메시지를 받아도 안전
         self._buf = b""
+        self.connected_at = _time.monotonic()
+        self.room_since = 0.0          # 방을 만들거나 들어간 때 (바로 직후의 로비 요청은 무시)
+        self.close_reason = "연결 종료(EOF)"
+        enable_keepalive(writer.get_extra_info("socket"))
 
     @property
     def peer(self) -> str:
@@ -595,9 +633,14 @@ class ClientSession:
                     break
                 self._buf += chunk
                 await self._process()
-        except (ConnectionResetError, asyncio.IncompleteReadError, BrokenPipeError):
-            pass
+        except (ConnectionResetError, asyncio.IncompleteReadError, BrokenPipeError) as e:
+            self.close_reason = type(e).__name__
+        except TimeoutError as e:                       # keepalive 무응답 (상대 PC/공유기가 사라짐)
+            self.close_reason = f"응답 없음(keepalive) {e}"
+        except OSError as e:
+            self.close_reason = f"{type(e).__name__} {e}"
         except Exception as e:
+            self.close_reason = f"오류 {e}"
             log.error(f"{self.peer}: {e}", exc_info=True)
         finally:
             self._cleanup()
@@ -616,7 +659,8 @@ class ClientSession:
                 if r.owner == self.account:
                     STATE.rooms.remove(r)
                     log.info(f"Room removed (disconnect) id={r.id} title={r.title!r}")
-        log.info(f"Disconnected: {self.peer} account={self.account!r}")
+        log.info(f"Disconnected: {self.peer} account={self.account!r} "
+                 f"after {int(_time.monotonic() - self.connected_at)}s reason={self.close_reason}")
         if self.account and self.in_channel and not any(c.account == self.account for c in STATE.clients):
             pkt = pack_pkt(P_CHAT, build_leave_payload(self.account))   # 로비 목록에서 지움 (type 5)
             for c in lobby_viewers(exclude=self):
@@ -681,6 +725,7 @@ class ClientSession:
         elif ptype == P_CHAN_SEL:
             # 채널은 하나뿐 — 어떤 이름이 와도 성공(0)으로 답하고 그 이름을 돌려준다.
             names = read_cstrings(payload[2:]) if len(payload) > 2 else []
+            self._back_in_lobby("channel join")
             self.send(P_CHAN_SEL, bytes([0]) + nul(names[0] if names else CHANNEL_NAME))
             if self.account:
                 # 로비 접속자 목록: 나에게 다른 사람 전원 → 마지막에 나 자신(클라가 내 정보 저장 후 '/status' 요청),
@@ -736,6 +781,8 @@ class ClientSession:
             self.send(P_GUILD_ACK2, b"")
 
         elif ptype == P_ROOM_LIST_REQ:
+            self._back_in_lobby("room list")
+            STATE.prune_rooms()
             self.send(P_ROOM_LIST_ACK, b"")
             for room in STATE.rooms:
                 owner_conn = next((c for c in STATE.clients if c.account == room.owner), None)
@@ -816,9 +863,9 @@ class ClientSession:
         strings = extract_ascii_strings(payload[8:] if len(payload) > 8 else b"")
         title = strings[0] if strings else self.account
         map_name = strings[1] if len(strings) > 1 else ""
-        owner = strings[2] if len(strings) > 2 else self.account
-        if not owner:
-            owner = self.account
+        # 방장 = 방을 만든 접속의 계정. (글자열 추출은 ASCII 만 읽어 한글 방 제목/계정이면 어긋나,
+        # 방장이 나가도 방이 지워지지 않았다)
+        owner = self.account or (strings[2] if len(strings) > 2 else "")
 
         max_players = 4
         if len(payload) >= 6:
@@ -842,6 +889,7 @@ class ClientSession:
         )
         STATE.rooms.append(room)
         self.room_title = title
+        self.room_since = _time.monotonic()
         log.info(f"Room created id={room.id} title={title!r} map={map_name!r} owner={owner} host={host_ip} maxP={max_players}")
 
         self.send(P_CREATE_ROOM, struct.pack("<I", 0))
@@ -919,6 +967,7 @@ class ClientSession:
             return
 
         self.room_title = room.title
+        self.room_since = _time.monotonic()
         self.in_game = False
         if self.account not in room.members and self.account != room.owner:
             room.members.append(self.account)
@@ -938,6 +987,16 @@ class ClientSession:
         # Do NOT send 0x10FF to the owner — the owner's client interprets it as a join
         # directive for itself and immediately leaves the room.
         await self._broadcast_member_list(room, exclude=None)
+
+    def _back_in_lobby(self, why: str):
+        """로비 폼만 보내는 요청(방 목록 0x0BFF, 채널 입장 0x07FF)이 왔다 = 방/게임에서 나와 로비에 있다.
+        게임이 끝난 뒤나 게임이 튕긴 뒤 방 나가기(0x11FF) 없이 로비로 돌아오면 서버에는 방이 그대로 남았다."""
+        if self.room_title and _time.monotonic() - self.room_since < 3:
+            return                     # 방 만들기/들어가기 직전에 눌린 로비 요청이 늦게 온 것
+        if self.room_title or self.in_game:
+            log.info(f"  {_kr(self.account)!r} is back in the lobby ({why}): leaving room {self.room_title!r}")
+            self._handle_leave_room()
+        self.in_game = False
 
     def _end_game(self):
         self.in_game = False

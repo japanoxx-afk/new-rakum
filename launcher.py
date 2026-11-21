@@ -42,6 +42,7 @@ import replay_recorder
 import replay_model
 import game_address_patch
 import arena_upload
+import cursor_guard
 try:  # 빌드 때 GitHub Secret ARENA_UPLOAD_TOKEN 으로 만들어지는 파일 (저장소에는 없음)
     from arena_secret import ARENA_TOKEN
 except ImportError:
@@ -58,7 +59,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9063"
+APP_VERSION = "0.9064"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -739,6 +740,12 @@ class App(tk.Tk):
             self.recorder.start()
         if self.cfg.get("arena_upload", True):
             self.arena.start()
+        try:
+            confine = self.winmode.read_settings().get("confine", True)
+        except (OSError, UnicodeError, ValueError):
+            confine = True
+        self.cursor_guard = cursor_guard.CursorGuard(enabled=confine)   # 전체화면 마우스 가두기
+        self.cursor_guard.start()
 
 
         self._refresh_info_bar()
@@ -1210,6 +1217,10 @@ class App(tk.Tk):
                 messagebox.showerror('서버', msg)
                 return
         self.map_editor.stop()
+        try:
+            self.cursor_guard.stop()
+        except Exception:
+            pass
         try:
             self.recorder.stop()
         except Exception:
@@ -2240,7 +2251,7 @@ class App(tk.Tk):
         ttk.Combobox(render_row, textvariable=self.renderer_var, values=RENDERERS,
                      state='readonly', width=14).pack(side='left', padx=6)
         self.confine_var = tk.BooleanVar(value=settings.get('confine', True))
-        ttk.Checkbutton(mode_frame, text='마우스 가두기 (cnc-ddraw 설정)',
+        ttk.Checkbutton(mode_frame, text='마우스 가두기 (창모드: cnc-ddraw, 전체화면: 런처가 모니터 안에 가둠)',
                         variable=self.confine_var).pack(anchor='w')
 
         shader_frame = ttk.LabelFrame(frame, text="업스케일 셰이더 (화질)", padding=12)
@@ -2398,6 +2409,7 @@ class App(tk.Tk):
             renderer=self.renderer_var.get(), confine=self.confine_var.get(),
         )
         if ok:
+            self.cursor_guard.enabled = bool(self.confine_var.get())
             messagebox.showinfo("설정", msg)
         else:
             messagebox.showerror("오류", msg)
