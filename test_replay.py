@@ -616,8 +616,8 @@ class InGameHookTests(unittest.TestCase):
         self.assertEqual(bytes(mu.mem_read(0xB40FE8, 20)), bytes(want))
         self.assertEqual(struct.unpack("<I", mu.mem_read(0x6E1A78, 4))[0], 0x2222)
         self.assertEqual(struct.unpack("<I", mu.mem_read(rrp.FRAME, 4))[0], 100)
-        self.assertEqual(struct.unpack("<H", mu.mem_read(0xB412C8, 2))[0], 0x9)          # 지도 공개 비트
-        self.assertIn(("reveal", 0x915698), self.calls)
+        self.assertEqual(struct.unpack("<H", mu.mem_read(0xB412C8, 2))[0], 0x8)          # 지도 공개 안 함 (시야 -> 자동 공격이 달라짐)
+        self.assertNotIn(("reveal", 0x915698), self.calls)
         self.assertEqual([c for c in self.calls if c[0] == "vision"], [])        # 살아 있는 유닛 없음
         self.assertEqual(self.saved, [])                                                # 재생 땐 저장 안 함
         self.assertEqual(self.flags(mu)["diverged"], 0)
@@ -918,7 +918,7 @@ class InGameHookTests(unittest.TestCase):
         import subprocess, types
         import minimap_patch as mm
         o = mm.build(exe.read_bytes(), False, True, False, False, False)      # 단축키 없음, 기록 없음
-        for commit in ("0ae10e0", "5b6a921", "d723ca0", "e790797", "4467186", "9f4f6ff"):  # v0.9055 ~ v0.9058, v0.9064, v0.9072
+        for commit in ("0ae10e0", "5b6a921", "d723ca0", "e790797", "4467186", "9f4f6ff", "5a04ac7"):  # v0.9055 ~ v0.9058, v0.9064, v0.9072, v0.9075
             src = subprocess.run(["git", "show", commit + ":replay_record_patch.py"], capture_output=True,
                                  cwd=Path(__file__).resolve().parent).stdout.decode("utf-8")
             if not src:
@@ -970,6 +970,23 @@ class InGameHookTests(unittest.TestCase):
         self.assertIn("시작 기록", M.ingame_data(rp))
         rp.frames[0]["start"] = {"frame": 0, "rand": 0, "rng": "00" * 20, "seed": 0, "local": 0}
         self.assertIn("시작 저장", M.ingame_data(rp))
+
+    def test_replay_map_is_installed_when_missing(self):
+        import base64, tempfile
+        rkm = b"J2M\0map-bytes"
+        rp = M.Replay(Path("x"), {"map": "DATA\\MAPS\\[4]New.rkm", "map_rkm": base64.b64encode(rkm).decode()})
+        with tempfile.TemporaryDirectory() as d:
+            state, path = M.map_state(rp, d)
+            self.assertEqual(state, "missing")
+            M.install_map(rp, path)
+            self.assertEqual((Path(d) / "DATA" / "MAPS" / "[4]New.rkm").read_bytes(), rkm)
+            self.assertEqual(M.map_state(rp, d)[0], "ok")
+            path.write_bytes(b"other")
+            self.assertEqual(M.map_state(rp, d)[0], "differs")
+            M.install_map(rp, path)                                   # 다른 맵은 .bak 으로 보관
+            self.assertEqual(path.read_bytes(), rkm)
+            self.assertEqual(path.with_name(path.name + ".bak").read_bytes(), b"other")
+        self.assertEqual(M.map_state(M.Replay(Path("x"), {}), "."), ("unknown", None))
 
     def test_rkp_layout(self):
         st = {"frame": 7, "rand": 1, "rng": "00" * 20, "seed": 2}

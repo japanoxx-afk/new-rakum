@@ -65,7 +65,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9075"
+APP_VERSION = "0.9076"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1966,6 +1966,19 @@ class App(tk.Tk):
                 self._play_replay()
             return
         game_dir = pathlib.Path(self.cfg.get("game_dir", DEFAULT_GAME_DIR))
+        # 맵이 없으면 게임이 '맵 없다' 창을 띄우고 끝난다 -> 리플레이에 든 맵을 넣는다
+        state, map_path = replay_model.map_state(rp, game_dir)
+        try:
+            if state == "missing":
+                replay_model.install_map(rp, map_path)
+            elif state == "differs" and messagebox.askyesno(
+                    "리플레이", f"게임 폴더의 맵이 이 경기의 맵과 다릅니다.\n{map_path.name}\n\n"
+                    "이 경기의 맵으로 바꿔서 재생할까요? (지금 맵은 .bak 으로 보관합니다)\n"
+                    "아니오를 고르면 지금 맵으로 재생하며, 경기가 원래와 달라질 수 있습니다."):
+                replay_model.install_map(rp, map_path)
+        except OSError as e:
+            messagebox.showerror("리플레이", f"맵을 넣지 못했습니다: {e}")
+            return
         try:
             local = data["start"].get("local", 0)
             name = next((p["name"] for p in rp.players if p["index"] == local), "")
