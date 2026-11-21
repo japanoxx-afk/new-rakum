@@ -36,6 +36,57 @@ class EditorBuildTests(unittest.TestCase):
         self.assertIn('thin && tt === T ? [pickThin(m, other, T)] : other', page)
 
 
+def _obj_meta(tileset):
+    s = (HERE / 'map_editor_web' / 'editor' / 'tiles' / (tileset + '_OBJ.js')).read_text(encoding='ascii')
+    a = s.index('[', s.index('"obj"'))
+    return json.loads(s[a:s.index(']', a) + 1])
+
+
+class ObjectPlacementTests(unittest.TestCase):
+    """에디터의 자원·장식물·시작 위치가 게임과 같은 칸에 그려지는지.
+
+    게임: 지형 레코드 (col,row) 는 칸 X..X+7, Y..Y+3 (X = col*8 + (row&1)*4, Y = row*2) 을 덮고 (0040B6F0),
+    오브젝트는 칸 (x,y) 의 픽셀 (x*32, y*32) 에 BLD dx + S16 프레임 left 를 더해 그린다 (00439E60).
+    에디터는 지형 다이아몬드 중심을 (X*32, Y*32) 에 그리므로 오브젝트 칸은 (-128, -64) 만큼 옮겨 그려야 한다.
+    """
+
+    def page(self):
+        return (HERE / 'map_editor_web' / 'editor' / mew.EDITOR_PAGE).read_text(encoding='utf-8')
+
+    def test_object_cells_are_shifted_to_the_game_grid(self):
+        page = self.page()
+        self.assertIn('const CELL_OX = -128, CELL_OY = -64;', page)
+        self.assertIn('tileAtWorld(m, cellX(cx) + 16, cellY(cy) + 16)', page)      # 물/절벽·본진 검사도 게임 칸 기준
+        self.assertIn("o.kind === R.KIND.SUB ? [o.x * 32, o.y * 32] : [R.cellX(o.x), R.cellY(o.y)]", page)
+        self.assertIn('return R.worldCell(wx, wy);', page)                          # 클릭한 칸 = 저장되는 칸
+        self.assertIn('const px = R.cellX(p.x) + 16, py = R.cellY(p.y) + 16', page)  # 시작 위치
+        for old in ('o.x * 32 + e.ox', 'p.x * 32 + 16', 'Math.floor(w.x / 32)', 'strokeRect(128, 128,'):
+            self.assertNotIn(old, page)
+
+    def test_resource_sprite_offsets_include_s16_frame_origin(self):
+        # (BLD dx + 프레임 left, BLD dy + 프레임 top) — 우물, 금광. 예전 값은 BLD dx/dy 만 사용.
+        expected = {'EAST': [(23, 20), (-30, -12)], 'WEST': [(23, 19), (-29, -14)],
+                    'SAVAGE': [(22, 21), (-29, -12)], 'DUNGEON': [(20, 13), (-28, -13)]}
+        for name, want in expected.items():
+            meta = _obj_meta(name)
+            self.assertEqual([(e['ox'], e['oy']) for e in meta[-2:]], want, name)
+            self.assertEqual([(e['fw'], e['fh']) for e in meta[-2:]], [(3, 2), (3, 1)], name)
+
+    def test_sprite_offsets_match_installed_game(self):
+        data = Path(r'C:\Program Files (x86)\TriggerSoft\RhakMu\Data')
+        if not (data / 'Data000.FDB').exists():
+            self.skipTest('게임 설치본 없음')
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('obj_offsets', HERE / 'map_editor_web' / 'tools' / 'obj_offsets.py')
+        tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tool)
+        for theme, name in enumerate(tool.SETS):
+            game = tool.game_offsets(data, theme)
+            meta = _obj_meta(name)
+            self.assertEqual([(e['ox'], e['oy'], e['w'], e['h']) for e in meta],
+                             [(g['ox'], g['oy'], g['w'], g['h']) for g in game], name)
+
+
 class EditorServerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

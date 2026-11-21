@@ -11,7 +11,13 @@
 | `editor/server.ps1`, `맵에디터 실행.bat` | 런처 없이 쓸 때: `editor` 폴더를 게임 폴더 안 `MapEditor` 로 복사 후 bat 실행 |
 | `src/` | 에디터 소스 (`core.js` 맵 포맷·지형, `app.js` UI, `index.html`). `python map_editor_web/src/build.py` 로 빌드 |
 | `mod/flip_ramp_tiles.tar.xz` | 상하대칭 언덕 입구 타일 모드 (`Data\tile\*.jtl`, `*_Bridge.brg`, 4개 맵 속성) |
-| `tools/` | 모드 생성 스크립트 (`flipmod.py`: 뒤집은 타일·BRG 항목 추가, `ramp9/`: 입구 그림 다듬기) |
+| `tools/` | 모드 생성 스크립트 (`flipmod.py`: 뒤집은 타일·BRG 항목 추가, `ramp9/`: 입구 그림 다듬기), `obj_offsets.py`: 장식물·자원 스프라이트 오프셋 재계산 |
+
+## 좌표 (자원·장식물·시작 위치)
+- 게임은 지형 레코드 (col,row) 로 칸 X..X+7, Y..Y+3 을 덮는다 (X = col*8 + (row&1)*4, Y = row*2, `0x40b6f0`). 다이아몬드 중심은 칸 (X+4, Y+2).
+- 오브젝트·시작 위치는 칸 (x,y) 의 픽셀 (x*32, y*32) 에 놓이고 (`0x439e60`), 그림은 BLD dx + S16 프레임 left/top 만큼 옮겨 그린다.
+- 에디터는 지형 다이아몬드 중심을 월드 (X*32, Y*32) 에 그리므로 오브젝트 칸 (x,y) 은 월드 (x*32-128, y*32-64) 에 그린다 (`core.js` `cellX/cellY/worldCell`).
+  파일의 좌표 값은 바꾸지 않는다. 언덕 입구·다리(kind 3)는 원본 맵에서 배운 템플릿 기준이라 따로 옮기지 않는다.
 
 ## 상하대칭 언덕 입구 모드
 - 게임은 언덕 입구를 BRG 표에 따라 맵 타일을 바꿔 끼워 그린다 (`0x40bdd0`, 타일 = BRG base + piece).
