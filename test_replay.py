@@ -824,13 +824,33 @@ class InGameHookTests(unittest.TestCase):
                 self.assertEqual(self.calls[0], ("winrandom", 0xB40FE8, 0, 0x7FFF), frame)   # 원래 0x447AF0 의 rand 1회
                 self.assertNotIn(("send",), self.calls)                   # 보내기는 안 함 (받는 쪽이 없어 멈춤)
                 got = [c[1:] for c in self.calls if c[0] == "dispatch"]
-                want = {100: [], 105: [(0, b1), (1, b2)], 110: []}[frame]   # 어긋난 뒤 명령은 안 넣음 (엉뚱한 유닛 -> 크래시)
+                want = {100: [], 105: [(0, b1), (1, b2)], 110: [(0, b3)]}[frame]   # 어긋난 뒤에도 명령은 계속 넣음
                 self.assertEqual(got, want, frame)
         f = self.flags(mu)
-        self.assertEqual(f["fed"], 2)
+        self.assertEqual(f["fed"], 3)
         self.assertEqual(f["diverged"], 110)                              # 첫 어긋남
         self.assertEqual(f["actual"], (0x11111111, 0, 0))                   # 그때 실제 rand·해시·유닛 수
         self.assertEqual(struct.unpack("<I", mu.mem_read(0xB412B8, 4))[0], 16)   # 2 키 -> 2배속
+
+    def test_play_after_divergence_selects_only_own_units(self):
+        """어긋난 뒤: 선택 명령(0x4002)에서 그 플레이어 것이 아닌 유닛 번호는 0(빈 칸)으로 바꿔 남의 유닛을 움직이지 않는다."""
+        chk_bad = struct.pack(rrp.CHECK_FMT, 105, 0x99999999, 0, 0, 0)
+        sel = struct.pack("<HHB4H", 0x4002, 13, 4, 19, 7, 44, 8)          # 플레이어 1: 19, 7, 44, 8 선택
+        move = b"\x05\x40\x0c\x00" + bytes(8)                              # 이어지는 다른 명령은 그대로
+        recs = [(105, rrp.P_CHECK, chk_bad), (110, 1, sel + move), (115, 1, sel)]
+        mu = self.play_machine(recs)
+        owners = {19: 1, 44: 1, 7: 0, 8: 2}
+        for uid, owner in owners.items():
+            mu.mem_write(0x775A38 + uid * 0x138 + 0x10, bytes([owner]))
+        self.run_entry(mu, "start", 0x4D7559)
+        got = []
+        for frame in (105, 110):
+            mu.mem_write(rrp.FRAME, struct.pack("<I", frame))
+            self.calls.clear()
+            self.run_entry(mu, "send", 0x4D79FB)
+            got += [c[1:] for c in self.calls if c[0] == "dispatch"]
+        self.assertEqual(self.flags(mu)["diverged"], 105)
+        self.assertEqual(got, [(1, struct.pack("<HHB4H", 0x4002, 13, 4, 19, 0, 44, 0) + move)])
 
     def test_play_turn_hook_skips_live_dispatch(self):
         from unicorn.x86_const import UC_X86_REG_EAX
@@ -894,7 +914,7 @@ class InGameHookTests(unittest.TestCase):
         import subprocess, types
         import minimap_patch as mm
         o = mm.build(exe.read_bytes(), False, True, False, False, False)      # 단축키 없음, 기록 없음
-        for commit in ("0ae10e0", "5b6a921", "d723ca0", "e790797", "4467186"):  # v0.9055 ~ v0.9058, v0.9064
+        for commit in ("0ae10e0", "5b6a921", "d723ca0", "e790797", "4467186", "9f4f6ff"):  # v0.9055 ~ v0.9058, v0.9064, v0.9072
             src = subprocess.run(["git", "show", commit + ":replay_record_patch.py"], capture_output=True,
                                  cwd=Path(__file__).resolve().parent).stdout.decode("utf-8")
             if not src:
