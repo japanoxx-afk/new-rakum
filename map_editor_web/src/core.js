@@ -512,13 +512,16 @@
   function subSpacingOK(m, x, y, ignore) {
     return !m.objects.some(o => o !== ignore && o.kind === 3 && Math.max(Math.abs(o.x - x), Math.abs(o.y - y)) < SUB_SPACING);
   }
+  // Anchor parity per object: template vertices must land on tile corners (u+v odd). In the shipped maps the
+  // left bridge (0) and waterfalls (6, 7) sit on even anchors, everything else on odd ones.
+  const subParity = id => { const [dx, dy] = SUB_TPL[id][0]; return 1 - ((dx / 128 + dy / 64) & 1); };
   // best lattice-aligned anchor near the cursor (cursor = sprite centre). Returns {x,y,bad,near} in cells or null.
   function findSubAnchor(m, id, wx, wy, ignore) {
-    const [w, h] = SUB_SIZE[id], cx = wx - w / 2, cy = wy - h / 2;
+    const [w, h] = SUB_SIZE[id], cx = wx - w / 2, cy = wy - h / 2, par = subParity(id);
     let best = null;
     for (let du = -3; du <= 3; du++) for (let dv = -4; dv <= 4; dv++) {
       const u = Math.round(cx / 128) + du, v = Math.round(cy / 64) + dv;
-      if (((u + v) & 1) === 0) continue;
+      if (((u + v) & 1) !== par) continue;
       const ax = u * 128, ay = v * 64; if (ax < 0 || ay < 0) continue;
       const bad = subMismatch(m, id, ax, ay); if (bad > SUB_TOL[id]) continue;
       const x = ax / 32, y = ay / 32, d = Math.hypot(ax - cx, (ay - cy) * 2);
@@ -527,6 +530,108 @@
       if (!best || score < best.score) best = { x, y, bad, near, score };
     }
     return best;
+  }
+
+  // ---- one-click bridges (0 왼편, 1 오른편)
+  // A shipped bridge crosses a water channel two vertices wide with ground banks on both sides (SUB_TPL, all 40
+  // bridges of the shipped maps match it within SUB_TOL). The game itself only swaps the BRG tiles in (0040BDD0),
+  // so the bridge length is fixed. planBridge picks the anchor near the click, forces the template's water/ground
+  // and, when the river is wider than the bridge, fills ground outward from each bank until the existing shore.
+  const BRIDGE_MAX_RUN = 12;   // vertex rows of new ground per bank (about 12 tiles)
+  const BRIDGE_GROUND = 1;     // 황토/땅: the only ground brush that may touch water (MID)
+  function bridgeShape(m, id, ax, ay) {
+    const water = [], ground = [];
+    for (const [dx, dy, c] of SUB_TPL[id]) (c === 0 ? water : ground).push(toAB((ax + dx) / 128, (ay + dy) / 64));
+    // axis: the banks lie on either side of the channel; id 0 crosses along B, id 1 along A
+    const ax2 = id === 0 ? 1 : 0, mid = water.reduce((s, p) => s + p[ax2], 0) / water.length;
+    const banks = [ground.filter(p => p[ax2] < mid), ground.filter(p => p[ax2] > mid)];
+    return { water, ground, axis: ax2, banks };
+  }
+  function planBridgeAt(m, id, ax, ay) {
+    const S = bridgeShape(m, id, ax, ay), set = new Map(), key = (A, B) => A + ',' + B;
+    const cls = (A, B) => { const [u, v] = fromAB(A, B), t = getV(m, u, v); return t < 0 ? -1 : SUB_CLASS[t]; };
+    const want = (A, B, T) => { const [u, v] = fromAB(A, B), t = getV(m, u, v); if (t !== T) set.set(key(A, B), [A, B, T]); };
+    let wet = 0;
+    for (const [A, B] of S.water) {
+      const c = cls(A, B); if (c < 0) return { error: '맵 가장자리라 다리를 놓을 수 없습니다' };
+      if (c >= 2) return { error: '언덕·절벽·고지대 물에는 다리를 놓을 수 없습니다' };
+      if (c === 0) wet++; want(A, B, 0);
+    }
+    if (wet * 2 < S.water.length) return { error: '다리는 물 위를 클릭해 놓으세요' };
+    for (const [A, B] of S.ground) {
+      const c = cls(A, B); if (c < 0) return { error: '맵 가장자리라 다리를 놓을 수 없습니다' };
+      if (c >= 2) return { error: '다리 끝이 언덕·절벽에 걸립니다' };
+      if (c !== 1) want(A, B, BRIDGE_GROUND);
+    }
+    // causeways: walk outward from each bank along the axis, one vertex row at a time, until the shore
+    const run = [];
+    for (let side = 0; side < 2; side++) {
+      const bank = S.banks[side], dir = side ? 1 : -1, a = S.axis, o = 1 - a;
+      const edge = side ? Math.max(...bank.map(p => p[a])) : Math.min(...bank.map(p => p[a]));
+      const across = [...new Set(bank.map(p => p[o]))];
+      let n = 0, reached = false;
+      for (let step = 1; step <= BRIDGE_MAX_RUN + 1 && !reached; step++) {
+        const row = across.map(q => { const p = []; p[a] = edge + dir * step; p[o] = q; return p; });
+        const cs = row.map(([A, B]) => cls(A, B));
+        if (cs.some(c => c < 0)) return { error: '다리 끝에서 땅까지 가기 전에 맵 가장자리에 닿습니다' };
+        if (cs.some(c => c >= 2)) return { error: '다리 끝과 땅 사이에 언덕·절벽·고지대 물이 있습니다' };
+        const dry = cs.filter(c => c === 1).length;
+        if (dry === row.length) { reached = true; break; }
+        if (step > BRIDGE_MAX_RUN) break;
+        for (const [A, B] of row) if (cls(A, B) !== 1) want(A, B, BRIDGE_GROUND);
+        n = step; if (dry) reached = true;
+      }
+      if (!reached) return { error: '강이 너무 넓습니다. 다리 양쪽 ' + BRIDGE_MAX_RUN + '칸 안에 땅이 있어야 합니다' };
+      run.push(n);
+    }
+    return { changes: [...set.values()], run };
+  }
+  // anchor + terrain plan for a bridge click: {x, y, id, changes:[[A,B,T]], run:[a,b]} or {error}
+  function planBridge(m, id, wx, wy, ignore) {
+    const [w, h] = SUB_SIZE[id], cx = wx - w / 2, cy = wy - h / 2, par = subParity(id);
+    // the corner nearest the click must be water (otherwise the plan would dig a channel through land)
+    let cu = 0, cv = 0, cd = 1e9;
+    for (let u = Math.floor(wx / 128); u <= Math.floor(wx / 128) + 1; u++) for (let v = Math.floor(wy / 64); v <= Math.floor(wy / 64) + 1; v++) {
+      if (!((u + v) & 1)) continue; const d = Math.abs(wx - u * 128) / 128 + Math.abs(wy - v * 64) / 64; if (d < cd) { cd = d; cu = u; cv = v; }
+    }
+    const t = getV(m, cu, cv); if (t < 0 || SUB_CLASS[t] !== 0) return { error: '다리는 물 위를 클릭해 놓으세요' };
+    let best = null, err = null, near = false;
+    for (let du = -3; du <= 3; du++) for (let dv = -4; dv <= 4; dv++) {
+      const u = Math.round(cx / 128) + du, v = Math.round(cy / 64) + dv;
+      if (((u + v) & 1) !== par) continue;
+      const ax = u * 128, ay = v * 64; if (ax < 0 || ay < 0) continue;
+      const x = ax / 32, y = ay / 32;
+      if (!subSpacingOK(m, x, y, ignore)) { near = true; continue; }
+      const p = planBridgeAt(m, id, ax, ay);
+      if (p.error) { if (!err) err = p.error; continue; }
+      const score = Math.hypot(ax - cx, (ay - cy) * 2) + p.changes.length * 40;
+      if (!best || score < best.score) best = { x, y, id, changes: p.changes, run: p.run, score };
+    }
+    if (best) return best;
+    if (near && !err) return { error: '다른 언덕 입구·다리와 너무 가깝습니다 (' + SUB_SPACING + '칸 이상 떨어뜨리세요)' };
+    return { error: err || '다리는 물 위를 클릭해 놓으세요' };
+  }
+  // write a bridge plan into the vertex model. Returns changed vertices [[index, before]] (callers retile).
+  function applyBridgePlan(m, plan) {
+    const fixed = new Set(), queue = [], ch = [], key = (A, B) => A + ',' + B;
+    for (const [A, B, T] of plan.changes) {
+      const [u, v] = fromAB(A, B), i = vIndex(m, u, v); if (i < 0) continue;
+      ch.push([i, m.vert[i]]); m.vert[i] = T;
+    }
+    // keep the whole template fixed while neighbours get transition brushes
+    for (const [dx, dy] of SUB_TPL[plan.id]) { const [A, B] = toAB((plan.x * 32 + dx) / 128, (plan.y * 32 + dy) / 64); fixed.add(key(A, B)); queue.push([A, B]); }
+    for (const [A, B] of plan.changes) { if (!fixed.has(key(A, B))) { fixed.add(key(A, B)); queue.push([A, B]); } }
+    let head = 0;
+    while (head < queue.length && head < 200000) {
+      const [A, B] = queue[head++], [pu, pv] = fromAB(A, B), tp = getV(m, pu, pv);
+      for (let dA = -1; dA <= 1; dA++) for (let dB = -1; dB <= 1; dB++) {
+        const nA = A + dA, nB = B + dB, k = key(nA, nB); if (fixed.has(k)) continue;
+        const [nu, nv] = fromAB(nA, nB), ni = vIndex(m, nu, nv); if (ni < 0) continue;
+        const tn = m.vert[ni]; if (compat(tp, tn)) continue;
+        ch.push([ni, tn]); m.vert[ni] = MID[tp][tn]; fixed.add(k); queue.push([nA, nB]);
+      }
+    }
+    return ch;
   }
   // choose a ramp/hill object for a click near a cliff: returns {id, msg} or {error}
   function suggestRamp(m, wx, wy) {
@@ -604,7 +709,7 @@
     return { rgba: o, avg: [sr / p | 0, sg / p | 0, sb / p | 0] };
   }
 
-  G.RKM = { applySubTerrain,
+  G.RKM = { applySubTerrain, planBridge, applyBridgePlan, BRIDGE_MAX_RUN,
     TRANS, MID, EDGE, CORNER, DIAG, TILESETS, SUBTERRAIN, RACES, COLORS, KIND, TILE_DEF,
     decorList, resourceIds, tilesFor, cornersOf, recordFor, compat,
     parseRKM, serializeRKM, newMap, initVerts, getV, setV, vIndex, tileCorners, tilesOfVertex,
