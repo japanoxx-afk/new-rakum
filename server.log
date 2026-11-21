@@ -1,0 +1,68 @@
+2026-11-21 12:07:45 [INFO] Server IP detected: 26.189.72.126
+2026-11-21 12:07:53 [INFO]   Channel join 'seo': lobby list 1 users
+2026-11-21 12:07:53 [INFO]   Channel join 'nyai': lobby list 1 users
+2026-11-21 12:07:53 [INFO]   Channel join 'seo': lobby list 2 users
+2026-11-21 12:07:53 [INFO]   Channel list -> 1 channel, 2 users
+2026-11-21 12:07:53 [INFO]   Channel join 'seo': lobby list 1 users
+2026-11-21 12:07:53 [INFO]   Channel join 'gamer': lobby list 2 users
+2026-11-21 12:07:53 [INFO]   Channel join 'nyai': lobby list 3 users
+2026-11-21 12:07:53 [INFO] Disconnected: 26.0.0.2:1234 account='nyai'
+2026-11-21 12:07:53 [INFO]   Channel join 'seo': lobby list 1 users
+2026-11-21 12:07:53 [INFO]   Channel join 'nyai': lobby list 2 users
+2026-11-21 12:07:53 [INFO]   Channel join 'nyai': lobby list 2 users
+2026-11-21 12:07:53 [INFO]   Channel join 'seo': lobby list 1 users
+2026-11-21 12:07:53 [INFO] Chat from='seo': '/status'
+2026-11-21 12:07:53 [INFO] Chat from='seo': '안녕'
+2026-11-21 12:07:53 [INFO] Chat from='seo': '/whereis nyai'
+2026-11-21 12:07:53 [INFO] Chat from='seo': '/status'
+2026-11-21 12:07:53 [INFO] 26.0.0.1:1234: account info 'p00'
+2026-11-21 12:07:53 [INFO]   Rank list sort=0 start=1 end=18 -> 28 rows
+2026-11-21 12:07:53 [INFO]   Rank search 'loser' -> 21
+2026-11-21 12:07:53 [INFO]   Rank list sort=0 start=18 end=35 -> 6 rows
+2026-11-21 12:07:53 [INFO]   Rank list sort=0 start=100 end=117 -> 0 rows
+2026-11-21 12:07:53 [INFO] 26.0.0.1:1234: handshake magic=b'RHAK' version=1003
+2026-11-21 12:07:53 [INFO] 26.0.0.1:1234: handshake magic=b'RHAK' version=1003
+2026-11-21 12:07:53 [INFO] 26.0.0.2:1234: handshake magic=b'RHAK' version=1000
+2026-11-21 12:07:53 [INFO] 26.0.0.1:1234: handshake magic=b'RHAK' version=1003
+2026-11-21 12:07:53 [INFO] 26.0.0.2:1234: handshake magic=b'RHAK' version=1003
+2026-11-21 12:07:53 [INFO] Room join: 26.0.0.2:1234 account='nyai' room='aa' host=26.0.0.1 joiner_ip=26.0.0.2
+2026-11-21 12:07:53 [INFO] Room join: 26.0.0.2:1234 account='nyai' room='aa' host=26.0.0.1 joiner_ip=26.0.0.2
+2026-11-21 12:07:53 [INFO] Game start: 26.0.0.1:1234 account='seo' room='seo' payload=020000
+2026-11-21 12:07:53 [INFO]   Match recorded: map='m' players=['seo']
+2026-11-21 12:07:53 [INFO]   Sent 0x1EFF battle-start to 'seo'
+2026-11-21 12:07:53 [INFO] Room join refused (game in progress): 26.0.0.2:1234 account='nyai' room='seo'
+2026-11-21 12:07:53 [INFO] Room join: 26.0.0.2:1234 account='nyai' room='seo' host=26.0.0.1 joiner_ip=26.0.0.2
+2026-11-21 12:10:56 [INFO] Server IP detected: 26.189.72.126
+2026-11-21 12:11:06 [INFO]   Channel join 'seo': lobby list 1 users
+2026-11-21 12:11:06 [INFO]   Channel join 'nyai': lobby list 1 users
+2026-11-21 12:11:06 [INFO]   Channel join 'seo': lobby list 2 users
+2026-11-21 12:11:06 [INFO]   Channel list -> 1 channel, 2 users
+2026-11-21 12:11:06 [INFO]   Channel join 'seo': lobby list 1 users
+2026-11-21 12:11:06 [INFO]   Channel join 'gamer': lobby list 2 users
+2026-11-21 12:11:06 [INFO]   Channel join 'nyai': lobby list 3 users
+2026-11-21 12:11:06 [INFO] Disconnected: 26.0.0.2:1234 account='nyai'
+2026-11-21 12:11:06 [INFO]   Channel join 'seo': lobby list 1 users
+2026-11-21 12:11:06 [INFO]   Channel join 'nyai': lobby list 2 users
+2026-11-21 12:11:06 [INFO]   Channel join 'nyai': lobby list 2 users
+2026-11-21 12:11:06 [INFO]   Channel join 'seo': lobby list 1 users
+2026-11-21 12:11:06 [INFO] Chat from='seo': '/status'
+2026-11-21 12:11:06 [INFO] Chat from='seo': '안녕'
+2026-11-21 12:11:06 [INFO] Chat from='seo': '/whereis nyai'
+2026-11-21 12:11:06 [INFO] Chat from='seo': '/status'
+2026-11-21 12:11:06 [INFO] 26.0.0.1:1234: account info 'p00'
+2026-11-21 12:11:06 [INFO]   Rank list sort=0 start=1 end=18 -> 28 rows
+2026-11-21 12:11:06 [INFO]   Rank search 'loser' -> 21
+2026-11-21 12:11:06 [INFO]   Rank list sort=0 start=18 end=35 -> 6 rows
+2026-11-21 12:11:06 [INFO]   Rank list sort=0 start=100 end=117 -> 0 rows
+2026-11-21 12:11:06 [INFO] Game start: 26.0.0.1:1234 account='seo' room='seo' payload=020000
+2026-11-21 12:11:06 [INFO]   Match recorded: map='m' players=['seo']
+2026-11-21 12:11:06 [INFO]   Sent 0x1EFF battle-start to 'seo'
+2026-11-21 12:11:06 [INFO] Room join refused (game in progress): 26.0.0.2:1234 account='nyai' room='seo'
+2026-11-21 12:11:06 [INFO] Room join: 26.0.0.2:1234 account='nyai' room='seo' host=26.0.0.1 joiner_ip=26.0.0.2
+2026-11-21 12:11:06 [INFO] 26.0.0.1:1234: handshake magic=b'RHAK' version=1003
+2026-11-21 12:11:06 [INFO] 26.0.0.1:1234: handshake magic=b'RHAK' version=1003
+2026-11-21 12:11:06 [INFO] 26.0.0.2:1234: handshake magic=b'RHAK' version=1000
+2026-11-21 12:11:06 [INFO] 26.0.0.1:1234: handshake magic=b'RHAK' version=1003
+2026-11-21 12:11:06 [INFO] 26.0.0.2:1234: handshake magic=b'RHAK' version=1003
+2026-11-21 12:11:06 [INFO] Room join: 26.0.0.2:1234 account='nyai' room='aa' host=26.0.0.1 joiner_ip=26.0.0.2
+2026-11-21 12:11:06 [INFO] Room join: 26.0.0.2:1234 account='nyai' room='aa' host=26.0.0.1 joiner_ip=26.0.0.2

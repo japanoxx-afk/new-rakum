@@ -61,7 +61,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9016"
+SERVER_VERSION = "0.9017"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -123,20 +123,34 @@ def _load_matches() -> list:
     try:
         with open(MATCH_LOG, "r", encoding="utf-8") as f:
             return json.load(f)
-    except (OSError, ValueError):
+    except OSError:
+        return []
+    except ValueError:
+        # 깨진 파일을 빈 목록으로 덮어쓰면 전체 기록을 잃는다 → 따로 보관해 두고 새로 시작
+        try:
+            os.replace(MATCH_LOG, f"{MATCH_LOG}.bad-{_time.strftime('%Y%m%d_%H%M%S')}")
+        except OSError:
+            pass
         return []
 
 def _save_matches(matches: list) -> None:
+    """전체 기록을 보관한다 (예전에는 최근 500판만 남겨 랭킹이 오래된 경기를 잊었다).
+    전적 사이트(rtsarena)가 이 파일을 읽어 같은 랭킹을 만들므로, 임시 파일에 다 쓴 뒤 바꿔 끼워
+    읽는 쪽이 반쯤 쓰인 파일을 보지 않게 한다."""
+    tmp = MATCH_LOG + ".tmp"
     try:
-        with open(MATCH_LOG, "w", encoding="utf-8") as f:
-            json.dump(matches[-500:], f, ensure_ascii=False, indent=1)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(matches, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, MATCH_LOG)
     except OSError:
         pass
 
 def record_match_start(map_name: str, players: list, room_title: str) -> None:
-    """게임 시작 시 [시간·맵·플레이어]를 기록."""
+    """게임 시작 시 [시간·맵·플레이어]를 기록. id 는 전적 사이트가 경기를 구분하는 키."""
+    import uuid
     matches = _load_matches()
     matches.append({
+        "id": uuid.uuid4().hex,
         "time": _time.strftime("%Y-%m-%d %H:%M:%S"),
         "map": map_name,
         "players": list(players),
