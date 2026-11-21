@@ -172,6 +172,8 @@ def record_match_result(account: str, code: int, score: int) -> None:
 
 # 0x24FF 결과코드 (Rhakmu.exe 0x41A9B0 에서 확인): 일반전 1=승 2=패 3=무승부(중도 이탈 포함) 4=기타 무효,
 # 래더전은 같은 값에 0x80 이 더해진다(0x81 승, 0x82 패 ...). 점수는 대부분 0 이라 승패 판정에 쓰지 않는다.
+# 관전자(플레이어 +6 참가 표시 0x80, 방 슬롯 종류 4)는 게임이 항상 3 을 보낸다(0x41A9D5) -> 무승부로 집계.
+# 컴퓨터(Computer 슬롯, +4 == 2)가 낀 경기도 모든 사람이 3 을 보낸다.
 RESULT_WL = {1: "win", 2: "lose", 3: "draw", 4: "draw"}
 
 def result_wl(code) -> Optional[str]:

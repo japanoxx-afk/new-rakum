@@ -96,6 +96,16 @@ class ResultTests(TmpMatches):
         rank = server.compute_ranking()
         self.assertEqual((rank['aa']['win'], rank['bb']['lose']), (1, 1))
 
+    def test_spectator_counts_as_draw(self):
+        # 관전자(참가 표시 0x80)는 게임이 결과코드 3 을 보낸다 (Rhakmu.exe 0x41A9D5)
+        server.record_match_start('m', ['aa', 'bb', 'watcher'], 'aa')
+        server.record_match_result('aa', 1, 0)
+        server.record_match_result('bb', 2, 0)
+        server.record_match_result('watcher', 3, 0)
+        rank = server.compute_ranking()
+        self.assertEqual({k: (v['win'], v['lose'], v['draw']) for k, v in rank.items()},
+                         {'aa': (1, 0, 0), 'bb': (0, 1, 0), 'watcher': (0, 0, 1)})
+
     def test_ladder_codes_and_negative_score(self):
         server.record_match_start('m', ['aa', 'bb'], 'aa')
         server.record_match_result('aa', 0x81, 30)
