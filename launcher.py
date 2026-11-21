@@ -63,7 +63,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9071"
+APP_VERSION = "0.9072"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -2392,7 +2392,8 @@ class App(tk.Tk):
                 messagebox.showwarning("홀펀칭", f"원래 TG_Net.dll 로 되돌리지 못했습니다 (게임이 켜져 있나요?).\n{e}")
 
     def _setup_holepunch(self, game_dir, ip, multiplayer):
-        """Launch step: proxy on for internet-server multiplay, off (or removed) otherwise."""
+        """Launch step: proxy on for internet-server multiplay; original TG_Net.dll for the
+        launcher's local server and Radmin / Hamachi / LAN servers (holepunch.server_kind)."""
         if not self.cfg.get("holepunch", True):
             try:
                 holepunch.uninstall(game_dir)
@@ -2403,6 +2404,15 @@ class App(tk.Tk):
             proxy = pathlib.Path(get_resource_dir(), "rkp2p", "TG_Net.dll").read_bytes()
         except OSError:
             return                                       # 개발 실행에서 아직 빌드 안 함
+        kind = holepunch.server_kind(ip, game_address_patch._local_ipv4s())
+        if kind != "internet":
+            # 로컬 서버 / Radmin(26.x) / Hamachi(25.x) / LAN: 게임끼리 VPN·LAN 으로 바로 통신한다.
+            # 프록시를 빼고 원래 TG_Net.dll 로 실행 (v0.9031 방식, Radmin 에서 검증됨).
+            try:
+                holepunch.uninstall(game_dir)
+            except (OSError, ValueError):
+                pass
+            return
         enabled = bool(multiplayer and getattr(self, "_p2p_server", False))
         try:
             holepunch.install(game_dir, proxy, enabled, ip, holepunch.server_udp_port(ip, DEFAULT_SERVER_IP))

@@ -4,6 +4,7 @@ The game's TG_Net.dll is kept as TGNetOrg.dll and replaced by the proxy, which f
 every export to it and only reroutes the game's UDP 11223 traffic (see rkp2p.c).
 rkp2p.ini decides per launch whether it is active and which server UDP port it talks to.
 """
+import ipaddress
 import os
 import pathlib
 
@@ -16,6 +17,33 @@ LOG = "rkp2p.log"
 MARK = b"TGNetOrg.TGNet_"          # forwarder strings only the proxy contains
 NAS_UDP_PORT = 30012               # NAS: external UDP 30012 -> container 47584
 LOCAL_UDP_PORT = 47584             # server.py UDP_RELAY_PORT
+
+
+VPN_PREFIXES = ("26.", "25.")      # Radmin VPN 26.x, Hamachi 25.x
+
+
+def server_kind(server_ip, local_ips=()):
+    """How the game reaches the other players for this lobby server.
+
+    'internet' : a public address (the NAS 112.159.73.235, or another PC's server reached over
+                 the internet) -> hole punching, and the game announces its internet address.
+    'vpn'      : Radmin 26.x / Hamachi 25.x -> the players talk over the VPN directly.
+    'lan'      : private / link-local address.
+    'local'    : the launcher's own server on this PC (loopback or one of this PC's addresses).
+    Only 'internet' uses the proxy; every other kind runs the game's original TG_Net.dll.
+    """
+    try:
+        addr = ipaddress.IPv4Address(str(server_ip).strip())
+    except ValueError:
+        return "unknown"
+    text = str(addr)
+    if addr.is_loopback or text in set(local_ips):
+        return "local"
+    if text.startswith(VPN_PREFIXES):
+        return "vpn"
+    if addr.is_private or addr.is_link_local or addr.is_unspecified or addr.is_multicast or addr.is_reserved:
+        return "lan"
+    return "internet"
 
 
 def server_udp_port(server_ip, nas_ip):

@@ -642,7 +642,9 @@ __declspec(dllexport) int __cdecl TGNet_Get_MyIPaddress(char *buf, int size)
     if (!buf || size < 16 || !g_hooked)
         return r;
     EnterCriticalSection(&g_cs);
-    if (g_enabled && g_hello_ok && g_pub_ip) {
+    /* only an internet address: on Radmin 26.x / Hamachi 25.x the game's own choice stays */
+    if (g_enabled && g_hello_ok && g_pub_ip && ((unsigned char *)&g_pub_ip)[0] != 26
+        && ((unsigned char *)&g_pub_ip)[0] != 25) {
         char a[20];
         ipstr(g_pub_ip, a);
         if (logged != g_pub_ip) {
