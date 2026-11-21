@@ -32,8 +32,8 @@ def underlying(data):
 
 def transform(data,enabled=True):
     import viewport_patch,rally_gold_patch
-    import menu_free_guard_patch
-    source=menu_free_guard_patch.transform(rally_gold_patch.strip(underlying(data)),False)
+    import menu_free_guard_patch,queue_cancel_patch
+    source=queue_cancel_patch.transform(menu_free_guard_patch.transform(rally_gold_patch.strip(underlying(data)),False),False)
     # Validate every underlying byte, preserving all known independent settings.
     viewport_patch.transform(source,False)
     if not enabled:return source
@@ -80,8 +80,8 @@ def prepare(path,highres,rally_gold=True,hotkeys=True,select24=False,record=Fals
 
 def build(original,highres,rally_gold=True,hotkeys=True,select24=False,record=False,start_save=False,play=False):
     """설치 파일 바이트 -> 실행용 최종 바이트 (메모리 안에서만; 파일은 건드리지 않음)."""
-    import viewport_patch,peer_address_patch,sync_port_patch,panel_guard_patch,rally_gold_patch,hotkey_patch,selection_patch,menu_free_guard_patch,replay_record_patch
-    data=menu_free_guard_patch.transform(rally_gold_patch.strip(underlying(original)),False)
+    import viewport_patch,peer_address_patch,sync_port_patch,panel_guard_patch,rally_gold_patch,hotkey_patch,selection_patch,menu_free_guard_patch,replay_record_patch,queue_cancel_patch
+    data=queue_cancel_patch.transform(menu_free_guard_patch.transform(rally_gold_patch.strip(underlying(original)),False),False)
     peer_address_patch.state(data);sync_port_patch.state(data);panel_guard_patch.state(data)
     result=bytearray(data)
     result[sync_port_patch.OFFSET:sync_port_patch.OFFSET+len(sync_port_patch.PATCHED)]=sync_port_patch.PATCHED
@@ -94,6 +94,7 @@ def build(original,highres,rally_gold=True,hotkeys=True,select24=False,record=Fa
     data=transform(data)
     data=rally_gold_patch.apply(data,rally_gold)   # 다른 패치 검증은 원본 기준
     data=menu_free_guard_patch.transform(data,True)   # 메뉴 해제 크래시 보호 (항상, 고해상도 검증 뒤)
+    data=queue_cancel_patch.transform(data,True)   # ESC 는 예약된 대기열부터 취소 (항상)
     data=selection_patch.apply(data,select24)      # 미니맵 섹션 뒤 .sel24 (선택 한도 24)
     data=replay_record_patch.apply(data,record or play,start_save,play)    # 그 뒤 .rkrec (리플레이 기록/재생)
     return hotkey_patch.apply(data,hotkeys)        # 맨 뒤에 단축키 섹션 (.sel24 가 있으면 24칸 판)
