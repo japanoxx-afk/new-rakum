@@ -439,15 +439,25 @@
     }
     return best;
   }
+  // Game cells vs. this editor's world pixels.
+  // The game lays terrain record (col,row) over cells X..X+7, Y..Y+3 with X = col*8 + (row&1)*4, Y = row*2
+  // (0040B580 -> 0040B6F0; bridges 0040BDD0 use the same anchor), so the tile diamond is centred on cell
+  // (X+4, Y+2). Resources, decorations and start points sit at pixel (x*32, y*32) of that cell grid (00439E60).
+  // This editor draws the tile diamond centred on world (X*32, Y*32), i.e. 4 cells left and 2 cells up, so a
+  // record cell (x,y) is drawn at world (x*32 - 128, y*32 - 64). Bridges/ramps (kind 3) keep their own
+  // shipped-map templates and are not converted.
+  const CELL_OX = -128, CELL_OY = -64;
+  const cellX = x => x * 32 + CELL_OX, cellY = y => y * 32 + CELL_OY;
+  const worldCell = (wx, wy) => [Math.floor((wx - CELL_OX) / 32), Math.floor((wy - CELL_OY) / 32)];
   function cellBuildable(m, cx, cy) {
     if (cx < 0 || cy < 0 || cx >= m.W || cy >= m.H) return false;
-    const t = tileAtWorld(m, cx * 32 + 16, cy * 32 + 16); if (!t) return false;
+    const t = tileAtWorld(m, cellX(cx) + 16, cellY(cy) + 16); if (!t) return false;
     const c = tileCorners(m, t[0], t[1]);
     return BUILDABLE[c.N] && BUILDABLE[c.E] && BUILDABLE[c.S] && BUILDABLE[c.W] &&
       HEIGHT[c.N] === HEIGHT[c.E] && HEIGHT[c.N] === HEIGHT[c.S] && HEIGHT[c.N] === HEIGHT[c.W];
   }
   function cellWater(m, cx, cy) {
-    const t = tileAtWorld(m, cx * 32 + 16, cy * 32 + 16); if (!t) return false;
+    const t = tileAtWorld(m, cellX(cx) + 16, cellY(cy) + 16); if (!t) return false;
     const c = tileCorners(m, t[0], t[1]), w = x => x === 0 || x === 8;
     return w(c.N) && w(c.E) && w(c.S) && w(c.W);
   }
@@ -598,6 +608,6 @@
     TRANS, MID, EDGE, CORNER, DIAG, TILESETS, SUBTERRAIN, RACES, COLORS, KIND, TILE_DEF,
     decorList, resourceIds, tilesFor, cornersOf, recordFor, compat,
     parseRKM, serializeRKM, newMap, initVerts, getV, setV, vIndex, tileCorners, tilesOfVertex,
-    retile, retileAround, paint, paintVerts, smoothDiagonals, shapeVerts, suggestRamp, findSubAnchor, SUB_MOD_FROM, subMismatch, subSpacingOK, SUB_SIZE, SUB_SPACING, LEVEL, BUILDABLE, cellBuildable, cellWater, startProblems, nearestStart, START_R, tileAtWorld, toAB, fromAB, idxFind, jtlInfo, decodeTile, u32, u16,
+    retile, retileAround, paint, paintVerts, smoothDiagonals, shapeVerts, suggestRamp, findSubAnchor, SUB_MOD_FROM, subMismatch, subSpacingOK, SUB_SIZE, SUB_SPACING, LEVEL, BUILDABLE, cellBuildable, cellWater, CELL_OX, CELL_OY, cellX, cellY, worldCell, startProblems, nearestStart, START_R, tileAtWorld, toAB, fromAB, idxFind, jtlInfo, decodeTile, u32, u16,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
