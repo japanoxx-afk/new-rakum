@@ -104,6 +104,7 @@ while len(out) < len(targets) and time.time() - t0 < 120:
                                      hp=hp, order=struct.unpack_from("<h", raw, o + 6)[0])
                 out[fr] = us
                 open(os.path.join(OUT, "raw_%d.bin" % fr), "wb").write(raw)
+                open(os.path.join(OUT, "pl_%d.bin" % fr), "wb").write(p.mem.read(0x7F7908, 0x11E0 * 8))
                 print("dump", fr, len(us), flush=True)
             c.EFlags |= 0x10000                       # RF: resume past the execute breakpoint
             c.Dr6 = 0

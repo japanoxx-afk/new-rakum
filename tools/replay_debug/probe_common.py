@@ -20,6 +20,7 @@ class Play:
         sel24 = rules.get("select_24", False) if sel24 is None else sel24
         rally = rules.get("rally_gold", True) if rally is None else rally
         spawn = rules.get("rally_spawn", False) if spawn is None else spawn
+        wide = rules.get("wide_checks", False)              # 런처처럼: 리플레이의 검사 방식대로 설치
         self.d = d = replay_model.ingame_data(rp)
         local = d["start"].get("local", 0)
         name = next((p["name"] for p in rp.players if p["index"] == local), "")
@@ -29,7 +30,7 @@ class Play:
         (G / "RKREPLAY.RKP").write_bytes(rrp.build_rkp(d["start"], d["records"], name))
         (G / "USERs" / "RKREPLAY").mkdir(parents=True, exist_ok=True)
         (G / "USERs" / "RKREPLAY" / "RKREPLAY.SAV").write_bytes(d["save"])
-        (prepare or minimap_patch.prepare)(G / "Rhakmu.exe", True, rally, True, sel24, False, False, True, spawn)
+        (prepare or minimap_patch.prepare)(G / "Rhakmu.exe", True, rally, True, sel24, False, False, True, spawn, wide)
         self.last = max(f for f, p, b in d["records"])
         assert not pids(), "다른 Rhakmu.exe 가 켜져 있음 (사용자 게임일 수 있어 띄우지 않음)"
         before = pids()

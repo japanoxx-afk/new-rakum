@@ -728,6 +728,56 @@ class InGameHookTests(unittest.TestCase):
         self.run_entry(mu, "panel", 0x4D65F8)
         self.run_entry(mu, "panel2", 0x4D6607)                           # 미니맵도
 
+    def test_play_keeps_native_unit_type_data(self):
+        """저장은 종류마다 0x90 바이트만 담아(+0x96 '죽으면 시체로 남음' 등이 사라짐) 재생에서만 죽은 유닛 처리가 달라졌다
+        (20261122_052001: 8110프레임 일꾼 인구 -2, 칸 재사용). 재생이면 LoadGAME 의 free(자료 파일 종류 데이터)를 막아 보관하고,
+        불러온 뒤 저장의 앞 0x90 바이트만 덮어써 표를 되돌린다. 재생이 아니면 원래 free."""
+        from unicorn import UC_HOOK_CODE
+        from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_EBP
+        for play in (True, False):
+            with self.subTest(play=play):
+                mu, rd = self.machine()
+                mu.mem_write(self.BASE, rrp.body(play=play))
+                mu.mem_write(0x400000 + rrp.MODE_OFF, bytes([rrp.MODE_PLAY if play else 0]))
+                freed = []
+                mu.mem_write(0x4DD480, b"\xc3")
+                mu.hook_add(UC_HOOK_CODE, lambda uc, a, s, _: freed.append(
+                    struct.unpack("<I", uc.mem_read(uc.reg_read(UC_X86_REG_ESP) + 4, 4))[0]), begin=0x4DD480, end=0x4DD480)
+                native = {2: 0x2040000, 103: 0x2041000}
+                for t, ptr in native.items():                              # LoadGAME 이 free 하려는 자료 파일 데이터
+                    frame = 0x2070000
+                    mu.mem_write(frame - 8, struct.pack("<h", t))           # LoadGAME 의 [ebp-8] = 종류 번호
+                    esp = 0x2080000
+                    mu.mem_write(0x4D85FA, b"\xf4")
+                    mu.mem_write(esp, struct.pack("<II", 0x4D85FA, ptr))
+                    mu.reg_write(UC_X86_REG_ESP, esp)
+                    mu.reg_write(UC_X86_REG_EBP, frame)
+                    mu.emu_start(self.BASE + rrp.OFF["tkeep"], 0x4D85FA, count=1000)
+                    self.assertEqual(mu.reg_read(UC_X86_REG_ESP), esp + 4)
+                self.assertEqual(freed, [] if play else list(native.values()))
+                if not play:
+                    continue
+                # 불러온 뒤: 표에는 저장의 0x90 바이트짜리, 원래 데이터는 +0x96 = 1
+                for t, ptr in native.items():
+                    mu.mem_write(ptr, bytes([0xAA]) * 0x100)
+                    mu.mem_write(ptr + 0x96, struct.pack("<h", 1))
+                    loaded = 0x2050000 + t * 0x100
+                    mu.mem_write(loaded, bytes([t]) * 0x90)
+                    mu.mem_write(rrp.TYPE_TABLE + t * 0x1C, struct.pack("<I", loaded))
+                mu.mem_write(rrp.TYPE_TABLE + 5 * 0x1C, struct.pack("<I", 0x2058000))   # 보관 없는 종류는 그대로
+                esp = 0x2080000
+                mu.mem_write(0x4D7559, b"\xf4")
+                mu.mem_write(esp, struct.pack("<I", 0x4D7559))
+                mu.reg_write(UC_X86_REG_ESP, esp)
+                mu.reg_write(UC_X86_REG_EBP, self.BASE)
+                mu.emu_start(self.BASE + rrp.OFF["tload"], 0x4D7559, count=100000)
+                for t, ptr in native.items():
+                    self.assertEqual(struct.unpack("<I", mu.mem_read(rrp.TYPE_TABLE + t * 0x1C, 4))[0], ptr)
+                    data = bytes(mu.mem_read(ptr, 0x100))
+                    self.assertEqual(data[:0x90], bytes([t]) * 0x90)                 # 저장 값
+                    self.assertEqual(struct.unpack_from("<h", data, 0x96)[0], 1)     # 자료 파일 값 유지
+                self.assertEqual(struct.unpack("<I", mu.mem_read(rrp.TYPE_TABLE + 5 * 0x1C, 4))[0], 0x2058000)
+
     def test_spectator_view_only_while_drawing(self):
         """관전자 시점: 재생이면 지형·유닛을 그리는 동안만 표[내 번호] = 0xFF (모든 참가자 시야), 마우스 그리기 직전에
         1,2,4.. 로 되돌린다. 재생이 아니면(실제 대전) 표를 건드리지 않는다 (맵핵이 되면 안 됨)."""
@@ -981,7 +1031,7 @@ class InGameHookTests(unittest.TestCase):
         import subprocess, types
         import minimap_patch as mm
         o = mm.build(exe.read_bytes(), False, True, False, False, False)      # 단축키 없음, 기록 없음
-        for commit in ("0ae10e0", "5b6a921", "d723ca0", "e790797", "4467186", "9f4f6ff", "5a04ac7", "63b868a", "bc10600"):  # v0.9055 ~ v0.9058, v0.9064, v0.9072, v0.9075~v0.9077
+        for commit in ("0ae10e0", "5b6a921", "d723ca0", "e790797", "4467186", "9f4f6ff", "5a04ac7", "63b868a", "bc10600", "3b315f0"):  # v0.9055 ~ v0.9058, v0.9064, v0.9072, v0.9075~v0.9077, v0.9080
             src = subprocess.run(["git", "show", commit + ":replay_record_patch.py"], capture_output=True,
                                  cwd=Path(__file__).resolve().parent).stdout.decode("utf-8")
             if not src:
