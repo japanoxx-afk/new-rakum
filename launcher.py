@@ -34,6 +34,8 @@ import map_editor_web
 import ui_theme
 import map_preview
 import rally_gold_patch
+import rally_spawn_patch
+import rally_construct_patch
 import hotkey_patch
 import selection_patch
 import game_version
@@ -63,7 +65,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9073"
+APP_VERSION = "0.9074"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1158,6 +1160,7 @@ class App(tk.Tk):
                 patch_status = {'peer_address': peer_address_patch.state(game_data), 'sync_port': sync_port_patch.state(game_data),
                                 'peer_reply_8814': game_data[0xeb420:0xeb420+len(peer_address_patch.CODE)] == peer_address_patch.CODE,
                                 'rally_gold': rally_gold_patch.state(game_data),
+                                'rally_spawn': rally_spawn_patch.state(game_data),
                                 'hotkeys': hotkeys_state,
                                 'select_24': select24_state,
                                 'game_path': str(pathlib.Path(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE)),
@@ -1525,6 +1528,7 @@ class App(tk.Tk):
             else:
                 self._rally_override = None
                 self._select24_override = None
+                self._rally_spawn_override = None
             self._prepare_game_launch()
             if rules_note:
                 self.info_var.set(rules_note)
@@ -1603,7 +1607,8 @@ class App(tk.Tk):
     # 서버 PC 런처가 game_rules.json 을 쓰고 서버가 /rules 로 알려주면, 접속 PC가 똑같이 맞춘다.
     def _write_game_rules(self):
         rules = {'launcher_version': APP_VERSION, 'turns': self.latency.current(),
-                 'rally_gold': bool(self._rally_setting()), 'select_24': bool(self._select24_setting())}
+                 'rally_gold': bool(self._rally_setting()), 'select_24': bool(self._select24_setting()),
+                 'rally_spawn': bool(self._rally_spawn_setting())}
         try:
             with open(os.path.join(self.base_dir, 'game_rules.json'), 'w', encoding='utf-8') as f:
                 json.dump(rules, f, ensure_ascii=False)
@@ -1618,10 +1623,15 @@ class App(tk.Tk):
         override = getattr(self, '_select24_override', None)
         return self.cfg.get('select_24', True) if override is None else override
 
+    def _rally_spawn_setting(self):
+        override = getattr(self, '_rally_spawn_override', None)
+        return self.cfg.get('rally_spawn', True) if override is None else override
+
     def _sync_rules_from_server(self, ip):
         """Client PC: take turns / rally setting from the server PC. Returns a status line."""
         self._rally_override = None
         self._select24_override = None
+        self._rally_spawn_override = None
         self._p2p_server = False           # 서버가 홀펀칭 중개(server.py 0.9019+)를 하는지
         try:
             own = ipaddress.IPv4Address(ip).is_loopback or ip in game_address_patch._local_ipv4s()
@@ -1638,6 +1648,8 @@ class App(tk.Tk):
         self._p2p_server = bool(rules.get('p2p'))
         # 선택 한도 24 를 모르는 구버전 서버 PC 런처면 12기로 맞춘다 (상대가 24기 선택을 받으면 동기화가 깨짐)
         self._select24_override = bool(rules.get('select_24', False))
+        # 집결지 쪽 생산 위치도 같은 이유로, 모르는 서버 PC(구버전·규칙 파일 없는 서버)면 끈다
+        self._rally_spawn_override = bool(rules.get('rally_spawn', False))
         if 'turns' not in rules:
             return '서버 PC 런처가 구버전입니다. 양쪽 모두 같은 런처 버전을 사용하세요.'
         notes = []
@@ -1653,6 +1665,8 @@ class App(tk.Tk):
                 notes.append('금광 인식 ' + ('켬' if self._rally_override else '끔'))
         if self._select24_override != bool(self.cfg.get('select_24', True)):
             notes.append('선택 한도 ' + ('24기' if self._select24_override else '12기'))
+        if self._rally_spawn_override != bool(self.cfg.get('rally_spawn', True)):
+            notes.append('집결지 쪽 생산 ' + ('켬' if self._rally_spawn_override else '끔'))
         if hasattr(self, 'lat_status_var') and self.latency.current() is not None:
             self.lat_status_var.set(f"현재 지연: {self.latency.current()}턴")
         ver = rules.get('launcher_version')
@@ -1682,7 +1696,9 @@ class App(tk.Tk):
         play = bool(getattr(self, "_replay_play", False))       # 게임 화면 리플레이로 띄우는 한 번만
         self._replay_play = False
         start_save = record and not play and bool(self.cfg.get("replay_start_save", True))
-        minimap_patch.prepare(exe, highres, self._rally_setting(), hotkeys, select24, record, start_save, play)
+        rally_spawn = bool(self._rally_spawn_setting())
+        minimap_patch.prepare(exe, highres, self._rally_setting(), hotkeys, select24, record, start_save, play,
+                              rally_spawn)
         self.cfg['command_cadence_99ms'] = False
         installed = exe.read_bytes()
         if hotkey_patch.state(installed) != hotkeys:
@@ -1696,6 +1712,8 @@ class App(tk.Tk):
         verified = minimap_patch.underlying(installed)
         if rally_gold_patch.state(verified) != bool(self._rally_setting()):
             raise RuntimeError('집결지 금광 인식 패치 검증 실패. 게임을 실행하지 않았습니다.')
+        if rally_spawn_patch.state(verified) != rally_spawn or not rally_construct_patch.state(verified):
+            raise RuntimeError('집결지 패치(건설 중 지정·생산 위치) 검증 실패. 게임을 실행하지 않았습니다.')
         verified = rally_gold_patch.strip(verified)
         if not panel_guard_patch.state(verified) or not sync_port_patch.state(verified) or verified[0xeb420:0xeb420+len(peer_address_patch.CODE)] != peer_address_patch.CODE:
             raise RuntimeError('왕건 방식 주소 응답 패치 검증 실패. 게임을 실행하지 않았습니다.')
@@ -1963,14 +1981,16 @@ class App(tk.Tk):
     def _launch_replay(self, rules):
         """게임 화면 재생 실행. 재생 패치는 로그인·로비 없이 시작 저장을 불러와 바로 경기를 보여 주므로
         서버(로컬 서버 재시작·hosts 바꾸기·홀펀칭)를 건드리지 않는다 — 온라인 접속 설정은 그대로 둔다.
-        진행 규칙(선택 한도·집결지 금광 인식)은 기록한 경기와 같게 맞춘다 (다르면 재생이 어긋난다).
-        규칙이 없는 예전 리플레이: 온라인(NAS 서버) 경기는 선택 한도 12기로 맞춰 졌으므로 12기, 금광 인식은 이 PC 설정."""
+        진행 규칙(선택 한도·집결지 금광 인식·집결지 쪽 생산)은 기록한 경기와 같게 맞춘다 (다르면 재생이 어긋난다).
+        규칙이 없는 예전 리플레이: 온라인(NAS 서버) 경기는 선택 한도 12기로 맞춰 졌으므로 12기, 금광 인식은 이 PC 설정.
+        집결지 쪽 생산 규칙이 없는 리플레이는 그 기능이 없던 때 기록이므로 끈다."""
         if replay_memory.find_game_pid():
             messagebox.showinfo("리플레이", "게임이 이미 실행 중입니다. 게임을 끈 뒤 다시 재생하세요.")
             return
         rules = rules or {}
         self._rally_override = rules["rally_gold"] if "rally_gold" in rules else None
         self._select24_override = bool(rules.get("select_24", False))
+        self._rally_spawn_override = bool(rules.get("rally_spawn", False))
         self._replay_play = True
         try:
             self._prepare_game_launch()
@@ -1979,7 +1999,7 @@ class App(tk.Tk):
             return
         finally:
             self._replay_play = False
-            self._rally_override = self._select24_override = None
+            self._rally_override = self._select24_override = self._rally_spawn_override = None
             self._write_game_rules()                # 서버 PC 규칙 파일은 이 PC 설정으로 되돌림
         game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
         try:
@@ -2214,6 +2234,13 @@ class App(tk.Tk):
         ttk.Label(play_frame, text="아래 정보 창 초상화는 12칸까지만 보이고 나머지도 함께 선택됩니다. 다음 게임 실행 시 적용.\n"
                                    "게임 진행 규칙이 바뀌므로 멀티는 모든 PC가 같은 런처 버전이어야 하며, 접속 PC는 서버 PC 설정을 따릅니다.",
                   style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(4, 0))
+        self.rally_spawn_var = tk.BooleanVar(value=self.cfg.get("rally_spawn", True))
+        ttk.Checkbutton(play_frame, text="생산 유닛이 집결지 쪽 건물 가장자리에서 나오기",
+                        variable=self.rally_spawn_var, command=self._on_rally_spawn_toggle).pack(anchor="w", pady=(10, 0))
+        ttk.Label(play_frame, text="집결지가 건물 북쪽이면 북쪽 가장자리에서 나옵니다. 집결지가 없으면 원래대로. 다음 게임 실행 시 적용.\n"
+                                   "게임 진행 규칙이 바뀌므로 접속 PC는 서버 PC 설정을 따릅니다 (설정을 모르는 서버면 끔).\n"
+                                   "건설 중인 건물에도 우클릭으로 집결지를 찍을 수 있습니다 (항상 켜짐, 상대 설정과 무관).",
+                  style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(4, 0))
 
         self.skip_warn_var = tk.BooleanVar(value=self.cfg.get("skip_version_warning", True))
         ttk.Checkbutton(play_frame, text="게임 실행 때 '최신버젼 확인 실패' 창 자동으로 넘기기",
@@ -2424,6 +2451,12 @@ class App(tk.Tk):
         save_config(self.base_dir, self.cfg)
         self._write_game_rules()
         messagebox.showinfo("부대 선택 한도", "다음 게임 실행 때 적용됩니다.\n멀티는 함께하는 모든 PC가 같은 설정이어야 합니다.")
+
+    def _on_rally_spawn_toggle(self):
+        self.cfg["rally_spawn"] = bool(self.rally_spawn_var.get())
+        save_config(self.base_dir, self.cfg)
+        self._write_game_rules()
+        messagebox.showinfo("집결지 쪽 생산", "다음 게임 실행 때 적용됩니다.\n멀티는 접속 PC가 서버 PC 설정을 따릅니다.")
 
     def _on_latency(self, value):
         if value != 4 and self.cfg.get('command_cadence_99ms', self.cadence_var.get()):
