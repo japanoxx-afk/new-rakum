@@ -88,6 +88,16 @@ class _Win32:
         self._names[pid] = name
         return name
 
+    def client_size(self, hwnd):
+        r = self.wt.RECT()
+        if not self.u.GetClientRect(hwnd, self.ct.byref(r)):
+            return 0, 0
+        return r.right - r.left, r.bottom - r.top
+
+    def post_button_up(self, hwnd, x, y):
+        self.u.PostMessageW.argtypes = (self.wt.HWND, self.wt.UINT, self.wt.WPARAM, self.wt.LPARAM)
+        return bool(self.u.PostMessageW(hwnd, 0x0202, 0, (y & 0xFFFF) << 16 | (x & 0xFFFF)))   # WM_LBUTTONUP
+
     def clip(self, rect):
         if rect is None:
             self.u.ClipCursor(None)
@@ -99,6 +109,38 @@ class _Win32:
         r = self.wt.RECT()
         self.u.GetClipCursor(self.ct.byref(r))
         return (r.left, r.top, r.right, r.bottom)
+
+
+def lock_game_cursor(win=None, timeout=90.0, settle=2.0, interval=0.25, clock=None, sleep=None):
+    """게임 화면 리플레이용: 게임 창이 앞에 뜨면 cnc-ddraw 에 '첫 클릭'(왼쪽 버튼 떼기)을 한 번 보낸다.
+
+    창모드 cnc-ddraw 는 창 안에서 처음 버튼을 뗄 때 마우스를 가두고 윈도우 커서를 숨긴다 (그 클릭은 게임에
+    넘기지 않음). 보통은 로그인 화면에서 아이디를 누를 때 일어나지만, 재생은 로그인 없이 바로 경기가 시작되어
+    그 클릭이 없으니 윈도우 커서가 게임 커서 위에 겹쳐 보였다. 보냈으면 True.
+    """
+    import time
+    clock = clock or time.monotonic
+    sleep = sleep or time.sleep
+    if win is None:
+        if os.name != "nt":
+            return False
+        win = _Win32()
+    deadline = clock() + timeout
+    seen = None
+    while clock() < deadline:
+        try:
+            hwnd, is_game, _, _ = win.foreground()
+            w, h = win.client_size(hwnd) if is_game else (0, 0)
+        except Exception:
+            hwnd, w, h = None, 0, 0
+        if hwnd and w > 0 and h > 0:
+            seen = seen if seen is not None else clock()
+            if clock() - seen >= settle:            # 화면 모드가 바뀌고 경기 화면이 뜰 때까지 조금 기다림
+                return win.post_button_up(hwnd, w // 2, h // 2)
+        else:
+            seen = None
+        sleep(interval)
+    return False
 
 
 class CursorGuard:

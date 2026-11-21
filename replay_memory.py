@@ -200,6 +200,20 @@ class GameReader:
     def local_player(self) -> int:
         return self.mem.read(LOCAL_PLAYER, 1)[0]
 
+    def rules(self) -> dict:
+        """이 경기에 쓰인 진행 규칙 패치 (게임 메모리 그대로): 재생도 같아야 원래 경기와 같게 흘러간다.
+        집결지 금광 인식 = 0x473425 의 점프, 선택 한도 24 = .sel24 섹션."""
+        import rally_gold_patch
+        import selection_patch
+        site = self.mem.read(0x400000 + rally_gold_patch.SITE, len(rally_gold_patch.SITE_PATCHED))
+        head = self.mem.read(0x400000, 0x1000)
+        nt = struct.unpack_from("<I", head, 0x3C)[0]
+        nsec = struct.unpack_from("<H", head, nt + 6)[0]
+        table = nt + 24 + struct.unpack_from("<H", head, nt + 20)[0]
+        names = {bytes(head[table + 40 * i:table + 40 * i + 8]) for i in range(nsec)}
+        return {"rally_gold": site == rally_gold_patch.SITE_PATCHED,
+                "select_24": selection_patch.SECTION_NAME in names}
+
     def type_table(self) -> dict:
         """종류 번호 -> {name, worker, max_hp} (경기 중 한 번 읽음)."""
         if self._names is None:

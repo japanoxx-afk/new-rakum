@@ -57,5 +57,42 @@ class CursorGuardTests(unittest.TestCase):
         self.assertEqual(w.calls, [MON, None])
 
 
+class LockGameCursorTests(unittest.TestCase):
+    """게임 화면 재생: 로그인 클릭이 없어 cnc-ddraw 가 커서를 숨기지 않던 문제 -> 첫 클릭(버튼 떼기)을 대신 보냄."""
+
+    def run_lock(self, frames):
+        t = [0.0]
+        posted = []
+
+        class W:
+            def foreground(self):
+                return frames[min(int(t[0] / 0.25), len(frames) - 1)]
+
+            def client_size(self, hwnd):
+                return (1280, 720)
+
+            def post_button_up(self, hwnd, x, y):
+                posted.append((hwnd, x, y))
+                return True
+
+        def sleep(dt):
+            t[0] += dt
+        ok = cg.lock_game_cursor(win=W(), timeout=10, settle=1.0, clock=lambda: t[0], sleep=sleep)
+        return ok, posted, t[0]
+
+    def test_posts_once_after_game_window_settles(self):
+        other = (5, False, None, None)
+        game = (7, True, MON, MON)
+        ok, posted, when = self.run_lock([other] * 4 + [game] * 100)
+        self.assertTrue(ok)
+        self.assertEqual(posted, [(7, 640, 360)])           # 창 가운데, 한 번만
+        self.assertGreaterEqual(when, 2.0)                  # 게임 창이 1초 이상 앞에 있은 뒤
+
+    def test_gives_up_without_game_window(self):
+        ok, posted, _ = self.run_lock([(5, False, None, None)])
+        self.assertFalse(ok)
+        self.assertEqual(posted, [])
+
+
 if __name__ == '__main__':
     unittest.main()
