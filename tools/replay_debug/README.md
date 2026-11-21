@@ -27,6 +27,8 @@ Python 3.12 (64비트), Windows. 스크립트 대부분은 첫 인자로 저장�
 | `hashbp.py REPO RKR F1 F2..` | 해시 루틴에 실행 중단점(디버거)을 걸어 검사값을 계산하는 순간의 유닛 표를 정확히 덤프 (`hashdump.json`, `raw_<frame>.bin`) |
 | `solve2.py` ~ `solve5.py` | 덤프와 기록 해시로 "어느 유닛이 얼마나 다르면 해시가 맞는지" 역산 (`RK_REPLAY` 환경변수) |
 | `watch.py REPO RKR ADDR FROM [HITS]` | 메모리 주소 쓰기 중단점 — 누가 그 값을 바꿨는지 호출 경로 출력 |
+| `solve_wide.py RKR F..` | 넓은 검사값(v0.9077~ 녹화) 덤프(`raw_F.bin`, `pl_F.bin`)로 해시를 다시 계산하고, 어느 칸·플레이어 값이 다르면 맞는지 찾음 |
+| `types_native.py REPO OUT` | 사본 게임을 일반 모드로 띄워 자료 파일 종류 데이터(전체 구조체)를 덤프 — 저장 불러오기 값과 비교 |
 | `cmp_res.py REPO RKR A B` | 기록된 플레이어 자원·인구와 재생 값을 장면마다 비교 |
 | `cmp_units.py REPO RKR F.. @F..` | 기록된 유닛 스냅샷과 재생 유닛 비교 / 덤프 |
 | `typedump.py REPO RKR OUT` | 유닛 종류 표(0x4FCD88) 덤프 |
