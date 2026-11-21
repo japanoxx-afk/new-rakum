@@ -346,6 +346,33 @@ class CommandRingTests(unittest.TestCase):
 
 
 class RecordPatchTests(unittest.TestCase):
+    def test_player_bit_table_is_writable_only_in_playback_installs(self):
+        """관전자 시점은 재생 중 플레이어 비트 표(0x4F02A0, .rdata)에 쓴다. v0.9078 은 .rdata 가 읽기 전용이라
+        재생 시작하자마자 ACCESS_VIOLATION (RhakMU.ERR 0x01077730) -> 재생 설치만 .rdata 쓰기 허용, 대전 설치는 그대로."""
+        exe = Path(__file__).resolve().parent / "game_backup" / "Rhakmu.exe"
+        if not exe.is_file():
+            self.skipTest("game_backup/Rhakmu.exe 없음")
+        import minimap_patch as mm
+
+        def writable(data):
+            nt, nsec, table, salign, falign, soi, secs = rrp._layout(data)
+            for name, va, vsize, rptr, rsize, h in secs:
+                if va <= rrp.PLAYER_BITS - 0x400000 < va + vsize:
+                    return bool(struct.unpack_from("<I", data, h + 36)[0] & 0x80000000)
+            self.fail("비트 표가 있는 섹션 없음")
+
+        o = exe.read_bytes()
+        self.assertFalse(writable(o))
+        for highres in (False, True):
+            for hot in (False, True):
+                play = mm.build(o, highres, True, hot, False, False, False, True, True, False)
+                live = mm.build(o, highres, True, hot, False, True, False, False, True, True)
+                self.assertTrue(writable(play), (highres, hot))
+                self.assertFalse(writable(live), (highres, hot))
+                self.assertEqual(mm.build(play, highres, True, hot, False, True, False, False, True, True), live)
+        base = mm.build(o, False, True, False, False, False)
+        self.assertEqual(rrp.strip(rrp.apply(base, True, False, True)), base)
+
     def test_patch_roundtrip_in_every_combination(self):
         exe = Path(__file__).resolve().parent / "game_backup" / "Rhakmu.exe"
         if not exe.is_file():

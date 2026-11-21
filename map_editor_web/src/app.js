@@ -469,9 +469,15 @@
     } else if (['res', 'deco', 'sub'].includes(S.tool)) {
       const [x, y] = placeCell(h.x, h.y), ids = R.resourceIds(S.map.tileset);
       const o = S.tool === 'res' ? { kind: R.KIND.RES, id: S.res === 'gold' ? ids.gold : ids.well, x, y } : S.tool === 'deco' ? { kind: R.KIND.DECO, id: S.decoSel, x, y } : { kind: R.KIND.SUB, id: S.subSel, x, y };
-      let bad = null;
-      if (o.kind === R.KIND.SUB) { const r = subCheck(o.id, h.x, h.y); if (r.a) { o.x = r.a.x; o.y = r.a.y; } bad = r.error || null; }
+      let bad = null, plan = null;
+      if (o.kind === R.KIND.SUB && isBridge(o.id)) { plan = R.planBridge(S.map, o.id, h.x, h.y); if (plan.error) { bad = plan.error; plan = null; } else { o.x = plan.x; o.y = plan.y; } }
+      else if (o.kind === R.KIND.SUB) { const r = subCheck(o.id, h.x, h.y); if (r.a) { o.x = r.a.x; o.y = r.a.y; } bad = r.error || null; }
       const sp = spriteOf(o);
+      if (plan && plan.changes.length) { // terrain the click will reshape: blue = becomes water, yellow = becomes ground
+        for (const [A, B, T] of plan.changes) { const [u, v] = R.fromAB(A, B); ctx.fillStyle = T === 0 ? 'rgba(60,140,255,.55)' : 'rgba(255,210,60,.55)'; drawDiamond(ctx, u * 128, v * 64, 64, 32); ctx.fill(); }
+        const msg = plan.run[0] + plan.run[1] ? '양쪽 땅까지 ' + (plan.run[0] + plan.run[1]) + '줄 메움' : '물·땅 모양 맞춤';
+        ctx.fillStyle = '#ffe070'; ctx.font = 'bold ' + (16 / Math.max(z, .35)) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(msg, h.x, h.y - 190 - 8 / Math.max(z, .35)); ctx.textAlign = 'start';
+      }
       if (bad) {
         ctx.fillStyle = 'rgba(255,50,40,.35)'; const [w2, h2] = R.SUB_SIZE[o.id]; drawDiamond(ctx, h.x, h.y, w2 / 2, h2 / 2); ctx.fill();
         ctx.fillStyle = '#ff8070'; ctx.font = 'bold ' + (16 / Math.max(z, .35)) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(bad, h.x, h.y - h2 / 2 - 8 / Math.max(z, .35)); ctx.textAlign = 'start';
@@ -579,14 +585,26 @@
     if (a.near) return { error: '다른 언덕 입구·다리와 너무 가깝습니다 (' + R.SUB_SPACING + '칸 이상 떨어뜨리세요)', a };
     return { a };
   }
-  function subTerrain(o) {
-    const m = S.map, ch = R.applySubTerrain(m, o.id, o.x, o.y); if (!ch.length) return;
+  function subTerrain(o) { vertsChanged(R.applySubTerrain(S.map, o.id, o.x, o.y)); }
+  // record changed vertices for undo and retile the tiles around them
+  function vertsChanged(ch) {
+    const m = S.map; if (!ch.length) return;
     for (const [i, b] of ch) noteVert(i, b);
     const verts = ch.map(c => c[0]);
     for (const [i] of ch) { const u = (i % m.VW) - 1, v = Math.floor(i / m.VW) - 1; for (const [du, dv] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) { const j = R.vIndex(m, u + du, v + dv); if (j >= 0) verts.push(j); } }
     for (const [k, before] of R.retileAround(m, verts, false)) noteTile(k, before);
   }
+  const isBridge = id => id === 0 || id === 1;
+  // one click on water: reshape the channel/banks to the bridge template and fill ground to both shores
+  function placeBridge(wx, wy) {
+    const m = S.map, p = R.planBridge(m, S.subSel, wx, wy); if (p.error) { toast(p.error, 3500); return; }
+    noteObjs(); vertsChanged(R.applyBridgePlan(m, p));
+    const o = { kind: R.KIND.SUB, id: p.id, sub: 0xcd, x: p.x, y: p.y, val: 0xcccccccc, raw: newObjRaw(R.KIND.SUB) };
+    m.objects.push(o); S.sel = o; showSel(); draw(); drawMinimap();
+    toast(R.SUBTERRAIN[p.id] + ' 배치됨' + (p.run[0] + p.run[1] ? ' (양쪽 땅까지 ' + (p.run[0] + p.run[1]) + '줄 메움)' : ''), 2500);
+  }
   function placeObject(wx, wy) {
+    if (S.tool === 'sub' && isBridge(S.subSel)) { placeBridge(wx, wy); return; }
     if (S.tool === 'sub') {
       const r = subCheck(S.subSel, wx, wy); if (r.error) { toast(r.error, 3000); return; }
       noteObjs(); const o = { kind: R.KIND.SUB, id: S.subSel, sub: 0xcd, x: r.a.x, y: r.a.y, val: 0xcccccccc, raw: newObjRaw(R.KIND.SUB) };
