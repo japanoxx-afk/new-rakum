@@ -363,6 +363,15 @@ class InGameHookTests(unittest.TestCase):
             uc.reg_write(UC_X86_REG_EAX, 1)
         mu.mem_write(0x4D9120, b"\xc3")
         mu.hook_add(UC_HOOK_CODE, save, begin=0x4D9120, end=0x4D9120)
+        # 비 효과 격자 만들기 (0x49EFF0): 부를 때의 rand·this 를 남기고 rand·난수 횟수를 바꾼다 (재생이 되돌려야 함)
+        self.grid_calls = []
+
+        def grid(uc, a, s, _):
+            self.grid_calls.append((struct.unpack("<I", uc.mem_read(0x501EC0, 4))[0], uc.reg_read(UC_X86_REG_ECX)))
+            uc.mem_write(0x501EC0, struct.pack("<I", 0xDEADBEEF))
+            uc.mem_write(0xB40FE8, struct.pack("<I", 8161))
+        mu.mem_write(rrp.WEATHER_INIT, b"\xc3")
+        mu.hook_add(UC_HOOK_CODE, grid, begin=rrp.WEATHER_INIT, end=rrp.WEATHER_INIT)
         # Windows API 대체 (stdcall): 주소 -> (인자 수, 처리)
         STUB = 0x3000000
         mu.mem_map(STUB, 0x4000)
@@ -488,6 +497,43 @@ class InGameHookTests(unittest.TestCase):
         st = rrp.parse_start(got[0][2])
         self.assertEqual(st, {"seed": 0xCAFEBABE, "rand": 0x12345678, "rng": bytes(range(1, 21)).hex(),
                               "frame": 4321, "local": 2, "options": bytes(range(10, 18)).hex()})
+
+    def test_record_keeps_rand_before_weather_grid(self):
+        """게임 시작의 비 효과 격자(0x49EFF0)는 rand 로 채워지고 저장 파일에 없다: 만들기 직전 rand 를 시작 기록에 넣는다."""
+        mu, rd = self.machine()
+        ESP, ECX, EBP = self.regs
+        mu.mem_write(0x501EC0, struct.pack("<I", 0xABCDEF01))
+        mu.mem_write(0x4D7640, b"\xf4")
+        esp = 0x2080000
+        mu.mem_write(esp, struct.pack("<I", 0x4D7640))                 # call 0x49EFF0 (0x4D763B) 자리
+        mu.reg_write(ESP, esp)
+        mu.reg_write(ECX, rrp.WEATHER)
+        mu.reg_write(EBP, 0x1111)
+        mu.emu_start(self.BASE + rrp.OFF["gridrec"], 0x4D7640, count=1000)
+        self.assertEqual(self.grid_calls, [(0xABCDEF01, rrp.WEATHER)])  # 원래 함수를 같은 this 로
+        self.assertEqual((mu.reg_read(ESP), mu.reg_read(EBP)), (esp + 4, 0x1111))
+        mu.mem_write(0x4D7559, b"\xf4")
+        mu.mem_write(esp, struct.pack("<I", 0x4D7559))
+        mu.reg_write(ESP, esp)
+        mu.emu_start(self.BASE + rrp.OFF["start"], 0x4D7559, count=20000)
+        got, _ = rd.poll()
+        st = rrp.parse_start(got[0][2])
+        self.assertEqual(st["grid"], 0xABCDEF01)
+        self.assertEqual(rrp.build_rkp(st, [])[rrp.RKP_GRID:rrp.RKP_GRID + 8], struct.pack("<II", 0xABCDEF01, 1))
+
+    def test_play_rebuilds_weather_grid_with_match_seed(self):
+        """예전 기록: 새 경기는 srand(시드) 바로 뒤에 격자를 만든다 -> 시드로 다시 만들고 rand·난수 횟수는 되돌린다."""
+        mu = self.play_machine([])
+        self.run_entry(mu, "start", 0x4D7559)
+        self.assertEqual(self.grid_calls, [(0x2222, rrp.WEATHER)])
+        self.assertEqual(struct.unpack("<I", mu.mem_read(0x501EC0, 4))[0], 0x11111111)
+        self.assertEqual(bytes(mu.mem_read(0xB40FE8, 4)), bytes(range(40, 44)))
+
+    def test_rand_back(self):
+        x = 0x13572468
+        for _ in range(8171):
+            x = (x * 0x343FD + 0x269EC3) & 0xFFFFFFFF
+        self.assertEqual(rrp.rand_back(x, 8171), 0x13572468)
 
     def test_record_start_save_uses_player_name_folder(self):
         mu, rd = self.machine()
@@ -751,10 +797,10 @@ class InGameHookTests(unittest.TestCase):
                 self.assertEqual(self.calls[0], ("winrandom", 0xB40FE8, 0, 0x7FFF), frame)   # 원래 0x447AF0 의 rand 1회
                 self.assertNotIn(("send",), self.calls)                   # 보내기는 안 함 (받는 쪽이 없어 멈춤)
                 got = [c[1:] for c in self.calls if c[0] == "dispatch"]
-                want = {100: [], 105: [(0, b1), (1, b2)], 110: [(0, b3)]}[frame]
+                want = {100: [], 105: [(0, b1), (1, b2)], 110: []}[frame]   # 어긋난 뒤 명령은 안 넣음 (엉뚱한 유닛 -> 크래시)
                 self.assertEqual(got, want, frame)
         f = self.flags(mu)
-        self.assertEqual(f["fed"], 3)
+        self.assertEqual(f["fed"], 2)
         self.assertEqual(f["diverged"], 110)                              # 첫 어긋남
         self.assertEqual(f["actual"], (0x11111111, 0, 0))                   # 그때 실제 rand·해시·유닛 수
         self.assertEqual(struct.unpack("<I", mu.mem_read(0xB412B8, 4))[0], 16)   # 2 키 -> 2배속
@@ -821,7 +867,7 @@ class InGameHookTests(unittest.TestCase):
         import subprocess, types
         import minimap_patch as mm
         o = mm.build(exe.read_bytes(), False, True, False, False, False)      # 단축키 없음, 기록 없음
-        for commit in ("0ae10e0", "5b6a921", "d723ca0", "e790797"):            # v0.9055 ~ v0.9058
+        for commit in ("0ae10e0", "5b6a921", "d723ca0", "e790797", "4467186"):  # v0.9055 ~ v0.9058, v0.9064
             src = subprocess.run(["git", "show", commit + ":replay_record_patch.py"], capture_output=True,
                                  cwd=Path(__file__).resolve().parent).stdout.decode("utf-8")
             if not src:

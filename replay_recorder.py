@@ -149,7 +149,8 @@ class Recorder:
         if f["diverged"] == 0xFFFFFFFF:
             return "게임 화면 재생: 재생 자료(RKREPLAY.RKP)를 읽지 못했습니다."
         if f["diverged"]:
-            return f"게임 화면 재생: 프레임 {f['diverged']}부터 원래 경기와 달라졌습니다 (명령 {f['fed']}개 재생)."
+            return (f"게임 화면 재생: 프레임 {f['diverged']}부터 원래 경기와 달라져 그 뒤 명령은 재생하지 않습니다 "
+                    f"(명령 {f['fed']}개 재생). 다른 유닛에 명령이 가 게임이 튕기는 것을 막기 위해서입니다.")
         return f"게임 화면 재생 중: 명령 {f['fed']}개 재생, 원래 경기와 같음"
 
     # ---- 한 번 살펴보기 (테스트에서 직접 부름) ----

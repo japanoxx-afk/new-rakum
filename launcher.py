@@ -59,7 +59,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9064"
+APP_VERSION = "0.9065"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1855,8 +1855,9 @@ class App(tk.Tk):
         self.replay_start_save_var = tk.BooleanVar(value=self.cfg.get("replay_start_save", True))
         ttk.Checkbutton(btns, text="경기 시작 저장(게임 화면 재생에 필요)", variable=self.replay_start_save_var,
                         command=self._on_replay_start_save_toggle).pack(side="right", padx=(0, 8))
-        ttk.Label(frame, text="런처를 켜 둔 채 게임하면 경기마다 자동 저장됩니다. 더블클릭하면 재생합니다 "
-                              "(1·2·4 속도, Space 정지, ←→ 10초, S 통계, Esc 종료, 맵 전체 공개).",
+        ttk.Label(frame, text="런처를 켜 둔 채 게임하면 경기마다 자동 저장됩니다. 더블클릭하면 게임 화면으로 바로 재생합니다 "
+                              "(로그인 없음 · 1·2·4 키 배속 · I 키 HUD 숨기기 · 상대 건물 클릭 시 생산·업그레이드 진행 · "
+                              "끝내기: Esc → 나가기).",
                   style="Muted.TLabel", wraplength=640, justify="left").pack(anchor="w")
         cols = ("date", "time", "map", "players", "arena")
         tree = ttk.Treeview(frame, columns=cols, show="headings", height=9, selectmode="browse")
@@ -1951,14 +1952,6 @@ class App(tk.Tk):
         self.recorder.pause_for_playback()
         self._replay_play = True
         self._on_single_play()
-        messagebox.showinfo("게임 화면으로 재생",
-                            "게임이 켜지면 로그인 없이 바로 리플레이가 재생됩니다.\n\n"
-                            "1·2·4 키: 1배·2배·4배속   맵 전체 공개\n"
-                            "I 키: 화면 정보(HUD) 숨기기/보이기\n"
-                            "오른쪽 위: 참가자별 자원과 생산·업그레이드 진행\n"
-                            "상대 건물을 클릭하면 아래 정보창에 그 생산·업그레이드 진행이 보입니다\n"
-                            "끝내기: Esc(게임 메뉴) → 나가기, 또는 게임 창 닫기\n"
-                            "원래 경기와 달라지면 리플레이 탭 위쪽에 표시됩니다.")
 
     def _replay_stats_window(self):
         path = self._selected_replay()
