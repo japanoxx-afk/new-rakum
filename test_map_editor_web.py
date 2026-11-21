@@ -87,6 +87,65 @@ class ObjectPlacementTests(unittest.TestCase):
                              [(g['ox'], g['oy'], g['w'], g['h']) for g in game], name)
 
 
+def _sub_tpl():
+    src = (HERE / 'map_editor_web' / 'src' / 'core.js').read_text(encoding='utf-8')
+    a = src.index('const SUB_TPL = ') + len('const SUB_TPL = ')
+    return {int(k): v for k, v in json.loads(src[a:src.index(';', a)]).items()}
+
+
+def _to_ab(u, v):
+    return (u + v - 1) >> 1, (u - v - 1) >> 1
+
+
+class BridgeTests(unittest.TestCase):
+    """왼편·오른편 다리 한 번 클릭 배치 (core.js planBridge). 브라우저에서 원본 다리 40개 중 38개를 같은 앵커에 다시 놓는 것 확인."""
+
+    def anchor_parity(self, tpl):
+        dx, dy = tpl[0][:2]
+        return 1 - ((dx // 128 + dy // 64) & 1)
+
+    def test_bridge_templates_are_two_wide_channels_between_two_banks(self):
+        tpl = _sub_tpl()
+        for sid, axis in ((0, 1), (1, 0)):           # 0: B 방향으로 건넌다, 1: A 방향
+            u0 = 10 + self.anchor_parity(tpl[sid])     # v0 = 10 -> u0 + v0 parity = anchor parity
+            pts = [(_to_ab(u0 + dx // 128, 10 + dy // 64), c) for dx, dy, c in tpl[sid]]
+            water = sorted({p[axis] for p, c in pts if c == 0})
+            self.assertEqual(len(water), 2, sid)       # 물길 폭 2 꼭짓점 = 다리 길이 고정
+            ground = [p[axis] for p, c in pts if c == 1]
+            self.assertTrue(any(g < water[0] for g in ground) and any(g > water[-1] for g in ground), sid)
+            self.assertEqual({c for _, c in pts}, {0, 1}, sid)
+
+    def test_anchor_parity_matches_shipped_maps(self):
+        maps = Path(r'C:\Program Files (x86)\TriggerSoft\RhakMu\Data\Maps')
+        files = sorted(maps.glob('*.rkm')) if maps.exists() else []
+        if not files:
+            self.skipTest('게임 설치본 없음')
+        from rkm_format import RkmMap
+        import struct
+        tpl, seen = _sub_tpl(), {}
+        for f in files:
+            m = RkmMap(f.read_bytes())
+            for r in m.objects()[m.object_counts[0]:]:
+                if r[2] != 3:
+                    continue
+                sid = struct.unpack_from('<H', r, 4)[0]
+                x, y = struct.unpack_from('<II', r, 8)
+                if sid in tpl:
+                    self.assertEqual(((x // 4) + (y // 2)) & 1, self.anchor_parity(tpl[sid]), (f.name, sid, x, y))
+                    seen[sid] = seen.get(sid, 0) + 1
+        self.assertGreaterEqual(seen.get(0, 0) + seen.get(1, 0), 40)
+
+    def test_page_places_bridges_with_one_click(self):
+        page = (HERE / 'map_editor_web' / 'editor' / mew.EDITOR_PAGE).read_text(encoding='utf-8')
+        self.assertIn('function planBridge(m, id, wx, wy, ignore)', page)
+        self.assertIn("if (S.tool === 'sub' && isBridge(S.subSel)) { placeBridge(wx, wy); return; }", page)
+        self.assertIn('const BRIDGE_MAX_RUN = 12;', page)
+        self.assertIn("return { error: '다리는 물 위를 클릭해 놓으세요' }", page)
+        self.assertIn('강이 너무 넓습니다', page)
+        # 예전에는 홀수 앵커만 찾아 왼편 다리·폭포(짝수 앵커)는 어디에도 놓을 수 없었다
+        self.assertEqual(page.count('if (((u + v) & 1) !== par) continue;'), 2)   # findSubAnchor, planBridge
+
+
 class EditorServerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
