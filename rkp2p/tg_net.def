@@ -9,7 +9,7 @@ EXPORTS
     TGNet_DisconnectFromServer = TGNetOrg.TGNet_DisconnectFromServer @7
     TGNet_Get_HostNameFromIPAddress = TGNetOrg.TGNet_Get_HostNameFromIPAddress @8
     TGNet_Get_IPAddressFromHostName = TGNetOrg.TGNet_Get_IPAddressFromHostName @9
-    TGNet_Get_MyIPaddress = TGNetOrg.TGNet_Get_MyIPaddress @10
+    TGNet_Get_MyIPaddress @10
     TGNet_GotoURL = TGNetOrg.TGNet_GotoURL @11
     TGNet_InitSockAddr = TGNetOrg.TGNet_InitSockAddr @12
     TGNet_Packet_AppendData = TGNetOrg.TGNet_Packet_AppendData @13

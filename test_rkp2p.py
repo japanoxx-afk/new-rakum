@@ -152,6 +152,19 @@ class Rkp2pLiveTests(unittest.TestCase):
         self.assertEqual(self.got(out_a, "127.0.0.3:11223"), list(range(6)), out_a + log_a)
         self.assertIn("-> direct", log_a)
 
+    def test_host_reports_the_address_the_server_sees(self):
+        """방장이 자기 슬롯에 넣어 참가자에게 알려주는 주소: Radmin 26.x 대신 서버가 보는 주소."""
+        server.STATE.clients[:] = [Stub("127.0.0.2", "aa", "r"), Stub("127.0.0.3", "bb", "r")]
+        out_a, out_b, log_a, log_b = self.play(count=1, ms=2000)
+        self.assertIn("myip 127.0.0.2", out_a, out_a + log_a)
+        self.assertIn("myip 127.0.0.3", out_b, out_b + log_b)
+        self.assertIn("game address 26.9.9.9 -> 127.0.0.2", log_a)
+
+    def test_address_unchanged_without_hole_punching(self):
+        out_a, out_b, log_a, log_b = self.play({"enabled": 0}, {"enabled": 0}, count=1, ms=2000)
+        self.assertIn("myip 26.9.9.9", out_a)
+        self.assertIn("myip 26.9.9.9", out_b)
+
     def test_disabled_proxy_is_transparent(self):
         out_a, out_b, log_a, log_b = self.play({"enabled": 0}, {"enabled": 0})
         self.assertEqual(self.got(out_b, "127.0.0.2:11223"), list(range(6)))

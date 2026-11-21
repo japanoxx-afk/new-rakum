@@ -73,6 +73,7 @@ static int g_allow_loopback;   /* test only: peers on 127.x (rkp2p.ini allow_loo
 static int g_block_peers;      /* test only: drop packets from peers, as a closed NAT would */
 static struct sockaddr_in g_srv;
 static int g_hello_ok;
+static u_long g_pub_ip;        /* our address as the server sees it (HELLO_ACK) */
 static DWORD g_t_hello;
 static peer_t g_peer[MAXPEER];
 static char g_dir[MAX_PATH];
@@ -363,6 +364,8 @@ static int handle_ctl(const char *b, int n, struct sockaddr_in *src, char *out, 
             logf_("server %s:%u sees us as %s:%u", ipstr(g_srv.sin_addr.s_addr, a), ntohs(g_srv.sin_port),
                   ipstr(ip, e), ntohs(*(u_short *)(d + 4)));
         }
+        if (dl >= 6)
+            memcpy(&g_pub_ip, d, 4);
         g_hello_ok = 1;
         break;
     case T_ENDPOINT:
@@ -588,6 +591,8 @@ static int patch_iat(HMODULE mod)
 static HMODULE g_self;
 typedef void *(__cdecl *create_t)(void *, void *);
 static create_t real_create;
+typedef int (__cdecl *myip_t)(char *, int);
+static myip_t real_myip;
 
 static void ensure_hooks(void)
 {
@@ -604,6 +609,7 @@ static void ensure_hooks(void)
     if (!org)
         return;
     real_create = (create_t)GetProcAddress(org, "TGNet_CreateUDPSocket");
+    real_myip = (myip_t)GetProcAddress(org, "TGNet_Get_MyIPaddress");
     if (!g_enabled) {
         logf_("hole punching off (rkp2p.ini)");
         return;
@@ -618,6 +624,36 @@ __declspec(dllexport) void *__cdecl TGNet_CreateUDPSocket(void *a, void *b)
 {
     ensure_hooks();
     return real_create ? real_create(a, b) : NULL;
+}
+
+/* The host puts this address in its own player slot (Rhakmu.exe 0x44D8CE) and sends it to
+ * everyone who joins; the joiners then talk to the host ONLY at that address. The original
+ * returns the first adapter of gethostname(), often the Radmin VPN 26.x address: when Radmin
+ * is not connected between the two PCs the join itself works (lobby address) but every later
+ * packet goes to 26.x and is lost, and after ~10 s the host drops the joiner ("응답이 없어
+ * 목록에서 제거"). While hole punching is on, report the address the lobby server sees, which
+ * is also the address the lobby gives the other players. */
+__declspec(dllexport) int __cdecl TGNet_Get_MyIPaddress(char *buf, int size)
+{
+    static u_long logged;
+    int r;
+    ensure_hooks();
+    r = real_myip ? real_myip(buf, size) : 0;
+    if (!buf || size < 16 || !g_hooked)
+        return r;
+    EnterCriticalSection(&g_cs);
+    if (g_enabled && g_hello_ok && g_pub_ip) {
+        char a[20];
+        ipstr(g_pub_ip, a);
+        if (logged != g_pub_ip) {
+            logged = g_pub_ip;
+            logf_("game address %s -> %s (as the server sees us)", r ? buf : "?", a);
+        }
+        lstrcpynA(buf, a, size);
+        r = 1;
+    }
+    LeaveCriticalSection(&g_cs);
+    return r;
 }
 
 BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID r)
