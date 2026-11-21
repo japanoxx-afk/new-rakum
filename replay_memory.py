@@ -213,9 +213,13 @@ class GameReader:
         nsec = struct.unpack_from("<H", head, nt + 6)[0]
         table = nt + 24 + struct.unpack_from("<H", head, nt + 20)[0]
         names = {bytes(head[table + 40 * i:table + 40 * i + 8]) for i in range(nsec)}
+        import replay_record_patch
+        sec = replay_record_patch.find_section(self.mem.read)
         return {"rally_gold": site == rally_gold_patch.SITE_PATCHED,
                 "select_24": selection_patch.SECTION_NAME in names,
-                "rally_spawn": spawn == rally_spawn_patch.PATCHED}
+                "rally_spawn": spawn == rally_spawn_patch.PATCHED,
+                # 검사값이 전 칸·인구·자원까지 보는지 (v0.9077~ 기록). 재생 패치도 같은 검사값을 써야 한다.
+                "wide_checks": bool(sec) and replay_record_patch.wide_checks(self.mem.read, sec)}
 
     def type_table(self) -> dict:
         """종류 번호 -> {name, worker, max_hp} (경기 중 한 번 읽음)."""

@@ -30,6 +30,7 @@ class FakeGame:
         self.map = b"DATA\\MAPS\\[2]Test.rkm"
         self.sec_va = 0x1084000
         self.ring = bytearray(rrp.RING + 0x10)
+        self.code = bytearray(rrp.body())             # 섹션 코드·설정 (넓은 검사값 표시 포함)
         self.pe = bytearray(0x1000)                    # 최소 PE 머리: .rkrec 섹션 하나
         struct.pack_into("<I", self.pe, 0x3C, 0x80)
         self.pe[0x80:0x84] = b"PE\0\0"
@@ -76,13 +77,14 @@ class FakeGame:
         self.ring[o + 8:o + 8 + len(batch)] = batch
         struct.pack_into("<II", self.ring, 0, total + need, pos + need)
 
-    def match_rules(self, rally_gold, select_24, rally_spawn=False):
+    def match_rules(self, rally_gold, select_24, rally_spawn=False, wide_checks=True):
         """이 경기에 쓰인 진행 규칙 패치를 메모리에 흉내: 금광 인식 점프, .sel24 섹션, 생산 위치 호출."""
         self.rally[:] = rally_gold_patch.SITE_PATCHED if rally_gold else rally_gold_patch.SITE_ORIGINAL
         self.spawn[:] = rally_spawn_patch.PATCHED if rally_spawn else rally_spawn_patch.ORIGINAL
         struct.pack_into("<H", self.pe, 0x80 + 6, 2 if select_24 else 1)
         h = 0x80 + 24 + 0xE0 + 40
         self.pe[h:h + 8] = selection_patch.SECTION_NAME if select_24 else bytes(8)
+        self.code[rrp.FLAGS_OFF + rrp.F_HASH2] = 1 if wide_checks else 0
 
     def kill(self, uid):
         struct.pack_into("<h", self.units, uid * rm.UNIT_SIZE + 8, 0)
@@ -93,7 +95,7 @@ class FakeGame:
                    (rm.MAP_NAME, self.map + bytes(300)), (rm.PLAY_SECONDS, struct.pack("<I", self.seconds)),
                    (rm.LOCAL_PLAYER, b"\x00"), (rm.FRAME, struct.pack("<I", self.frame)),
                    (rm.SEED, struct.pack("<I", self.seed)), (rm.GAME_OPTIONS, bytes(range(8))),
-                   (0x400000, self.pe), (self.sec_va + rrp.BUF, self.ring),
+                   (0x400000, self.pe), (self.sec_va, self.code), (self.sec_va + rrp.BUF, self.ring),
                    (0x400000 + rally_gold_patch.SITE, self.rally),
                    (0x400000 + rally_spawn_patch.SITE, self.spawn))
         for base, data in regions:
@@ -195,18 +197,19 @@ class RecordAndModelTests(unittest.TestCase):
     def test_header_keeps_match_rules(self):
         # 재생은 기록한 경기와 같은 규칙이어야 한다: NAS 서버 경기는 선택 한도 12기로 맞춰지는데
         # 재생은 이 PC 설정(24기)으로 띄우던 문제 -> 경기 때 게임 메모리의 패치 상태를 그대로 남긴다.
-        for rally, sel, spawn in ((True, False, True), (False, True, False)):
-            with self.subTest(rally=rally, sel=sel, spawn=spawn):
+        for rally, sel, spawn, wide in ((True, False, True, True), (False, True, False, False)):
+            with self.subTest(rally=rally, sel=sel, spawn=spawn, wide=wide):
                 for f in (self.base / "replays").glob("*.rkr"):
                     f.unlink()
                 self.g = FakeGame()
-                self.g.match_rules(rally, sel, spawn)
+                self.g.match_rules(rally, sel, spawn, wide)
                 self.rec = rr.Recorder(self.base, lambda: str(self.game_dir), open_memory=lambda pid: self.g,
                                        find_pid=lambda: 1234, clock=lambda: self.clock[0])
                 self.play_match()
                 self.rec._finish("끝")
                 h, _ = M.load_header(next((self.base / "replays").glob("*.rkr")))
-                self.assertEqual(h["rules"], {"rally_gold": rally, "select_24": sel, "rally_spawn": spawn})
+                self.assertEqual(h["rules"], {"rally_gold": rally, "select_24": sel, "rally_spawn": spawn,
+                                              "wide_checks": wide})
 
     def test_record_load_and_stats(self):
         self.play_match()
@@ -698,6 +701,39 @@ class InGameHookTests(unittest.TestCase):
         self.run_entry(mu, "panel", 0x4D65F8)
         self.run_entry(mu, "panel2", 0x4D6607)                           # 미니맵도
 
+    def test_spectator_view_only_while_drawing(self):
+        """관전자 시점: 재생이면 지형·유닛을 그리는 동안만 표[내 번호] = 0xFF (모든 참가자 시야), 마우스 그리기 직전에
+        1,2,4.. 로 되돌린다. 재생이 아니면(실제 대전) 표를 건드리지 않는다 (맵핵이 되면 안 됨)."""
+        from unicorn import UC_HOOK_CODE
+        from unicorn.x86_const import UC_X86_REG_ESP
+        bits = lambda mu: list(struct.unpack("<8H", mu.mem_read(rrp.PLAYER_BITS, 16)))
+        normal = [1 << p for p in range(8)]
+        for play in (True, False):
+            with self.subTest(play=play):
+                mu = self.overlay_machine()
+                mu.mem_write(0x4D4440, b"\xc3")
+                mu.mem_write(rrp.PLAYER_BITS, struct.pack("<8H", *normal))
+                mu.mem_write(0x400000 + rrp.MODE_OFF, bytes([rrp.MODE_PLAY if play else 0]))
+                mu.mem_write(0xB412CC, b"\x01")                              # 내 번호 1
+                seen = []
+                mu.mem_write(rrp.WORLD_DRAW, b"\xc3")                        # 원래 그리기: 그 순간의 표를 남김
+                mu.hook_add(UC_HOOK_CODE, lambda uc, a, s, _: seen.append(bits(uc)),
+                            begin=rrp.WORLD_DRAW, end=rrp.WORLD_DRAW)
+                esp = 0x2080000
+                mu.mem_write(0x4D65EE, b"\xf4")
+                mu.mem_write(esp, struct.pack("<I", 0x4D65EE))            # call 0x4D34D0 의 복귀 주소
+                mu.reg_write(UC_X86_REG_ESP, esp)
+                mu.emu_start(self.BASE + rrp.OFF["view"], 0x4D65EE, count=1000)
+                self.assertEqual(mu.reg_read(UC_X86_REG_ESP), esp + 4)
+                want = normal.copy()
+                if play:
+                    want[1] = 0xFF
+                self.assertEqual(seen, [want])
+                if not play:
+                    mu.mem_write(self.BASE, rrp.body(play=False))           # 실제 대전 설치
+                self.run_entry(mu, "overlay", 0x4D660C)
+                self.assertEqual(bits(mu), normal)
+
     def test_panel_shows_selected_players_info(self):
         """패널을 그리는 동안만 내 번호를 고른 유닛의 주인으로: 상대 건물의 생산·업그레이드 창."""
         from unicorn import UC_HOOK_CODE
@@ -918,7 +954,7 @@ class InGameHookTests(unittest.TestCase):
         import subprocess, types
         import minimap_patch as mm
         o = mm.build(exe.read_bytes(), False, True, False, False, False)      # 단축키 없음, 기록 없음
-        for commit in ("0ae10e0", "5b6a921", "d723ca0", "e790797", "4467186", "9f4f6ff", "5a04ac7"):  # v0.9055 ~ v0.9058, v0.9064, v0.9072, v0.9075
+        for commit in ("0ae10e0", "5b6a921", "d723ca0", "e790797", "4467186", "9f4f6ff", "5a04ac7", "63b868a", "bc10600"):  # v0.9055 ~ v0.9058, v0.9064, v0.9072, v0.9075~v0.9077
             src = subprocess.run(["git", "show", commit + ":replay_record_patch.py"], capture_output=True,
                                  cwd=Path(__file__).resolve().parent).stdout.decode("utf-8")
             if not src:
@@ -1005,6 +1041,15 @@ class InGameHookTests(unittest.TestCase):
             mu.mem_write(o + 8, struct.pack("<h", hp))
             mu.mem_write(o + 0xE, struct.pack("<h", t))
             mu.mem_write(o + 0x12, struct.pack("<hh", x, y))
+        dead = {12: 4528, 20: 0}                                   # 죽은 칸의 죽은 프레임(+0x24)도 검사값에 들어간다
+        mu.mem_write(0x775A38 + 20 * 0x138 + 8, struct.pack("<h", -30000))   # 죽는 중 (체력 -30000)
+        for uid, d in dead.items():
+            mu.mem_write(0x775A38 + uid * 0x138 + 0x24, struct.pack("<I", d))
+        players = {0: (20, 5, (100, 50, 7, 3)), 1: (25, 9, (1, 2, 3, 4))}   # 인구 최대·현재, 금·물·글로리·카르마
+        for p, (cap, cur, res) in players.items():
+            o = 0x7F7908 + p * 0x11E0
+            mu.mem_write(o, struct.pack("<hh", cap, cur))
+            mu.mem_write(o + 0x864, struct.pack("<4i", *res))
         mu.mem_write(0x501EC0, struct.pack("<I", 99))
         mu.mem_write(0xB40FF8, struct.pack("<I", 1234))
         mu.mem_write(rrp.FRAME, struct.pack("<I", 500))
@@ -1026,6 +1071,13 @@ class InGameHookTests(unittest.TestCase):
             h = (h * 31 + hp) & 0xFFFFFFFF
             h = (h * 31 + (x | y << 16)) & 0xFFFFFFFF
             h = (h * 31 + t) & 0xFFFFFFFF
+        hp_of = {uid: v[0] for uid, v in units.items()} | {20: -30000}
+        for uid in range(0x6A5, 0, -1):                          # 넓은 검사값: 전 칸(거꾸로) 체력 + 죽은 프레임
+            h = (h * 31 + hp_of.get(uid, 0) + dead.get(uid, 0)) & 0xFFFFFFFF
+        for p in range(8):                                        # 플레이어 인구 + 자원 합
+            cap, cur, res = players.get(p, (0, 0, (0, 0, 0, 0)))
+            h = (h * 31 + (cap & 0xFFFF | cur << 16)) & 0xFFFFFFFF
+            h = (h * 31 + sum(res)) & 0xFFFFFFFF
         got, _ = rd.poll()
         self.assertEqual([(f, p) for f, p, b in got], [(500, rrp.P_CHECK)])
         self.assertEqual(rrp.parse_check(got[0][2]), [500, 99, 1234, h, n])

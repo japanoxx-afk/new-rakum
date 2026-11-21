@@ -73,22 +73,23 @@ class PipelineTests(unittest.TestCase):
         app=SimpleNamespace(cfg={'game_dir':'game'},server=Mock(),_write_game_rules=Mock(),
             _rally_override=None,_select24_override=None,_replay_play=False)
         def prepare():
-            seen.update(rally=app._rally_override,sel=app._select24_override,play=app._replay_play)
+            seen.update(rally=app._rally_override,sel=app._select24_override,play=app._replay_play,
+                        wide=getattr(app,'_replay_wide_checks',None))
         app._prepare_game_launch=Mock(side_effect=prepare)
         return app,seen
 
     def test_replay_launch_uses_match_rules_and_no_server(self):
         # 게임 화면 재생은 로그인 없이 시작 저장으로 바로 들어가므로 서버·hosts 를 건드리지 않고,
         # 진행 규칙은 리플레이에 기록된 그대로 맞춘다 (예전 리플레이: 온라인 경기 = 선택 한도 12기).
-        for rules,want in (({'rally_gold':False,'select_24':True},(False,True)),(None,(None,False))):
+        for rules,want in (({'rally_gold':False,'select_24':True,'wide_checks':True},(False,True,True)),(None,(None,False,False))):
             app,seen=self.replay_app()
             with patch.object(launcher.replay_memory,'find_game_pid',return_value=None),                  patch.object(launcher.HostsManager,'set_game_host') as hosts,                  patch.object(launcher.subprocess,'Popen') as spawn,                  patch.object(launcher.threading,'Thread') as thread:
                 launcher.App._launch_replay(app,rules)
-            self.assertEqual((seen['rally'],seen['sel'],seen['play']),want+(True,))
+            self.assertEqual((seen['rally'],seen['sel'],seen['wide'],seen['play']),want+(True,))   # wide: 리플레이의 검사 방식
             hosts.assert_not_called();app.server.restart.assert_not_called();app.server.start.assert_not_called()
             spawn.assert_called_once()
             self.assertIn(launcher.cursor_guard.lock_game_cursor,[c.kwargs.get('target') for c in thread.call_args_list])
-            self.assertEqual((app._rally_override,app._select24_override,app._replay_play),(None,None,False))
+            self.assertEqual((app._rally_override,app._select24_override,app._replay_play,app._replay_wide_checks),(None,None,False,False))
             app._write_game_rules.assert_called_once()
             self.showerror.assert_not_called()
 

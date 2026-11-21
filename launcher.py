@@ -65,7 +65,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9076"
+APP_VERSION = "0.9078"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1698,8 +1698,9 @@ class App(tk.Tk):
         self._replay_play = False
         start_save = record and not play and bool(self.cfg.get("replay_start_save", True))
         rally_spawn = bool(self._rally_spawn_setting())
+        wide_checks = bool(getattr(self, "_replay_wide_checks", False)) if play else True   # 재생: 리플레이의 검사 방식
         minimap_patch.prepare(exe, highres, self._rally_setting(), hotkeys, select24, record, start_save, play,
-                              rally_spawn)
+                              rally_spawn, wide_checks)
         self.cfg['command_cadence_99ms'] = False
         installed = exe.read_bytes()
         if hotkey_patch.state(installed) != hotkeys:
@@ -2005,6 +2006,7 @@ class App(tk.Tk):
         self._rally_override = rules["rally_gold"] if "rally_gold" in rules else None
         self._select24_override = bool(rules.get("select_24", False))
         self._rally_spawn_override = bool(rules.get("rally_spawn", False))
+        self._replay_wide_checks = bool(rules.get("wide_checks", False))   # 예전 리플레이는 좁은 검사값
         self._replay_play = True
         try:
             self._prepare_game_launch()
@@ -2013,6 +2015,7 @@ class App(tk.Tk):
             return
         finally:
             self._replay_play = False
+            self._replay_wide_checks = False
             self._rally_override = self._select24_override = self._rally_spawn_override = None
             self._write_game_rules()                # 서버 PC 규칙 파일은 이 PC 설정으로 되돌림
         game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
