@@ -1,0 +1,25 @@
+LIBRARY TG_Net.dll
+EXPORTS
+    TGNet_Buffer_Send2UDP = TGNetOrg.TGNet_Buffer_Send2UDP @1
+    TGNet_CheckBlocking = TGNetOrg.TGNet_CheckBlocking @2
+    TGNet_ClearBlocking = TGNetOrg.TGNet_ClearBlocking @3
+    TGNet_ConnectToServer = TGNetOrg.TGNet_ConnectToServer @4
+    TGNet_CreateUDPSocket @5
+    TGNet_DeleteUDPSocket = TGNetOrg.TGNet_DeleteUDPSocket @6
+    TGNet_DisconnectFromServer = TGNetOrg.TGNet_DisconnectFromServer @7
+    TGNet_Get_HostNameFromIPAddress = TGNetOrg.TGNet_Get_HostNameFromIPAddress @8
+    TGNet_Get_IPAddressFromHostName = TGNetOrg.TGNet_Get_IPAddressFromHostName @9
+    TGNet_Get_MyIPaddress = TGNetOrg.TGNet_Get_MyIPaddress @10
+    TGNet_GotoURL = TGNetOrg.TGNet_GotoURL @11
+    TGNet_InitSockAddr = TGNetOrg.TGNet_InitSockAddr @12
+    TGNet_Packet_AppendData = TGNetOrg.TGNet_Packet_AppendData @13
+    TGNet_Packet_AppendString = TGNetOrg.TGNet_Packet_AppendString @14
+    TGNet_Packet_GetDataPtr = TGNetOrg.TGNet_Packet_GetDataPtr @15
+    TGNet_Packet_GetStringPtr = TGNetOrg.TGNet_Packet_GetStringPtr @16
+    TGNet_Packet_Peek = TGNetOrg.TGNet_Packet_Peek @17
+    TGNet_Packet_Register2SendQ = TGNetOrg.TGNet_Packet_Register2SendQ @18
+    TGNet_Packet_Send2UDP = TGNetOrg.TGNet_Packet_Send2UDP @19
+    TGNet_Socket_Free = TGNetOrg.TGNet_Socket_Free @20
+    TGNet_Socket_Init = TGNetOrg.TGNet_Socket_Init @21
+    TGNet_UDPPacket_Peek = TGNetOrg.TGNet_UDPPacket_Peek @22
+    TGNet_WndProc = TGNetOrg.TGNet_WndProc @23
