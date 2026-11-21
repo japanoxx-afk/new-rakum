@@ -233,5 +233,31 @@ class SpawnTests(Base):
         self.assertEqual(a, (42, 37))       # 북동쪽 모서리 (42, 38) 이 막혀 그 바로 위 칸
 
 
+class RallySpawnServerRuleTests(unittest.TestCase):
+    """접속 PC: 서버 규칙에 rally_spawn 이 없으면(NAS 인터넷 서버) 켠다. 명시적으로 끈 서버만 끈다."""
+
+    def sync(self, body):
+        import io
+        import json
+        from types import SimpleNamespace
+        from unittest import mock
+        import launcher
+        app = SimpleNamespace(cfg={}, latency=SimpleNamespace(current=lambda: 4, apply=lambda t: (True, '')))
+        resp = io.BytesIO(json.dumps(body).encode())
+        resp.__enter__ = lambda *a: resp
+        resp.__exit__ = lambda *a: False
+        with mock.patch("urllib.request.urlopen", return_value=resp), \
+                mock.patch.object(launcher.game_address_patch, "_local_ipv4s", return_value=[]):
+            launcher.App._sync_rules_from_server(app, "112.159.73.235")
+        return app._rally_spawn_override
+
+    def test_nas_without_rules_file_turns_it_on(self):
+        self.assertTrue(self.sync({"server_version": "0.9019", "p2p": 1}))
+
+    def test_server_pc_that_turned_it_off(self):
+        self.assertFalse(self.sync({"turns": 4, "rally_spawn": False, "p2p": 1}))
+        self.assertTrue(self.sync({"turns": 4, "rally_spawn": True, "p2p": 1}))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -65,7 +65,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9074"
+APP_VERSION = "0.9075"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1648,8 +1648,9 @@ class App(tk.Tk):
         self._p2p_server = bool(rules.get('p2p'))
         # 선택 한도 24 를 모르는 구버전 서버 PC 런처면 12기로 맞춘다 (상대가 24기 선택을 받으면 동기화가 깨짐)
         self._select24_override = bool(rules.get('select_24', False))
-        # 집결지 쪽 생산 위치도 같은 이유로, 모르는 서버 PC(구버전·규칙 파일 없는 서버)면 끈다
-        self._rally_spawn_override = bool(rules.get('rally_spawn', False))
+        # 집결지 쪽 생산 위치는 기본 켜짐: 규칙 파일이 없는 서버(NAS 인터넷 서버 등)도 켠다.
+        # 서버 PC 런처가 명시적으로 끈 경우(rally_spawn: false)만 끈다. 모든 PC가 v0.9074 이상이어야 한다.
+        self._rally_spawn_override = bool(rules.get('rally_spawn', True))
         if 'turns' not in rules:
             return '서버 PC 런처가 구버전입니다. 양쪽 모두 같은 런처 버전을 사용하세요.'
         notes = []
