@@ -41,6 +41,7 @@ import replay_record_patch
 import replay_recorder
 import replay_model
 import game_address_patch
+import holepunch
 import arena_upload
 import cursor_guard
 try:  # 빌드 때 GitHub Secret ARENA_UPLOAD_TOKEN 으로 만들어지는 파일 (저장소에는 없음)
@@ -59,7 +60,7 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9065"
+APP_VERSION = "0.9066"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1588,9 +1589,11 @@ class App(tk.Tk):
         v0.9041/0.9042 pinned the game's own address; that is undone here.
         """
         try:
-            game_address_patch.apply(game_dir, None)
+            if holepunch.state(game_dir) != "proxy":
+                game_address_patch.apply(game_dir, None)
         except (OSError, ValueError):
             pass
+        self._setup_holepunch(game_dir, ip, multiplayer)
 
     # ── 대전 규칙 동기화 ─────────────────────────────────────
     # 명령 지연 턴·집결지 금광 인식이 PC마다 다르면 게임이 어긋나 곧 무승부로 끝난다.
@@ -1616,6 +1619,7 @@ class App(tk.Tk):
         """Client PC: take turns / rally setting from the server PC. Returns a status line."""
         self._rally_override = None
         self._select24_override = None
+        self._p2p_server = False           # 서버가 홀펀칭 중개(server.py 0.9019+)를 하는지
         try:
             own = ipaddress.IPv4Address(ip).is_loopback or ip in game_address_patch._local_ipv4s()
         except ValueError:
@@ -1628,6 +1632,7 @@ class App(tk.Tk):
                 rules = json.loads(r.read().decode('utf-8'))
         except Exception:
             return '서버 PC의 대전 규칙을 받지 못했습니다. 양쪽 턴·금광 인식 설정을 같게 맞추세요.'
+        self._p2p_server = bool(rules.get('p2p'))
         # 선택 한도 24 를 모르는 구버전 서버 PC 런처면 12기로 맞춘다 (상대가 24기 선택을 받으면 동기화가 깨짐)
         self._select24_override = bool(rules.get('select_24', False))
         if 'turns' not in rules:
@@ -2181,6 +2186,14 @@ class App(tk.Tk):
         ttk.Label(play_frame, text="원래 업데이트 서버가 없어져 매번 뜨는 경고입니다. [확인]을 자동으로 누릅니다.",
                   style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(4, 0))
 
+        self.holepunch_var = tk.BooleanVar(value=self.cfg.get("holepunch", True))
+        ttk.Checkbutton(play_frame, text="공유기 넘어 직접 연결 (홀펀칭, 안 되면 서버가 중계)",
+                        variable=self.holepunch_var, command=self._on_holepunch_toggle).pack(anchor="w", pady=(10, 0))
+        ttk.Label(play_frame, text="인터넷 서버(NAS)로 멀티할 때 방 참가가 10초 만에 튕기는 문제를 막습니다. "
+                                   "라드민·하마치 없이도 됩니다. 끄면 원래 TG_Net.dll 로 되돌립니다. "
+                                   "기록: 게임 폴더의 rkp2p.log",
+                  style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(4, 0))
+
         # ── 라드민 네트워크 최적화 ──
         try:
             cadence_current = pathlib.Path(self.latency.exe).read_bytes()[0xd7b97] == 3
@@ -2332,6 +2345,34 @@ class App(tk.Tk):
     def _on_skip_warn_toggle(self):
         self.cfg["skip_version_warning"] = bool(self.skip_warn_var.get())
         save_config(self.base_dir, self.cfg)
+
+    def _on_holepunch_toggle(self):
+        self.cfg["holepunch"] = bool(self.holepunch_var.get())
+        save_config(self.base_dir, self.cfg)
+        if not self.cfg["holepunch"]:
+            game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
+            try:
+                holepunch.uninstall(game_dir)
+            except (OSError, ValueError) as e:
+                messagebox.showwarning("홀펀칭", f"원래 TG_Net.dll 로 되돌리지 못했습니다 (게임이 켜져 있나요?).\n{e}")
+
+    def _setup_holepunch(self, game_dir, ip, multiplayer):
+        """Launch step: proxy on for internet-server multiplay, off (or removed) otherwise."""
+        if not self.cfg.get("holepunch", True):
+            try:
+                holepunch.uninstall(game_dir)
+            except (OSError, ValueError):
+                pass
+            return
+        try:
+            proxy = pathlib.Path(get_resource_dir(), "rkp2p", "TG_Net.dll").read_bytes()
+        except OSError:
+            return                                       # 개발 실행에서 아직 빌드 안 함
+        enabled = bool(multiplayer and getattr(self, "_p2p_server", False))
+        try:
+            holepunch.install(game_dir, proxy, enabled, ip, holepunch.server_udp_port(ip, DEFAULT_SERVER_IP))
+        except (OSError, ValueError) as e:
+            self.info_var.set(f"홀펀칭 준비 실패: {e}")
 
     def _on_select24_toggle(self):
         self.cfg["select_24"] = bool(self.select24_var.get())

@@ -18,6 +18,8 @@ on:
       - 'menu_free_guard_patch.py'
       - 'replay_*.py'
       - 'arena_upload.py'
+      - 'holepunch.py'
+      - 'rkp2p/**'
       - 'cnc_ddraw/**'
       - 'minimap_patch.py'
       - 'map_preview_tiles/**'
@@ -41,9 +43,11 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install PyInstaller
-        run: python -m pip install --upgrade pip pyinstaller sv-ttk pefile unicorn
+        run: python -m pip install --upgrade pip pyinstaller sv-ttk pefile unicorn ziglang
+      - name: Build rkp2p (hole punching TG_Net.dll proxy)
+        run: python rkp2p/build.py
       - name: Tests
-        run: python -m unittest test_map_editor_web test_map_preview test_rally_gold_patch test_highres_ready test_game_address_patch test_hotkey_patch test_selection_patch test_server_address test_server_ingame test_server_version test_game_version test_menu_free_guard test_replay test_arena_upload test_server_match_log test_server_lobby_cleanup test_cursor_guard -v
+        run: python -m unittest test_map_editor_web test_map_preview test_rally_gold_patch test_highres_ready test_game_address_patch test_hotkey_patch test_selection_patch test_server_address test_server_ingame test_server_version test_game_version test_menu_free_guard test_replay test_arena_upload test_server_match_log test_server_lobby_cleanup test_cursor_guard test_holepunch test_rkp2p -v
       - name: Arena upload token
         shell: pwsh
         env:

@@ -61,7 +61,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9018"
+SERVER_VERSION = "0.9019"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -1084,6 +1084,101 @@ class ClientSession:
         STATE.remove_rooms_for(self.account)
 
 
+P2P_MAGIC = b"RKP2"
+P2P_HELLO, P2P_QUERY, P2P_RELAY, P2P_DELIVER = 0x01, 0x02, 0x10, 0x11
+P2P_HELLO_ACK, P2P_ENDPOINT, P2P_PUNCH_REQ, P2P_UNKNOWN = 0x81, 0x82, 0x83, 0x84
+P2P_EP_TTL = 60.0          # 런처 DLL(rkp2p)은 10초마다 HELLO 를 보낸다
+P2P_MAX_PAYLOAD = 1100
+
+
+class P2PRendezvous:
+    """NAT 홀펀칭 중개 (런처 0.9066 의 TG_Net.dll 프록시 rkp2p 와 짝).
+
+    각 PC 의 게임 UDP 11223 소켓이 이 UDP 포트로 HELLO 를 보내면, 공유기가 붙인 실제
+    공인 주소:포트(endpoint)를 기억한다. 게임이 같은 방 상대에게 처음 보내려 할 때
+    QUERY 가 오면 양쪽에 서로의 endpoint 를 알려 동시에 구멍을 뚫게 하고(ENDPOINT /
+    PUNCH_REQ), 끝내 안 뚫리면 RELAY 로 받은 게임 패킷을 상대에게 DELIVER 한다.
+    게임이 쓰는 상대 주소(로비가 알려준 주소)와 endpoint 는 다를 수 있어 둘 다 싣는다.
+    같은 방에 있는 로비 접속끼리만 중개한다.
+    """
+
+    def __init__(self, state: "ServerState"):
+        self._state = state
+        self.endpoints: Dict[str, tuple] = {}     # UDP 출발 IP -> ((ip, port), 마지막 HELLO 시각)
+        self._seen: set = set()
+
+    @staticmethod
+    def _pack_ep(ep: tuple) -> bytes:
+        return socket.inet_aton(ep[0]) + struct.pack("!H", ep[1])
+
+    def _endpoint(self, ip: str):
+        e = self.endpoints.get(ip)
+        if e and _time.monotonic() - e[1] <= P2P_EP_TTL:
+            return e[0]
+        return None
+
+    def _client_at(self, ip: str):
+        found = [c for c in self._state.clients if c.peer_ip == ip and c.account]
+        return found[0] if len(found) == 1 else None
+
+    def _room_peer(self, me: "ClientSession", game_ip: str):
+        """`me` 와 같은 방에서, me 의 게임이 game_ip 로 알고 있는 플레이어."""
+        if not me.room_title:
+            return None
+        found = [c for c in self._state.clients_in_room(me.room_title)
+                 if c is not me and c.address_for(me) == game_ip]
+        return found[0] if len(found) == 1 else None
+
+    def _note(self, key, msg):
+        if key not in self._seen:
+            self._seen.add(key)
+            log.info(msg)
+
+    def handle(self, transport, data: bytes, addr: tuple):
+        if len(data) < 5:
+            return
+        kind, body = data[4], data[5:]
+        src_ip = addr[0]
+        if kind == P2P_HELLO:
+            first = self._endpoint(src_ip) != addr
+            self.endpoints[src_ip] = (addr, _time.monotonic())
+            if first:
+                me = self._client_at(src_ip)
+                log.info(f"P2P: {src_ip} endpoint {addr[0]}:{addr[1]} "
+                         f"(account={_kr(me.account) if me else None!r})")
+            transport.sendto(P2P_MAGIC + bytes([P2P_HELLO_ACK]) + self._pack_ep(addr), addr)
+            return
+        if kind not in (P2P_QUERY, P2P_RELAY) or len(body) < 4:
+            return
+        if self._endpoint(src_ip) != addr:
+            self.endpoints[src_ip] = (addr, _time.monotonic())
+        game_ip = socket.inet_ntoa(body[:4])
+        me = self._client_at(src_ip)
+        other = self._room_peer(me, game_ip) if me else None
+        other_ep = self._endpoint(other.peer_ip) if other else None
+        if kind == P2P_QUERY:
+            if other_ep is None:
+                self._note(("unknown", src_ip, game_ip),
+                           f"P2P: {src_ip} asked for {game_ip} -- not a hole-punching peer in the same room "
+                           f"(me={_kr(me.account) if me else None!r}, peer={_kr(other.account) if other else None!r})")
+                transport.sendto(P2P_MAGIC + bytes([P2P_UNKNOWN]) + body[:4], addr)
+                return
+            transport.sendto(P2P_MAGIC + bytes([P2P_ENDPOINT]) + body[:4] + self._pack_ep(other_ep), addr)
+            transport.sendto(P2P_MAGIC + bytes([P2P_PUNCH_REQ]) + socket.inet_aton(me.address_for(other))
+                             + self._pack_ep(addr), other_ep)
+            log.info(f"P2P punch: {_kr(me.account)!r} {addr[0]}:{addr[1]} <-> "
+                     f"{_kr(other.account)!r} {other_ep[0]}:{other_ep[1]}")
+            return
+        # RELAY
+        payload = body[4:]
+        if other_ep is None or not payload or len(payload) > P2P_MAX_PAYLOAD:
+            return
+        transport.sendto(P2P_MAGIC + bytes([P2P_DELIVER]) + socket.inet_aton(me.address_for(other)) + payload,
+                         other_ep)
+        self._note(("relay", src_ip, other.peer_ip),
+                   f"P2P relay: {_kr(me.account)!r} -> {_kr(other.account)!r} (홀펀칭 실패, 서버가 중계)")
+
+
 class DP8RelayProtocol(asyncio.DatagramProtocol):
     """Forward WG_IPX.dll EnumHosts broadcasts (UDP 47584) to known room peers.
 
@@ -1098,6 +1193,7 @@ class DP8RelayProtocol(asyncio.DatagramProtocol):
         self._state = state
         self._transport: Optional[asyncio.DatagramTransport] = None
         self._seen: set = set()   # 진단 로그 중복 방지
+        self._p2p = P2PRendezvous(state)
 
     def connection_made(self, transport: asyncio.DatagramTransport):
         self._transport = transport
@@ -1106,6 +1202,12 @@ class DP8RelayProtocol(asyncio.DatagramProtocol):
         log.info(f"DP8 broadcast relay listening on UDP 0.0.0.0:{UDP_RELAY_PORT}")
 
     def datagram_received(self, data: bytes, addr: tuple):
+        if data[:4] == P2P_MAGIC:
+            try:
+                self._p2p.handle(self._transport, data, addr)
+            except Exception as e:
+                log.warning(f"P2P error from {addr}: {e}")
+            return
         src_ip, src_port = addr
 
         # 이 브로드캐스트 출발IP와 일치하는 TCP 접속 찾기
@@ -1180,14 +1282,14 @@ class _HistoryHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/ranking"):
             self._json(compute_ranking())
         elif self.path.startswith("/version"):
-            self._json({"server_version": SERVER_VERSION})
+            self._json({"server_version": SERVER_VERSION, "p2p": 1})
         elif self.path.startswith("/rules"):
             try:
                 with open(RULES_FILE, "r", encoding="utf-8") as f:
                     rules = json.load(f)
             except (OSError, ValueError):
                 rules = {}
-            self._json({"server_version": SERVER_VERSION, **rules})
+            self._json({"server_version": SERVER_VERSION, **rules, "p2p": 1})
         else:  # /matches.json, /matches, /   (승/패는 결과코드로 다시 판정해 보여 줌)
             matches = _load_matches()
             for rec in matches:
