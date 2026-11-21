@@ -634,15 +634,25 @@ table.grid input[type=number]{width:64px}
     }
     return best;
   }
+  // Game cells vs. this editor's world pixels.
+  // The game lays terrain record (col,row) over cells X..X+7, Y..Y+3 with X = col*8 + (row&1)*4, Y = row*2
+  // (0040B580 -> 0040B6F0; bridges 0040BDD0 use the same anchor), so the tile diamond is centred on cell
+  // (X+4, Y+2). Resources, decorations and start points sit at pixel (x*32, y*32) of that cell grid (00439E60).
+  // This editor draws the tile diamond centred on world (X*32, Y*32), i.e. 4 cells left and 2 cells up, so a
+  // record cell (x,y) is drawn at world (x*32 - 128, y*32 - 64). Bridges/ramps (kind 3) keep their own
+  // shipped-map templates and are not converted.
+  const CELL_OX = -128, CELL_OY = -64;
+  const cellX = x => x * 32 + CELL_OX, cellY = y => y * 32 + CELL_OY;
+  const worldCell = (wx, wy) => [Math.floor((wx - CELL_OX) / 32), Math.floor((wy - CELL_OY) / 32)];
   function cellBuildable(m, cx, cy) {
     if (cx < 0 || cy < 0 || cx >= m.W || cy >= m.H) return false;
-    const t = tileAtWorld(m, cx * 32 + 16, cy * 32 + 16); if (!t) return false;
+    const t = tileAtWorld(m, cellX(cx) + 16, cellY(cy) + 16); if (!t) return false;
     const c = tileCorners(m, t[0], t[1]);
     return BUILDABLE[c.N] && BUILDABLE[c.E] && BUILDABLE[c.S] && BUILDABLE[c.W] &&
       HEIGHT[c.N] === HEIGHT[c.E] && HEIGHT[c.N] === HEIGHT[c.S] && HEIGHT[c.N] === HEIGHT[c.W];
   }
   function cellWater(m, cx, cy) {
-    const t = tileAtWorld(m, cx * 32 + 16, cy * 32 + 16); if (!t) return false;
+    const t = tileAtWorld(m, cellX(cx) + 16, cellY(cy) + 16); if (!t) return false;
     const c = tileCorners(m, t[0], t[1]), w = x => x === 0 || x === 8;
     return w(c.N) && w(c.E) && w(c.S) && w(c.W);
   }
@@ -793,7 +803,7 @@ table.grid input[type=number]{width:64px}
     TRANS, MID, EDGE, CORNER, DIAG, TILESETS, SUBTERRAIN, RACES, COLORS, KIND, TILE_DEF,
     decorList, resourceIds, tilesFor, cornersOf, recordFor, compat,
     parseRKM, serializeRKM, newMap, initVerts, getV, setV, vIndex, tileCorners, tilesOfVertex,
-    retile, retileAround, paint, paintVerts, smoothDiagonals, shapeVerts, suggestRamp, findSubAnchor, SUB_MOD_FROM, subMismatch, subSpacingOK, SUB_SIZE, SUB_SPACING, LEVEL, BUILDABLE, cellBuildable, cellWater, startProblems, nearestStart, START_R, tileAtWorld, toAB, fromAB, idxFind, jtlInfo, decodeTile, u32, u16,
+    retile, retileAround, paint, paintVerts, smoothDiagonals, shapeVerts, suggestRamp, findSubAnchor, SUB_MOD_FROM, subMismatch, subSpacingOK, SUB_SIZE, SUB_SPACING, LEVEL, BUILDABLE, cellBuildable, cellWater, CELL_OX, CELL_OY, cellX, cellY, worldCell, startProblems, nearestStart, START_R, tileAtWorld, toAB, fromAB, idxFind, jtlInfo, decodeTile, u32, u16,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -885,11 +895,14 @@ table.grid input[type=number]{width:64px}
       const sc = document.createElement('script'); sc.src = 'tiles/' + info.file + '_OBJ.js'; sc.onload = done; sc.onerror = () => ok(false); document.head.appendChild(sc);
     });
   }
+  // world px of an object's cell (top-left). Bridges/ramps use their template anchor; everything else the game cell grid.
+  function objPos(o) { return o.kind === R.KIND.SUB ? [o.x * 32, o.y * 32] : [R.cellX(o.x), R.cellY(o.y)]; }
   // sprite + draw position for an object (world px of top-left), or null
   function spriteOf(o, ts) {
     const sp = S.spr[ts == null ? S.map.tileset : ts]; if (!sp) return null;
-    if (o.kind === R.KIND.SUB) { const e = sp.meta.sub[o.id]; return e ? { e, img: sp.img, x: o.x * 32, y: o.y * 32 } : null; }
-    const e = sp.meta.obj[o.id]; return e ? { e, img: sp.img, x: o.x * 32 + e.ox, y: o.y * 32 + e.oy } : null;
+    const [x, y] = objPos(o);
+    if (o.kind === R.KIND.SUB) { const e = sp.meta.sub[o.id]; return e ? { e, img: sp.img, x, y } : null; }
+    const e = sp.meta.obj[o.id]; return e ? { e, img: sp.img, x: x + e.ox, y: y + e.oy } : null;
   }
   function thumb(o, w, h) {
     const c = document.createElement('canvas'); c.width = w * 2; c.height = h * 2; const g = c.getContext('2d');
@@ -1167,14 +1180,15 @@ table.grid input[type=number]{width:64px}
     }
     if (S.cellGrid && z >= 0.2) {
       ctx.strokeStyle = 'rgba(120,200,255,.16)'; ctx.lineWidth = 1 / z; ctx.beginPath();
-      const cx0 = Math.max(0, Math.floor(tl.x / 32)), cx1 = Math.min(m.W, Math.ceil(br.x / 32)), cy0 = Math.max(0, Math.floor(tl.y / 32)), cy1 = Math.min(m.H, Math.ceil(br.y / 32));
-      for (let x = cx0; x <= cx1; x++) { ctx.moveTo(x * 32, cy0 * 32); ctx.lineTo(x * 32, cy1 * 32); }
-      for (let y = cy0; y <= cy1; y++) { ctx.moveTo(cx0 * 32, y * 32); ctx.lineTo(cx1 * 32, y * 32); }
+      const [a0, b0] = R.worldCell(tl.x, tl.y), [a1, b1] = R.worldCell(br.x, br.y);
+      const cx0 = Math.max(0, a0), cx1 = Math.min(m.W, a1 + 1), cy0 = Math.max(0, b0), cy1 = Math.min(m.H, b1 + 1);
+      for (let x = cx0; x <= cx1; x++) { ctx.moveTo(R.cellX(x), R.cellY(cy0)); ctx.lineTo(R.cellX(x), R.cellY(cy1)); }
+      for (let y = cy0; y <= cy1; y++) { ctx.moveTo(R.cellX(cx0), R.cellY(y)); ctx.lineTo(R.cellX(cx1), R.cellY(y)); }
       ctx.stroke();
     }
     if ($('lyMapEdge').checked) {
-      ctx.strokeStyle = 'rgba(255,200,80,.7)'; ctx.lineWidth = 2 / z; ctx.strokeRect(0, 0, m.W * 32, m.H * 32);
-      ctx.setLineDash([12 / z, 8 / z]); ctx.strokeStyle = 'rgba(255,255,255,.45)'; ctx.strokeRect(128, 128, (m.W - 8) * 32, (m.H - 8) * 32); ctx.setLineDash([]);
+      ctx.strokeStyle = 'rgba(255,200,80,.7)'; ctx.lineWidth = 2 / z; ctx.strokeRect(R.cellX(0), R.cellY(0), m.W * 32, m.H * 32);
+      ctx.setLineDash([12 / z, 8 / z]); ctx.strokeStyle = 'rgba(255,255,255,.45)'; ctx.strokeRect(R.cellX(4), R.cellY(4), (m.W - 8) * 32, (m.H - 8) * 32); ctx.setLineDash([]);
     }
     if (S.marks) {
       ctx.lineWidth = 2 / z; ctx.font = (14 / Math.max(z, .3)) + 'px sans-serif';
@@ -1189,14 +1203,14 @@ table.grid input[type=number]{width:64px}
     drawCursor(z);
   }
   function drawObject(c, o, z, sel) {
-    const sp = spriteOf(o);
+    const sp = spriteOf(o), [ox, oy] = objPos(o);
     if (sp) {
       c.drawImage(sp.img, sp.e.x, sp.e.y, sp.e.w, sp.e.h, sp.x, sp.y, sp.e.w, sp.e.h);
-      if (o.kind === R.KIND.RES && z > 0.3) { c.fillStyle = '#fff'; c.strokeStyle = '#000'; c.lineWidth = 3; c.font = 'bold 15px sans-serif'; c.textAlign = 'center'; c.strokeText(String(o.val), o.x * 32 + 16, o.y * 32 + 44); c.fillText(String(o.val), o.x * 32 + 16, o.y * 32 + 44); c.textAlign = 'start'; }
+      if (o.kind === R.KIND.RES && z > 0.3) { c.fillStyle = '#fff'; c.strokeStyle = '#000'; c.lineWidth = 3; c.font = 'bold 15px sans-serif'; c.textAlign = 'center'; c.strokeText(String(o.val), ox + 16, oy + 44); c.fillText(String(o.val), ox + 16, oy + 44); c.textAlign = 'start'; }
       if (sel) { c.strokeStyle = '#fff'; c.setLineDash([6 / z, 4 / z]); c.lineWidth = 2 / z; c.strokeRect(sp.x, sp.y, sp.e.w, sp.e.h); c.setLineDash([]); }
       return;
     }
-    const px = o.x * 32 + 16, py = o.y * 32 + 16;
+    const px = ox + 16, py = oy + 16;
     c.save(); c.translate(px, py);
     if (o.kind === R.KIND.RES) {
       const ids = R.resourceIds(S.map.tileset), gold = o.id === ids.gold;
@@ -1219,11 +1233,11 @@ table.grid input[type=number]{width:64px}
     c.restore();
   }
   function drawStart(c, p, i, z, sel) {
-    const px = p.x * 32 + 16, py = p.y * 32 + 16, col = (R.COLORS[p.team] || R.COLORS[i % 8])[1];
+    const px = R.cellX(p.x) + 16, py = R.cellY(p.y) + 16, col = (R.COLORS[p.team] || R.COLORS[i % 8])[1];
     const bad = R.startProblems(S.map, p.x, p.y), r = R.START_R;
     c.save(); c.fillStyle = bad ? 'rgba(255,40,30,.35)' : 'rgba(80,255,80,.12)'; c.strokeStyle = bad ? '#ff4030' : 'rgba(120,255,120,.6)'; c.lineWidth = 2 / z;
-    c.fillRect((p.x - r) * 32, (p.y - r) * 32, (2 * r + 1) * 32, (2 * r + 1) * 32); c.strokeRect((p.x - r) * 32, (p.y - r) * 32, (2 * r + 1) * 32, (2 * r + 1) * 32);
-    if (bad) { c.fillStyle = '#ff6050'; c.font = 'bold ' + (15 / Math.max(z, .35)) + 'px sans-serif'; c.textAlign = 'center'; c.fillText('본진 건설 불가 (물/절벽)', px, (p.y - r) * 32 - 8 / Math.max(z, .35)); }
+    c.fillRect(R.cellX(p.x - r), R.cellY(p.y - r), (2 * r + 1) * 32, (2 * r + 1) * 32); c.strokeRect(R.cellX(p.x - r), R.cellY(p.y - r), (2 * r + 1) * 32, (2 * r + 1) * 32);
+    if (bad) { c.fillStyle = '#ff6050'; c.font = 'bold ' + (15 / Math.max(z, .35)) + 'px sans-serif'; c.textAlign = 'center'; c.fillText('본진 건설 불가 (물/절벽)', px, R.cellY(p.y - r) - 8 / Math.max(z, .35)); }
     c.restore();
     c.save(); c.translate(px, py);
     c.lineWidth = 6; c.strokeStyle = '#000'; c.beginPath(); c.ellipse(0, 0, 70, 36, 0, 0, Math.PI * 2); c.stroke();
@@ -1273,16 +1287,17 @@ table.grid input[type=number]{width:64px}
         ctx.fillStyle = 'rgba(255,50,40,.35)'; const [w2, h2] = R.SUB_SIZE[o.id]; drawDiamond(ctx, h.x, h.y, w2 / 2, h2 / 2); ctx.fill();
         ctx.fillStyle = '#ff8070'; ctx.font = 'bold ' + (16 / Math.max(z, .35)) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(bad, h.x, h.y - h2 / 2 - 8 / Math.max(z, .35)); ctx.textAlign = 'start';
       } else if (sp) { ctx.globalAlpha = .7; ctx.drawImage(sp.img, sp.e.x, sp.e.y, sp.e.w, sp.e.h, sp.x, sp.y, sp.e.w, sp.e.h); ctx.globalAlpha = 1; ctx.setLineDash([8 / z, 6 / z]); ctx.strokeStyle = '#ffe070'; ctx.strokeRect(sp.x, sp.y, sp.e.w, sp.e.h); ctx.setLineDash([]); }
-      if (o.kind !== R.KIND.SUB) { ctx.strokeStyle = '#fff'; ctx.strokeRect(x * 32, y * 32, 32, 32); }
+      if (o.kind !== R.KIND.SUB) { ctx.strokeStyle = '#fff'; ctx.strokeRect(R.cellX(x), R.cellY(y), 32, 32); }
     } else if (['start'].includes(S.tool)) {
-      const cx = Math.floor(h.x / 32) * 32, cy = Math.floor(h.y / 32) * 32; ctx.strokeStyle = '#fff'; ctx.strokeRect(cx, cy, 32, 32);
+      const [x, y] = R.worldCell(h.x, h.y); ctx.strokeStyle = '#fff'; ctx.strokeRect(R.cellX(x), R.cellY(y), 32, 32);
     }
   }
 
   // ---------------------------------------------------------------- minimap
   function mmGeom() {
+    // the minimap shows the game map (cells 0..W, 0..H)
     const m = S.map, ws = { w: m.W * 32, h: m.H * 32 }, s = Math.min(mm.width / ws.w, mm.height / ws.h);
-    return { s, ox: (mm.width - ws.w * s) / 2, oy: (mm.height - ws.h * s) / 2 };
+    return { s, ox: (mm.width - ws.w * s) / 2 - R.cellX(0) * s, oy: (mm.height - ws.h * s) / 2 - R.cellY(0) * s };
   }
   let mmCache = null, mmT = 0;
   function drawMinimap(full) {
@@ -1293,17 +1308,17 @@ table.grid input[type=number]{width:64px}
     const g = mmGeom(), set = S.gfx.tilesets[m.tileset];
     if (!mmCache) {
       mmCache = document.createElement('canvas'); mmCache.width = mm.width; mmCache.height = mm.height; const c = mmCache.getContext('2d');
-      c.save(); c.translate(g.ox, g.oy); c.scale(g.s, g.s); c.beginPath(); c.rect(0, 0, m.W * 32, m.H * 32); c.clip();
+      c.save(); c.translate(g.ox, g.oy); c.scale(g.s, g.s); c.beginPath(); c.rect(R.cellX(0), R.cellY(0), m.W * 32, m.H * 32); c.clip();
       for (let y = 0; y < m.ch; y++) for (let x = 0; x < m.cw; x++) {
         const i = y * m.cw + x, cx = x * 256 + (y & 1) * 128, cy = y * 64;
         c.fillStyle = set ? set.avg[m.tIdx[i]] : FALLBACK[m.tC[i]] || '#444';
         drawDiamond(c, cx, cy, 130, 66); c.fill();
       }
-      for (const o of m.objects) { c.fillStyle = o.kind === R.KIND.RES ? '#ffe040' : o.kind === R.KIND.SUB ? '#e050e0' : '#1a5a12'; c.fillRect(o.x * 32 - 40, o.y * 32 - 40, 112, 112); }
+      for (const o of m.objects) { const [x, y] = objPos(o); c.fillStyle = o.kind === R.KIND.RES ? '#ffe040' : o.kind === R.KIND.SUB ? '#e050e0' : '#1a5a12'; c.fillRect(x - 40, y - 40, 112, 112); }
       c.restore();
     }
     mctx.drawImage(mmCache, 0, 0);
-    m.players.forEach((p, i) => { mctx.fillStyle = (R.COLORS[p.team] || R.COLORS[i % 8])[1]; mctx.strokeStyle = '#000'; const X = g.ox + p.x * 32 * g.s, Y = g.oy + p.y * 32 * g.s; mctx.fillRect(X - 3, Y - 3, 7, 7); mctx.strokeRect(X - 3, Y - 3, 7, 7); });
+    m.players.forEach((p, i) => { mctx.fillStyle = (R.COLORS[p.team] || R.COLORS[i % 8])[1]; mctx.strokeStyle = '#000'; const X = g.ox + (R.cellX(p.x) + 16) * g.s, Y = g.oy + (R.cellY(p.y) + 16) * g.s; mctx.fillRect(X - 3, Y - 3, 7, 7); mctx.strokeRect(X - 3, Y - 3, 7, 7); });
     const tl = s2w(0, 0), br = s2w(cv.width, cv.height);
     mctx.strokeStyle = '#fff'; mctx.lineWidth = 1; mctx.strokeRect(g.ox + tl.x * g.s, g.oy + tl.y * g.s, (br.x - tl.x) * g.s, (br.y - tl.y) * g.s);
   }
@@ -1367,7 +1382,7 @@ table.grid input[type=number]{width:64px}
       const sp = S.spr[S.map.tileset], e = sp && sp.meta.sub[subId != null ? subId : S.subSel];
       if (e) return [Math.round((wx - e.w / 2) / 32), Math.round((wy - e.h / 2) / 32)];
     }
-    return [Math.floor(wx / 32), Math.floor(wy / 32)];
+    return R.worldCell(wx, wy);
   }
   function subCheck(id, wx, wy, ignore) {
     const a = R.findSubAnchor(S.map, id, wx, wy, ignore);
@@ -1402,13 +1417,13 @@ table.grid input[type=number]{width:64px}
   }
   function hitObject(wx, wy) {
     const m = S.map; let best = null, bd = 1e9;
-    if ($('lyStart').checked) m.players.forEach((p) => { const d = Math.hypot(wx - (p.x * 32 + 16), (wy - (p.y * 32 + 16)) * 2); if (d < 80 && d < bd) { bd = d; best = p; } });
+    if ($('lyStart').checked) m.players.forEach((p) => { const d = Math.hypot(wx - (R.cellX(p.x) + 16), (wy - (R.cellY(p.y) + 16)) * 2); if (d < 80 && d < bd) { bd = d; best = p; } });
     if ($('lyObj').checked) for (const o of m.objects) {
-      const sp = spriteOf(o); let d;
+      const sp = spriteOf(o), [ox, oy] = objPos(o); let d;
       if (sp) {
         if (wx < sp.x || wy < sp.y || wx > sp.x + sp.e.w || wy > sp.y + sp.e.h) continue;
-        d = Math.hypot(wx - (o.x * 32 + 16), wy - (o.y * 32 + 16)) * (o.kind === R.KIND.SUB ? 3 : 1); if (d < bd) { bd = d; best = o; }
-      } else { d = Math.hypot(wx - (o.x * 32 + 16), (wy - (o.y * 32 + 16)) * 1.6); if (d < 60 && d < bd) { bd = d; best = o; } }
+        d = Math.hypot(wx - (ox + 16), wy - (oy + 16)) * (o.kind === R.KIND.SUB ? 3 : 1); if (d < bd) { bd = d; best = o; }
+      } else { d = Math.hypot(wx - (ox + 16), (wy - (oy + 16)) * 1.6); if (d < 60 && d < bd) { bd = d; best = o; } }
     }
     return best;
   }
@@ -1448,7 +1463,8 @@ table.grid input[type=number]{width:64px}
       case 'pick': pickTile(w.x, w.y); break;
       case 'start': {
         const p = S.map.players[S.startSel]; if (!p) break; notePls();
-        let x = Math.min(S.map.W - 1, Math.max(0, Math.floor(w.x / 32))), y = Math.min(S.map.H - 1, Math.max(0, Math.floor(w.y / 32)));
+        const [cx, cy] = R.worldCell(w.x, w.y);
+        let x = Math.min(S.map.W - 1, Math.max(0, cx)), y = Math.min(S.map.H - 1, Math.max(0, cy));
         if (R.startProblems(S.map, x, y)) { const n = R.nearestStart(S.map, x, y); if (n) { [x, y] = n; toast('물/절벽을 피해 본진을 지을 수 있는 가장 가까운 곳으로 옮겼습니다'); } else toast('근처에 본진을 지을 평지가 없습니다', 3500); }
         p.x = x; p.y = y; S.sel = p; showSel(); draw(); drawMinimap(); break;
       }
@@ -1515,7 +1531,7 @@ table.grid input[type=number]{width:64px}
   function updateStatusMap() { const m = S.map; $('stMap').textContent = m ? fileName() + ' · ' + R.TILESETS[m.tileset].name + ' · ' + m.W + '×' + m.H + ' · 오브젝트 ' + m.objects.length : '-'; }
   function updateStatus(w) {
     const m = S.map; if (!m) return;
-    $('stCell').textContent = Math.floor(w.x / 32) + ', ' + Math.floor(w.y / 32);
+    $('stCell').textContent = R.worldCell(w.x, w.y).join(', ');
     const t = tileAt(w.x, w.y);
     if (t) {
       const i = t[1] * m.cw + t[0], c = R.cornersOf(m.tA[i], m.tB[i]), b = R.TILESETS[m.tileset].brushes;
@@ -1678,7 +1694,7 @@ table.grid input[type=number]{width:64px}
   function centerView() {
     const m = S.map, r = $('view').getBoundingClientRect(), dpr = S.dpr || 1;
     S.cam.z = Math.max(0.05, Math.min(0.5, Math.min(r.width * dpr / (m.W * 32), r.height * dpr / (m.H * 32)) * 0.95));
-    S.cam.x = m.W * 16; S.cam.y = m.H * 16; $('zoomLbl').textContent = Math.round(S.cam.z * 100) + '%';
+    S.cam.x = R.cellX(m.W / 2); S.cam.y = R.cellY(m.H / 2); $('zoomLbl').textContent = Math.round(S.cam.z * 100) + '%';
   }
 
   // ------------------------------------------------------------------- wiring
