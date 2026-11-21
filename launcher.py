@@ -41,6 +41,12 @@ import replay_record_patch
 import replay_recorder
 import replay_model
 import game_address_patch
+import arena_upload
+import cursor_guard
+try:  # 빌드 때 GitHub Secret ARENA_UPLOAD_TOKEN 으로 만들어지는 파일 (저장소에는 없음)
+    from arena_secret import ARENA_TOKEN
+except ImportError:
+    ARENA_TOKEN = ""
 from tkinter import ttk, messagebox
 
 # server.py는 런타임 exec로 실행되므로 PyInstaller가 의존성을 자동 감지 못 한다.
@@ -53,12 +59,18 @@ import dataclasses    # noqa: F401
 import pathlib        # noqa: F401
 import typing         # noqa: F401
 
-APP_VERSION = "0.9062"
+APP_VERSION = "0.9064"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
 DEFAULT_DOMAINS = [GAME_HOST]
 DEFAULT_IP = "127.0.0.1"
+# 공식 프리서버: 서버 소유자의 NAS(akansas.synology.me)에서 Docker 로 운영 (nas-server/ 참고).
+# 공유기가 TCP 11223(로비)·11225(전적) 을 NAS 컨테이너로 전달한다. hosts 는 IP 만 받으므로 IP 로 둔다.
+DEFAULT_SERVER_IP = "112.159.73.235"
+DEFAULT_SERVER_MARK = "default_server_ip_applied"
+# 전적 사이트 (rtsarena 저장소, NAS 컨테이너 rtsarena-web). 사람 2명 이상 경기 리플레이를 자동으로 올린다.
+ARENA_URL = "http://112.159.73.235:30013"
 SERVER_PORT = 11223   # 서버 실행 여부 확인용 (로비 TCP)
 SERVER_LOOPBACK = "127.0.0.1"
 HOSTS_PATH = r"C:\Windows\System32\drivers\etc\hosts"
@@ -232,6 +244,27 @@ def load_config(base_dir):
         except (OSError, ValueError):
             pass
     return cfg
+
+
+def apply_default_server(cfg):
+    """처음 한 번만 서버 VPN IP 를 공식 프리서버(DEFAULT_SERVER_IP)로 맞춘다.
+
+    이후에는 사용자가 '서버 VPN IP' 칸에서 바꾼 값을 그대로 유지한다(표시 키로 한 번만 적용).
+    바뀌었으면 True (호출한 쪽이 저장).
+    """
+    if cfg.get(DEFAULT_SERVER_MARK):
+        return False
+    cfg['last_server_ip'] = DEFAULT_SERVER_IP
+    cfg[DEFAULT_SERVER_MARK] = True
+    return True
+
+
+def display_name(name):
+    """서버 JSON 의 계정 이름(CP949 바이트를 latin-1 로 보관)을 한글로 보이게."""
+    try:
+        return str(name).encode('latin-1').decode('cp949')
+    except (UnicodeError, ValueError):
+        return str(name)
 
 
 def config_path(base_dir):
@@ -640,6 +673,11 @@ class App(tk.Tk):
         self.base_dir = get_base_dir()
         self.server = ServerManager(self.base_dir)
         self.cfg = load_config(self.base_dir)
+        if apply_default_server(self.cfg):
+            try:
+                save_config(self.base_dir, self.cfg)
+            except OSError:
+                pass
         self.radmin_session = None
         self.domains = list(self.cfg.get("domains", DEFAULT_DOMAINS))
 
@@ -682,6 +720,9 @@ class App(tk.Tk):
                    command=self._on_multi_play).pack(side="left", fill="x", expand=True, padx=(6, 0))
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True, padx=14, pady=(10, 0))
+        # 리플레이 탭 목록이 업로드 상태를 보여 주므로 탭보다 먼저 만든다 (시작은 아래에서)
+        self.arena = arena_upload.ArenaUploader(self.base_dir, replay_recorder.replay_dir(self.base_dir),
+                                                self.cfg.get("arena_url") or ARENA_URL, ARENA_TOKEN)
 
         self._build_server_tab(notebook)
         self._build_client_tab(notebook)
@@ -697,6 +738,14 @@ class App(tk.Tk):
         self.recorder = replay_recorder.Recorder(self.base_dir, lambda: self.cfg.get("game_dir", DEFAULT_GAME_DIR))
         if self.cfg.get("replay_record", True):
             self.recorder.start()
+        if self.cfg.get("arena_upload", True):
+            self.arena.start()
+        try:
+            confine = self.winmode.read_settings().get("confine", True)
+        except (OSError, UnicodeError, ValueError):
+            confine = True
+        self.cursor_guard = cursor_guard.CursorGuard(enabled=confine)   # 전체화면 마우스 가두기
+        self.cursor_guard.start()
 
 
         self._refresh_info_bar()
@@ -1169,7 +1218,15 @@ class App(tk.Tk):
                 return
         self.map_editor.stop()
         try:
+            self.cursor_guard.stop()
+        except Exception:
+            pass
+        try:
             self.recorder.stop()
+        except Exception:
+            pass
+        try:
+            self.arena.stop()
         except Exception:
             pass
         self.destroy()
@@ -1377,7 +1434,20 @@ class App(tk.Tk):
                        "   rhakmugame.hangame.naver.com 줄만 바뀌고 나머지는 보존됩니다.",
                   style="Muted.TLabel").pack(anchor="w", pady=(8, 0))
 
+        self._apply_saved_host()
         self._refresh_hosts_view()
+
+    def _apply_saved_host(self):
+        """런처 시작 시: hosts 의 게임 주소를 저장된 서버 VPN IP 로 맞춘다(관리자 권한일 때만, 조용히)."""
+        ip = self.cfg.get('last_server_ip', '').strip()
+        if not ip or not is_admin():
+            return
+        try:
+            if HostsManager.read_current_ip([GAME_HOST]) != ip:
+                HostsManager.set_game_host(ip)
+                self._last_applied_ip = ip
+        except OSError:
+            pass   # 게임 실행 직전에 다시 확인·적용하고 실패하면 그때 알린다
 
     def _refresh_hosts_view(self):
         if not hasattr(self, "cur_ip_var"):
@@ -1488,7 +1558,12 @@ class App(tk.Tk):
                 f"{GAME_EXE}를 찾을 수 없습니다.\n({exe})\n\n설정 탭에서 게임 경로를 확인하세요.")
             return
         try:
-            HostsManager.set_game_host(ip)
+            # 실행 전 확인: hosts 의 게임 주소가 이번 접속 IP 와 다르면 고쳐 쓰고 다시 읽어 검증한다.
+            if HostsManager.read_current_ip([GAME_HOST]) != ip:
+                HostsManager.set_game_host(ip)
+            current = HostsManager.read_current_ip([GAME_HOST])
+            if current != ip:
+                raise OSError(f"hosts 의 {GAME_HOST} 주소가 {current} 입니다 ({ip} 로 바꾸지 못함).")
         except PermissionError:
             messagebox.showwarning("권한 오류",
                 "hosts 파일 수정에 관리자 권한이 필요합니다.\n런처를 관리자 권한으로 실행해 주세요.")
@@ -1769,15 +1844,24 @@ class App(tk.Tk):
         self.replay_record_var = tk.BooleanVar(value=self.cfg.get("replay_record", True))
         ttk.Checkbutton(btns, text="경기 자동 기록", variable=self.replay_record_var,
                         command=self._on_replay_record_toggle).pack(side="right")
+        arena_row = ttk.Frame(frame)
+        arena_row.pack(fill="x", pady=(0, 6))
+        self.arena_upload_var = tk.BooleanVar(value=self.cfg.get("arena_upload", True))
+        ttk.Checkbutton(arena_row, text="전적 사이트에 자동 업로드 (사람 2명 이상 경기만, 컴퓨터와 한 싱글 경기는 안 올림)",
+                        variable=self.arena_upload_var, command=self._on_arena_upload_toggle).pack(side="left")
+        ttk.Button(arena_row, text="전적 사이트 열기", command=self._open_arena_site).pack(side="right")
+        self.arena_status = tk.StringVar(value="")
+        ttk.Label(arena_row, textvariable=self.arena_status, style="Muted.TLabel").pack(side="right", padx=8)
         self.replay_start_save_var = tk.BooleanVar(value=self.cfg.get("replay_start_save", True))
         ttk.Checkbutton(btns, text="경기 시작 저장(게임 화면 재생에 필요)", variable=self.replay_start_save_var,
                         command=self._on_replay_start_save_toggle).pack(side="right", padx=(0, 8))
         ttk.Label(frame, text="런처를 켜 둔 채 게임하면 경기마다 자동 저장됩니다. 더블클릭하면 재생합니다 "
                               "(1·2·4 속도, Space 정지, ←→ 10초, S 통계, Esc 종료, 맵 전체 공개).",
                   style="Muted.TLabel", wraplength=640, justify="left").pack(anchor="w")
-        cols = ("date", "time", "map", "players")
+        cols = ("date", "time", "map", "players", "arena")
         tree = ttk.Treeview(frame, columns=cols, show="headings", height=9, selectmode="browse")
-        for c, t, w in (("date", "날짜", 140), ("time", "플레이 시간", 80), ("map", "맵", 150), ("players", "참가자 (아이디 / 진영)", 330)):
+        for c, t, w in (("date", "날짜", 140), ("time", "플레이 시간", 80), ("map", "맵", 150),
+                        ("players", "참가자 (아이디 / 진영)", 260), ("arena", "전적 사이트", 90)):
             tree.heading(c, text=t)
             tree.column(c, width=w, anchor="w")
         tree.pack(fill="both", expand=True, pady=(6, 6))
@@ -1806,7 +1890,8 @@ class App(tk.Tk):
                                  for p in h.get("players", []))
             mapname = pathlib.Path(h.get("map", "").replace("\\", "/")).stem
             tree.insert("", "end", iid=str(path), values=(h.get("date", "").replace("T", " "),
-                                                          replay_model.fmt_time(dur), mapname, players))
+                                                          replay_model.fmt_time(dur), mapname, players,
+                                                          self.arena.file_status(path)))
 
     def _selected_replay(self):
         sel = self.replay_tree.selection()
@@ -1903,6 +1988,18 @@ class App(tk.Tk):
         else:
             self.recorder.stop()
 
+    def _on_arena_upload_toggle(self):
+        self.cfg["arena_upload"] = bool(self.arena_upload_var.get())
+        save_config(self.base_dir, self.cfg)
+        if self.cfg["arena_upload"]:
+            self.arena.start()
+        else:
+            self.arena.stop()
+
+    def _open_arena_site(self):
+        import webbrowser
+        webbrowser.open((self.cfg.get("arena_url") or ARENA_URL).rstrip("/") + "/rakmu/matches")
+
     def _on_replay_start_save_toggle(self):
         self.cfg["replay_start_save"] = bool(self.replay_start_save_var.get())
         save_config(self.base_dir, self.cfg)
@@ -1921,6 +2018,13 @@ class App(tk.Tk):
             if was and not now:
                 self._refresh_replays()                 # 경기 끝: 새 파일 목록에 표시
             self._replay_was_recording = now
+        arena = getattr(self, "arena", None)
+        if arena is not None and hasattr(self, "arena_status"):
+            self.arena_status.set(arena.status if self.cfg.get("arena_upload", True) else "자동 업로드 꺼짐")
+            n = len(arena.state)
+            if n != getattr(self, "_arena_seen", n):
+                self._refresh_replays()                     # 업로드 결과를 목록의 '전적 사이트' 칸에 반영
+            self._arena_seen = n
         self.after(1000, self._tick_replay_status)
 
     # ── 전적 탭 ──
@@ -1956,9 +2060,10 @@ class App(tk.Tk):
         self._refresh_history()
 
     def _server_ip(self):
-        # 전적/랭킹 조회용 서버 IP = 현재 hosts의 게임 호스트 IP (없으면 마지막 입력/기본)
-        return (HostsManager.read_current_ip([GAME_HOST])
-                or self.cfg.get("last_server_ip", "") or DEFAULT_IP)
+        # 전적/랭킹 조회용 서버 IP = 저장된 서버 VPN IP (없으면 hosts 의 게임 주소).
+        # 싱글 플레이 뒤 hosts 가 127.0.0.1 이어도 멀티 서버의 전적을 보여 준다.
+        return (self.cfg.get("last_server_ip", "")
+                or HostsManager.read_current_ip([GAME_HOST]) or DEFAULT_IP)
 
     def _fetch_json(self, path):
         """서버 HTTP(11225)에서 전적/랭킹을 받아온다. 실패 시 로컬 파일 폴백."""
@@ -1988,7 +2093,7 @@ class App(tk.Tk):
                 mark = {"win": "승", "lose": "패", "draw": "무"}.get(wl, "?")
             else:
                 mark = "승" if str(v).startswith("win") else "패"
-            out.append(f"{a}:{mark}")
+            out.append(f"{display_name(a)}:{mark}")
         return ", ".join(out)
 
     def _refresh_history(self):
@@ -2013,7 +2118,7 @@ class App(tk.Tk):
             messagebox.showinfo("랭킹", "아직 집계된 전적이 없습니다.")
             return
         rows = sorted(rank.items(), key=lambda kv: (-kv[1].get("win", 0), kv[1].get("lose", 0)))
-        lines = [f"{a:12} {v.get('win',0)}승 {v.get('lose',0)}패 {v.get('draw',0)}무" for a, v in rows]
+        lines = [f"{display_name(a):12} {v.get('win',0)}승 {v.get('lose',0)}패 {v.get('draw',0)}무" for a, v in rows]
         messagebox.showinfo("랭킹 (승순)", "\n".join(lines))
 
     # ── 설정 탭 ──
@@ -2146,7 +2251,7 @@ class App(tk.Tk):
         ttk.Combobox(render_row, textvariable=self.renderer_var, values=RENDERERS,
                      state='readonly', width=14).pack(side='left', padx=6)
         self.confine_var = tk.BooleanVar(value=settings.get('confine', True))
-        ttk.Checkbutton(mode_frame, text='마우스 가두기 (cnc-ddraw 설정)',
+        ttk.Checkbutton(mode_frame, text='마우스 가두기 (창모드: cnc-ddraw, 전체화면: 런처가 모니터 안에 가둠)',
                         variable=self.confine_var).pack(anchor='w')
 
         shader_frame = ttk.LabelFrame(frame, text="업스케일 셰이더 (화질)", padding=12)
@@ -2304,6 +2409,7 @@ class App(tk.Tk):
             renderer=self.renderer_var.get(), confine=self.confine_var.get(),
         )
         if ok:
+            self.cursor_guard.enabled = bool(self.confine_var.get())
             messagebox.showinfo("설정", msg)
         else:
             messagebox.showerror("오류", msg)

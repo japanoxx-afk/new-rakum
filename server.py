@@ -10,10 +10,13 @@ All game command types have the pattern 0xXXFF.
 Confirmed protocol flow (from packet captures):
   0x01FF  Handshake    : client -> "RHAK"+version1000, server -> 4-byte ok
   0x03FF  Announcement : server -> uint32(0) (no announcement)
-  0x02FF  Username     : server -> uint32(0)
+  0x02FF  Account info : client -> [flag][account\0]; server -> [3][내공,승,패,무 int32][등급점수 int16]
+                         + 3 strings (Rhakmu.exe 0x44BB60, '승/패:%d/%d 내공:%d ...')
   0x05FF  Login        : payload=account\0password\0hash; server -> uint32(result)
   0x07FF  Channel sel  : server -> uint32(result)
-  0x15FF  Rank list    : server -> 0x16FF + 0x17FF (empty)
+  0x15FF  Rank list    : client -> [sort][start int32][end int32]; server -> 0x16FF(start),
+                         0x15FF [sort] + N x {22B record + str\0 + name\0}, 0x17FF(end)  (Rhakmu.exe 0x44D0B0)
+  0x14FF  Rank search  : client -> name\0; server -> [sort][rank int32][name\0]     (Rhakmu.exe 0x44D270)
   0x18FF  Guild list   : server -> 0x19FF + 0x1AFF (empty)
   0x0BFF  Room list    : server -> 0x0CFF, [0x0BFF entries], 0x0DFF
   0x0EFF  Create room  : server -> uint32(0)
@@ -21,8 +24,10 @@ Confirmed protocol flow (from packet captures):
   0x10FF  Join room    : server -> [0x00, account\0, host_ip\0]
   0x11FF  Leave room   : remove room/member
   0x0FFF  Game start   : relay to all in room + send sync-ok
-  0x12FF  Chat         : broadcast as 0x13FF
-  0x24FF  Post-game    : server -> 0x25FF [02 00]
+  0x12FF  Chat         : client -> message\0 account\0; server -> 0x12FF [1,0,0] sender\0 message\0
+                         (the client has no 0x13FF case; type byte 1 = lobby chat, Rhakmu.exe 0x44C2B0)
+  0x24FF  Post-game    : client -> [code][score int32]; code&0x7F 1=win 2=lose 3/4=draw/no contest
+                         (0x8x = ladder); server -> 0x25FF [02 00]
   0x27FF  Post-game2   : suppress (no reply)
   0xFEFE  Crash report : log only
 """
@@ -56,7 +61,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9012"
+SERVER_VERSION = "0.9018"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -77,7 +82,10 @@ P_CONNECT       = 0x01FF
 P_USERNAME      = 0x02FF
 P_ANNOUNCE      = 0x03FF
 P_LOGIN         = 0x05FF
-P_CHAN_SEL      = 0x07FF
+P_CHAN_SEL      = 0x07FF   # 채널 입장: client -> [word idx|0x8000][name\0]; server -> [result 0=OK][name\0]
+P_CHAN_LIST     = 0x08FF   # 채널 목록: client -> [start i16][end i16]; server -> {users i16, no i16, name\0}...
+P_CHAN_LIST_BEG = 0x09FF   # 채널 목록 시작 (클라 목록 비움, Rhakmu.exe 0x44CC30)
+P_CHAN_LIST_END = 0x0AFF   # 채널 목록 끝 ('채널리스트를 요청중입니다' 창 닫힘, 0x44CD40)
 P_ROOM_LIST_REQ = 0x0BFF
 P_ROOM_LIST_ACK = 0x0CFF
 P_ROOM_LIST_END = 0x0DFF
@@ -115,20 +123,34 @@ def _load_matches() -> list:
     try:
         with open(MATCH_LOG, "r", encoding="utf-8") as f:
             return json.load(f)
-    except (OSError, ValueError):
+    except OSError:
+        return []
+    except ValueError:
+        # 깨진 파일을 빈 목록으로 덮어쓰면 전체 기록을 잃는다 → 따로 보관해 두고 새로 시작
+        try:
+            os.replace(MATCH_LOG, f"{MATCH_LOG}.bad-{_time.strftime('%Y%m%d_%H%M%S')}")
+        except OSError:
+            pass
         return []
 
 def _save_matches(matches: list) -> None:
+    """전체 기록을 보관한다 (예전에는 최근 500판만 남겨 랭킹이 오래된 경기를 잊었다).
+    전적 사이트(rtsarena)가 이 파일을 읽어 같은 랭킹을 만들므로, 임시 파일에 다 쓴 뒤 바꿔 끼워
+    읽는 쪽이 반쯤 쓰인 파일을 보지 않게 한다."""
+    tmp = MATCH_LOG + ".tmp"
     try:
-        with open(MATCH_LOG, "w", encoding="utf-8") as f:
-            json.dump(matches[-500:], f, ensure_ascii=False, indent=1)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(matches, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, MATCH_LOG)
     except OSError:
         pass
 
 def record_match_start(map_name: str, players: list, room_title: str) -> None:
-    """게임 시작 시 [시간·맵·플레이어]를 기록."""
+    """게임 시작 시 [시간·맵·플레이어]를 기록. id 는 전적 사이트가 경기를 구분하는 키."""
+    import uuid
     matches = _load_matches()
     matches.append({
+        "id": uuid.uuid4().hex,
         "time": _time.strftime("%Y-%m-%d %H:%M:%S"),
         "map": map_name,
         "players": list(players),
@@ -139,7 +161,7 @@ def record_match_start(map_name: str, players: list, room_title: str) -> None:
 
 def record_match_result(account: str, code: int, score: int) -> None:
     """post-game 0x24FF: 해당 플레이어의 결과코드·점수를 가장 최근 매치에 기록.
-    승/패는 같은 매치 내 점수 비교로 판정(높은 쪽 승)."""
+    승/패는 결과코드로 판정(result_wl), 코드를 모를 때만 점수 비교."""
     matches = _load_matches()
     for rec in reversed(matches):
         if account in rec.get("players", []) and account not in rec.get("results", {}):
@@ -148,34 +170,107 @@ def record_match_result(account: str, code: int, score: int) -> None:
             _save_matches(matches)
             return
 
+# 0x24FF 결과코드 (Rhakmu.exe 0x41A9B0 에서 확인): 일반전 1=승 2=패 3=무승부(중도 이탈 포함) 4=기타 무효,
+# 래더전은 같은 값에 0x80 이 더해진다(0x81 승, 0x82 패 ...). 점수는 대부분 0 이라 승패 판정에 쓰지 않는다.
+RESULT_WL = {1: "win", 2: "lose", 3: "draw", 4: "draw"}
+
+def result_wl(code) -> Optional[str]:
+    try:
+        return RESULT_WL.get(int(code) & 0x7F)
+    except (TypeError, ValueError):
+        return None
+
 def _recompute_winloss(rec: dict) -> None:
-    """점수 비교로 win/lose 판정(동점이면 무승부)."""
+    """결과코드로 win/lose/draw 판정. 코드를 모르면 예전처럼 점수 비교(동점이면 무승부)."""
     res = rec.get("results", {})
     if not res:
         return
-    scores = {a: v["score"] for a, v in res.items() if isinstance(v, dict)}
-    if not scores:
+    unknown = {}
+    for a, v in res.items():
+        if not isinstance(v, dict):
+            continue
+        wl = result_wl(v.get("code"))
+        if wl:
+            v["wl"] = wl
+        else:
+            unknown[a] = v
+    if not unknown:
         return
+    scores = {a: v.get("score", 0) for a, v in unknown.items()}
     top = max(scores.values())
     n_top = sum(1 for s in scores.values() if s == top)
-    for a, v in res.items():
-        if isinstance(v, dict):
-            if n_top > 1 and v["score"] == top:
-                v["wl"] = "draw"
-            else:
-                v["wl"] = "win" if v["score"] == top else "lose"
+    for a, v in unknown.items():
+        if n_top > 1 and v.get("score", 0) == top:
+            v["wl"] = "draw"
+        else:
+            v["wl"] = "win" if v.get("score", 0) == top else "lose"
 
 def compute_ranking() -> dict:
-    """matches.json에서 계정별 승/패/무 집계."""
+    """matches.json에서 계정별 승/패/무 집계.
+
+    - 기록마다 결과코드로 다시 판정한다(예전 버전이 점수로 잘못 매긴 기록도 바로잡힘).
+    - 혼자 한 게임(플레이어 1명)은 랭킹에 넣지 않는다.
+    """
     tally = {}
     for rec in _load_matches():
+        if len(set(rec.get("players", []))) < 2:
+            continue
+        _recompute_winloss(rec)
         for a, v in rec.get("results", {}).items():
             wl = v.get("wl") if isinstance(v, dict) else None
             if wl not in ("win", "lose", "draw"):
                 continue
             t = tally.setdefault(a, {"win": 0, "lose": 0, "draw": 0})
             t[wl] += 1
+            t["last"] = rec.get("time", "")
     return tally
+
+BASE_POINTS = 1000          # 내공 시작값 (게임은 1000 미만이면 등급 아이콘을 '없음'으로 그림)
+WIN_POINTS, LOSE_POINTS = 10, 10
+RANK_PAGE = 17              # 게임 랭킹 창 한 페이지 줄 수 (Rhakmu.exe 0x42CFA0: index < 0x11)
+
+def ranking_rows() -> list:
+    """게임 랭킹 창용 정렬 목록: [{rank, name, points, win, lose, draw, last}] (내공 → 승 → 이름 순)."""
+    rows = []
+    for name, t in compute_ranking().items():
+        if not name:
+            continue
+        points = max(0, BASE_POINTS + WIN_POINTS * t["win"] - LOSE_POINTS * t["lose"])
+        rows.append({"name": name, "points": points, "win": t["win"], "lose": t["lose"],
+                     "draw": t["draw"], "last": t.get("last", "")})
+    rows.sort(key=lambda r: (-r["points"], -r["win"], r["lose"], r["name"]))
+    for i, r in enumerate(rows, 1):
+        r["rank"] = i
+    return rows
+
+def _i32(v: int) -> int:
+    return max(-2**31, min(2**31 - 1, int(v)))
+
+def build_rank_record(row: dict) -> bytes:
+    """0x15FF 한 줄: 22바이트 {순위, 내공, 승, 패, 무 (int32), 등급점수 int16} + 마지막칸 문자열 + 이름."""
+    grade = max(0, min(32767, row["win"]))      # 등급 아이콘(0x42CA20)은 이 값의 구간으로 정해짐
+    rec = struct.pack("<iiiiih", _i32(row["rank"]), _i32(row["points"]), _i32(row["win"]),
+                      _i32(row["lose"]), _i32(row["draw"]), grade)
+    return rec + nul(row["last"][:10]) + nul(row["name"])
+
+def build_rank_list(sort: int, start: int, end: int, rows: Optional[list] = None) -> bytes:
+    """0x15FF 응답 payload. 클라는 [start, end) 순위를 요청한다(보통 end = start + 17)."""
+    rows = ranking_rows() if rows is None else rows
+    first = max(1, int(start))
+    count = int(end) - int(start)
+    count = RANK_PAGE if count <= 0 else min(count, RANK_PAGE)
+    page = [r for r in rows if first <= r["rank"] < first + count]
+    return bytes([sort & 0xFF]) + b"".join(build_rank_record(r) for r in page)
+
+def build_account_info(account: str, rows: Optional[list] = None) -> bytes:
+    """0x02FF 응답 type 3: 사용자 정보 창 '승/패:%d/%d 내공:%d 승률 로그인시간:%s'."""
+    rows = ranking_rows() if rows is None else rows
+    row = next((r for r in rows if r["name"] == account), None) or \
+        {"rank": 0, "points": BASE_POINTS, "win": 0, "lose": 0, "draw": 0, "last": ""}
+    grade = max(0, min(32767, row["win"]))
+    return (bytes([3]) + struct.pack("<iiiih", _i32(row["points"]), _i32(row["win"]), _i32(row["lose"]),
+                                     _i32(row["draw"]), grade)
+            + nul(account) + nul(f"#{row['rank']}" if row["rank"] else "") + nul(row["last"]))
 
 
 def pack_pkt(ptype: int, payload: bytes = b"") -> bytes:
@@ -185,6 +280,19 @@ def pack_pkt(ptype: int, payload: bytes = b"") -> bytes:
 
 def nul(s: str) -> bytes:
     return s.encode("latin-1") + b"\x00"
+
+
+def _kr(s: str) -> str:
+    """패킷 문자열(latin-1 로 그대로 보관한 CP949 바이트)을 로그용 한글로."""
+    try:
+        return s.encode("latin-1").decode("cp949")
+    except (UnicodeError, AttributeError):
+        return s
+
+
+def build_chat_payload(sender: str, message: str) -> bytes:
+    """로비 채팅 0x12FF 응답 payload: [type=1][0][0] sender\\0 message\\0."""
+    return bytes([1, 0, 0]) + nul(sender) + nul(message)
 
 
 def build_user_entry(account: str, ip: str, index: int = 1) -> bytes:
@@ -199,6 +307,45 @@ def build_user_entry(account: str, ip: str, index: int = 1) -> bytes:
     value), so the peer's account/ip never registered correctly.
     """
     return bytes([0x00]) + struct.pack("<H", index) + nul(account) + nul(ip)
+
+
+CHANNEL_NAME = "자유채널".encode("cp949").decode("latin-1")   # 패킷 문자열은 CP949 바이트를 latin-1 로 보관
+
+
+# ── 로비 접속자 목록: 0x12FF 서버메시지 타입 (Rhakmu.exe 0x44C2B0 switch) ──
+# 로비 오른쪽 목록(로비 폼 [[0x6E0CE0]+8] 의 리스트 0xC)은 0x1FFF 가 아니라 0x12FF 타입으로 채워진다.
+#   type 4 (13 도 같음) 입장: [4][0][0] name\0 + 18바이트 {내공 i32, 승 i32, 패 i32, 무 i32, 등급값 i16} + str\0
+#          (0x42CBF0 이 목록에 추가. 이름이 '나'면 내 정보로 저장하고 대기창을 닫은 뒤 '/status' 를 보낸다)
+#   type 5 퇴장: [5][0][0] name\0                      (0x42CEF0 이 목록에서 지움)
+#   type 14 상태: [14][0][0] \0 + {접속인원 i16, 개설된채널 i16, 개설된방 i16}  ('/status' 응답, 채팅창에 표시)
+# (0x1FFF 는 방 폼 [+0x20] 의 멤버 목록 9번용이라 로비 목록에는 쓰지 않는다)
+MSG_CHAT, MSG_ENTER, MSG_LEAVE, MSG_STATUS = 1, 4, 5, 14
+
+
+def _stats(name: str, rows: Optional[list] = None) -> dict:
+    rows = ranking_rows() if rows is None else rows
+    return next((r for r in rows if r["name"] == name), None) or         {"points": BASE_POINTS, "win": 0, "lose": 0, "draw": 0}
+
+
+def build_enter_payload(name: str, rows: Optional[list] = None) -> bytes:
+    r = _stats(name, rows)
+    info = struct.pack("<iiiih", _i32(r["points"]), _i32(r["win"]), _i32(r["lose"]), _i32(r["draw"]),
+                       max(0, min(32767, r["win"])))
+    return bytes([MSG_ENTER, 0, 0]) + nul(name) + info + nul("")
+
+
+def build_leave_payload(name: str) -> bytes:
+    return bytes([MSG_LEAVE, 0, 0]) + nul(name)
+
+
+def build_status_payload() -> bytes:
+    users = sum(1 for c in STATE.clients if c.account)
+    return bytes([MSG_STATUS, 0, 0]) + nul("") + struct.pack("<hhh", min(users, 32767), 1, min(len(STATE.rooms), 32767))
+
+
+def lobby_viewers(exclude=None) -> list:
+    """로비 목록 메시지를 받아도 되는 사람: 채널에 들어온 뒤(로비 폼이 있음), 게임 중이 아님(게임 중엔 폼이 없어 크래시)."""
+    return [c for c in STATE.clients if c is not exclude and c.account and c.in_channel and not c.in_game]
 
 
 def read_cstrings(data: bytes) -> List[str]:
@@ -385,11 +532,45 @@ class ServerState:
             self.rooms.remove(r)
             log.info(f"Room removed id={r.id} title={r.title!r} owner={r.owner}")
 
+    def prune_rooms(self):
+        """방장이 접속해 있지 않은 방은 지운다 (끊긴 접속 정리가 늦거나 방장 이름이 어긋난 경우)."""
+        online = {c.account for c in self.clients if c.account}
+        for r in list(self.rooms):
+            if r.owner not in online:
+                self.rooms.remove(r)
+                log.info(f"Room removed (owner not connected) id={r.id} title={r.title!r} owner={r.owner!r}")
+            else:
+                r.members = [m for m in r.members if m in online]
+
     def clients_in_room(self, room_title: str) -> List["ClientSession"]:
         return [c for c in self.clients if c.room_title == room_title]
 
 
 STATE = ServerState()
+
+
+# 끊긴 줄 모르는 접속 찾기 + 공유기(NAT)가 조용한 접속을 끊지 않게: TCP keepalive.
+# 게임은 로비에서 아무 것도 안 보내고 가만히 있을 수 있다. 그러면 중간 공유기가 몇 분 뒤 접속을 잊어
+# 플레이어가 튕기고, 게임을 강제로 끈 사람의 접속은 서버에 영원히 남아 빈 방이 로비에 보인다.
+# 60초 조용하면 10초 간격으로 확인 패킷(데이터 없음, 게임은 모름), 6번 무응답이면 끊긴 것으로 정리.
+KEEPALIVE_IDLE, KEEPALIVE_INTERVAL, KEEPALIVE_COUNT = 60, 10, 6
+
+
+def enable_keepalive(sock) -> bool:
+    if sock is None:
+        return False
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        if hasattr(socket, "TCP_KEEPIDLE"):            # Linux (NAS), 최근 Windows
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, KEEPALIVE_IDLE)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, KEEPALIVE_INTERVAL)
+            if hasattr(socket, "TCP_KEEPCNT"):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, KEEPALIVE_COUNT)
+        elif hasattr(socket, "SIO_KEEPALIVE_VALS"):    # 예전 Windows
+            sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, KEEPALIVE_IDLE * 1000, KEEPALIVE_INTERVAL * 1000))
+        return True
+    except (OSError, AttributeError, ValueError):
+        return False
 
 
 class ClientSession:
@@ -403,7 +584,12 @@ class ClientSession:
         self.room_title: str = ""
         self.in_game = False
         self.game_version = 0          # handshake 0x01FF: Rhakmu.exe 1.000d -> 1003, older 1.000 -> 1000
+        self.in_channel = False        # 채널 입장(0x07FF) 완료 → 로비 폼이 있어 로비 목록 메시지를 받아도 안전
         self._buf = b""
+        self.connected_at = _time.monotonic()
+        self.room_since = 0.0          # 방을 만들거나 들어간 때 (바로 직후의 로비 요청은 무시)
+        self.close_reason = "연결 종료(EOF)"
+        enable_keepalive(writer.get_extra_info("socket"))
 
     @property
     def peer(self) -> str:
@@ -447,9 +633,14 @@ class ClientSession:
                     break
                 self._buf += chunk
                 await self._process()
-        except (ConnectionResetError, asyncio.IncompleteReadError, BrokenPipeError):
-            pass
+        except (ConnectionResetError, asyncio.IncompleteReadError, BrokenPipeError) as e:
+            self.close_reason = type(e).__name__
+        except TimeoutError as e:                       # keepalive 무응답 (상대 PC/공유기가 사라짐)
+            self.close_reason = f"응답 없음(keepalive) {e}"
+        except OSError as e:
+            self.close_reason = f"{type(e).__name__} {e}"
         except Exception as e:
+            self.close_reason = f"오류 {e}"
             log.error(f"{self.peer}: {e}", exc_info=True)
         finally:
             self._cleanup()
@@ -468,7 +659,12 @@ class ClientSession:
                 if r.owner == self.account:
                     STATE.rooms.remove(r)
                     log.info(f"Room removed (disconnect) id={r.id} title={r.title!r}")
-        log.info(f"Disconnected: {self.peer} account={self.account!r}")
+        log.info(f"Disconnected: {self.peer} account={self.account!r} "
+                 f"after {int(_time.monotonic() - self.connected_at)}s reason={self.close_reason}")
+        if self.account and self.in_channel and not any(c.account == self.account for c in STATE.clients):
+            pkt = pack_pkt(P_CHAT, build_leave_payload(self.account))   # 로비 목록에서 지움 (type 5)
+            for c in lobby_viewers(exclude=self):
+                c.writer.write(pkt)
 
     async def _process(self):
         while len(self._buf) >= 4:
@@ -505,11 +701,12 @@ class ClientSession:
             self.send(P_ANNOUNCE, struct.pack("<I", 0))
 
         elif ptype == P_USERNAME:
-            # payload: 1 byte flag + account\0
+            # 0x02FF "Check Account Info" (Rhakmu.exe 0x44E890): payload = 1 byte flag + account\0.
+            # 응답 type 3 이면 사용자 정보 창에 승/패·내공·승률을 보여 준다(0x44BB60).
             strings = read_cstrings(payload[1:] if payload else b"")
-            if strings:
-                log.info(f"{self.peer}: username={strings[0]!r}")
-            self.send(P_USERNAME, struct.pack("<I", 0))
+            target = strings[0] if strings else self.account
+            log.info(f"{self.peer}: account info {_kr(target)!r}")
+            self.send(P_USERNAME, build_account_info(target or ""))
 
         elif ptype == P_LOGIN:
             strings = read_cstrings(payload)
@@ -526,20 +723,66 @@ class ClientSession:
             self.send(P_LOGIN, struct.pack("<I", result))
 
         elif ptype == P_CHAN_SEL:
-            self.send(P_CHAN_SEL, struct.pack("<I", 0))
+            # 채널은 하나뿐 — 어떤 이름이 와도 성공(0)으로 답하고 그 이름을 돌려준다.
+            names = read_cstrings(payload[2:]) if len(payload) > 2 else []
+            self._back_in_lobby("channel join")
+            self.send(P_CHAN_SEL, bytes([0]) + nul(names[0] if names else CHANNEL_NAME))
+            if self.account:
+                # 로비 접속자 목록: 나에게 다른 사람 전원 → 마지막에 나 자신(클라가 내 정보 저장 후 '/status' 요청),
+                # 로비에 있는 다른 사람에게는 내 입장. (게임은 0x1FFF 가 아니라 0x12FF type 4/5 로 목록을 채운다)
+                rows = ranking_rows()
+                first_join = not self.in_channel
+                self.in_channel = True
+                others = sorted({c.account for c in STATE.clients
+                                 if c.account and c.in_channel and c.account != self.account})
+                for name in others:
+                    self.send(P_CHAT, build_enter_payload(name, rows))
+                mine = pack_pkt(P_CHAT, build_enter_payload(self.account, rows))
+                self.writer.write(mine)
+                if first_join:
+                    for c in lobby_viewers(exclude=self):
+                        if c.account != self.account:
+                            c.writer.write(mine)
+                log.info(f"  Channel join {_kr(self.account)!r}: lobby list {len(others) + 1} users")
 
-        elif ptype == P_RANK_LIST or ptype == P_RANK_SEARCH:
-            # 랭킹 목록(0x15FF) / 검색(0x14FF): 빈 결과로 응답해 '요청중' 멈춤 해제.
-            # (실제 엔트리 채우기는 클라 파서 형식 확인 후 구현 예정)
-            log.info(f"  Rank query 0x{ptype:04X} payload={payload.hex()} -> empty ack")
-            self.send(P_RANK_ACK1, b"")
-            self.send(P_RANK_ACK2, b"")
+        elif ptype == P_CHAN_LIST:
+            # 'Channel' 버튼 (Rhakmu.exe 0x44E5B0 요청 / 0x44CC60 응답 파서)
+            users = sum(1 for c in STATE.clients if c.account)
+            log.info(f"  Channel list -> 1 channel, {users} users")
+            self.send(P_CHAN_LIST_BEG, b"")
+            self.send(P_CHAN_LIST, struct.pack("<hh", min(users, 32767), 1) + nul(CHANNEL_NAME))
+            self.send(P_CHAN_LIST_END, b"")
+
+        elif ptype == P_RANK_LIST:
+            # 랭킹 목록 요청 (Rhakmu.exe 0x44EDC0): [sort][start int32][end int32]
+            sort = payload[0] if payload else 0
+            start, end = struct.unpack_from("<ii", payload, 1) if len(payload) >= 9 else (1, 1 + RANK_PAGE)
+            body = build_rank_list(sort, start, end)
+            log.info(f"  Rank list sort={sort} start={start} end={end} -> {(len(body) - 1) // 22 if len(body) > 1 else 0} rows")
+            self.send(P_RANK_ACK1, b"")              # 0x16FF: 목록 비우기
+            if len(body) > 1:
+                self.send(P_RANK_LIST, body)         # 0x15FF: 줄들
+            self.send(P_RANK_ACK2, b"")              # 0x17FF: 화면 갱신
+
+        elif ptype == P_RANK_SEARCH:
+            # 랭킹 검색 (Rhakmu.exe 0x44ED30): name\0 -> [sort][rank int32][name\0], 클라가 그 페이지를 다시 요청
+            strings = read_cstrings(payload)
+            name = strings[0] if strings else ""
+            row = next((r for r in ranking_rows() if r["name"] == name), None)
+            log.info(f"  Rank search {_kr(name)!r} -> {row['rank'] if row else 'not found'}")
+            if row:
+                self.send(P_RANK_SEARCH, bytes([0]) + struct.pack("<i", row["rank"]) + nul(name))
+            else:
+                self.send(P_RANK_ACK1, b"")
+                self.send(P_RANK_ACK2, b"")
 
         elif ptype == P_GUILD_LIST:
             self.send(P_GUILD_ACK1, b"")
             self.send(P_GUILD_ACK2, b"")
 
         elif ptype == P_ROOM_LIST_REQ:
+            self._back_in_lobby("room list")
+            STATE.prune_rooms()
             self.send(P_ROOM_LIST_ACK, b"")
             for room in STATE.rooms:
                 owner_conn = next((c for c in STATE.clients if c.account == room.owner), None)
@@ -568,7 +811,7 @@ class ClientSession:
         elif ptype == P_POST_GAME:
             # 0x24FF = SendGameReport: byte[0]=결과코드, byte[1..4]=점수(uint32)
             code = payload[0] if len(payload) >= 1 else 0
-            score = struct.unpack_from("<I", payload, 1)[0] if len(payload) >= 5 else 0
+            score = struct.unpack_from("<i", payload, 1)[0] if len(payload) >= 5 else 0   # 래더 패배는 음수
             log.info(f"  Post-game 0x24FF from {self.account!r}: code={code} score={score} raw={payload.hex()}")
             if self.account:
                 record_match_result(self.account, code, score)
@@ -620,9 +863,9 @@ class ClientSession:
         strings = extract_ascii_strings(payload[8:] if len(payload) > 8 else b"")
         title = strings[0] if strings else self.account
         map_name = strings[1] if len(strings) > 1 else ""
-        owner = strings[2] if len(strings) > 2 else self.account
-        if not owner:
-            owner = self.account
+        # 방장 = 방을 만든 접속의 계정. (글자열 추출은 ASCII 만 읽어 한글 방 제목/계정이면 어긋나,
+        # 방장이 나가도 방이 지워지지 않았다)
+        owner = self.account or (strings[2] if len(strings) > 2 else "")
 
         max_players = 4
         if len(payload) >= 6:
@@ -646,12 +889,14 @@ class ClientSession:
         )
         STATE.rooms.append(room)
         self.room_title = title
+        self.room_since = _time.monotonic()
         log.info(f"Room created id={room.id} title={title!r} map={map_name!r} owner={owner} host={host_ip} maxP={max_players}")
 
         self.send(P_CREATE_ROOM, struct.pack("<I", 0))
 
     async def _handle_user_list(self):
-        # Send channel user list: start, [members], end
+        # Send room/channel user list: start(0x20FF), [entries 0x1FFF], end(0x21FF).
+        # 이 목록은 방 폼([+0x20])의 멤버 목록용. 로비 접속자 목록은 0x12FF type 4/5 (채널 입장 때 보냄).
         self.send(P_USER_LIST_ACK, b"")
         room = STATE.find_room_by_title(self.room_title) if self.room_title else None
         if room:
@@ -722,6 +967,7 @@ class ClientSession:
             return
 
         self.room_title = room.title
+        self.room_since = _time.monotonic()
         self.in_game = False
         if self.account not in room.members and self.account != room.owner:
             room.members.append(self.account)
@@ -741,6 +987,16 @@ class ClientSession:
         # Do NOT send 0x10FF to the owner — the owner's client interprets it as a join
         # directive for itself and immediately leaves the room.
         await self._broadcast_member_list(room, exclude=None)
+
+    def _back_in_lobby(self, why: str):
+        """로비 폼만 보내는 요청(방 목록 0x0BFF, 채널 입장 0x07FF)이 왔다 = 방/게임에서 나와 로비에 있다.
+        게임이 끝난 뒤나 게임이 튕긴 뒤 방 나가기(0x11FF) 없이 로비로 돌아오면 서버에는 방이 그대로 남았다."""
+        if self.room_title and _time.monotonic() - self.room_since < 3:
+            return                     # 방 만들기/들어가기 직전에 눌린 로비 요청이 늦게 온 것
+        if self.room_title or self.in_game:
+            log.info(f"  {_kr(self.account)!r} is back in the lobby ({why}): leaving room {self.room_title!r}")
+            self._handle_leave_room()
+        self.in_game = False
 
     def _end_game(self):
         self.in_game = False
@@ -799,15 +1055,23 @@ class ClientSession:
         if not account:
             account = self.account
 
-        log.info(f"Chat from={account!r}: {message!r}")
+        log.info(f"Chat from={_kr(account)!r}: {_kr(message)!r}")
 
-        # Build server message: [0x00 0x00 0x00][account\0][message\0]
-        msg_payload = bytes([0, 0, 0]) + nul(account) + nul(message)
-        chat_pkt = pack_pkt(P_CHAT_REPLY, msg_payload)
+        # 클라가 자동/명령으로 보내는 '/status', '/whereis x', '/ignore x' 등은 방송하지 않는다.
+        if message == "/status":
+            # 채널 입장 때 자기 입장(type 4)을 받으면 클라가 자동으로 보냄 → type 14 (접속인원·채널·방 수)
+            self.send(P_CHAT, build_status_payload())
+            return
+        if not message or message.startswith("/"):
+            return
 
-        # Broadcast to all connected clients with accounts
-        for c in STATE.clients:
-            if c.account:
+        # 클라 수신 형식 (Rhakmu.exe 0x44C2B0): 0x12FF [type=1][0][0] sender\0 message\0
+        # → 로비 채팅창에 "sender>>message" 로 표시. (0x13FF 는 클라 디스패처에 없어 무시됨)
+        chat_pkt = pack_pkt(P_CHAT, build_chat_payload(account, message))
+
+        # 로그인한 로비 사용자에게만 (게임 중인 사람에게 로비 패킷을 보내지 않는다)
+        for c in list(STATE.clients):
+            if c.account and not c.in_game:
                 c.writer.write(chat_pkt)
                 await c.flush()
 
@@ -924,8 +1188,11 @@ class _HistoryHandler(BaseHTTPRequestHandler):
             except (OSError, ValueError):
                 rules = {}
             self._json({"server_version": SERVER_VERSION, **rules})
-        else:  # /matches.json, /matches, /
-            self._json(_load_matches())
+        else:  # /matches.json, /matches, /   (승/패는 결과코드로 다시 판정해 보여 줌)
+            matches = _load_matches()
+            for rec in matches:
+                _recompute_winloss(rec)
+            self._json(matches)
 
     def log_message(self, *a):
         pass  # quiet

@@ -1,0 +1,5 @@
+# Files in this folder run on the Linux NAS VM: keep LF line endings on every PC.
+*.py text eol=lf
+*.yaml text eol=lf
+*.txt text eol=lf
+*.ps1 text eol=crlf

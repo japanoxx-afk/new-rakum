@@ -1,0 +1,62 @@
+# RhakMu(라크무) 로비 서버 — Portainer 스택 설정
+#
+# 사용법: Portainer > Stacks > Add stack > Web editor 에 이 파일 전체를 붙여 넣는다.
+#        자세한 순서는 같은 폴더의 README.txt 참고.
+#
+# 이미지 빌드가 필요 없다: 공개 이미지 python:3.12-slim 을 그대로 쓰고,
+# 서버 코드(server.py, nas_entry.py)는 NAS의 game-servers/rakmu-live/app/ 에서 읽는다.
+# → 코드 업데이트 = File Station 에서 app/ 파일 교체 + 컨테이너 재시작.
+#
+# 외부 포트는 Portainer 의 "Environment variables" 로 바꾼다 (아래 기본값은 기존
+# rakmu-test 와 겹치지 않는 30010~30012). rakmu-test 를 대체할 때만 30000/30001/30002 로 바꾼다.
+#   LOBBY_PORT  (TCP)  → 컨테이너 11223  로비
+#   HTTP_PORT   (TCP)  → 컨테이너 11225  전적·버전·규칙 HTTP
+#   RELAY_PORT  (UDP)  → 컨테이너 47584  방 찾기(DP8 EnumHosts) 릴레이
+# 비밀번호·토큰은 이 파일에 넣지 않는다 (현재 서버는 비밀값이 필요 없다).
+
+name: rakmu
+
+services:
+  rakmu-server:
+    image: python:3.12-slim
+    container_name: rakmu-server
+    restart: unless-stopped
+    working_dir: /mnt/game-servers/rakmu-live/data
+    command: ["python", "-u", "/mnt/game-servers/rakmu-live/app/nas_entry.py"]
+    environment:
+      TZ: Asia/Seoul
+      PYTHONDONTWRITEBYTECODE: "1"
+      RAKMU_DATA_DIR: /mnt/game-servers/rakmu-live/data
+      RAKMU_LOG_MAX_BYTES: "1048576"
+      RAKMU_LOG_BACKUPS: "5"
+    ports:
+      - "${LOBBY_PORT:-30010}:11223/tcp"
+      - "${HTTP_PORT:-30011}:11225/tcp"
+      - "${RELAY_PORT:-30012}:47584/udp"
+    volumes:
+      # NAS 공유 폴더 game-servers 전체가 연결된 기존 외부 볼륨.
+      # 서버는 rakmu-live/ 아래만 읽고 쓰며, rakmu-test/ 는 쓰지 않도록 코드에서 막아 두었다.
+      - game_servers_data:/mnt/game-servers
+    read_only: true            # 컨테이너 자체 파일시스템은 읽기 전용 (데이터는 NAS 볼륨에만)
+    tmpfs:
+      - /tmp:size=16m
+    # security_opt(no-new-privileges)는 이 Portainer 에서 관리자만 쓸 수 있어 넣지 않는다
+    # ("security-opt setting disabled for non administrator users" 오류).
+    mem_limit: 128m            # VM 메모리 2GB 보호 (실사용은 보통 30~40MB)
+    cpus: 0.5
+    pids_limit: 64
+    logging:                   # Portainer 로그(도커 로그)가 VM 디스크를 채우지 않게 제한
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:11225/version',timeout=3)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  game_servers_data:
+    external: true             # 새 볼륨을 만들지 않고 기존 볼륨을 그대로 참조
