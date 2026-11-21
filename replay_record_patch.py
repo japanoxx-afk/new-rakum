@@ -2092,7 +2092,24 @@ def strip(data) -> bytes:
     out[h:h + 40] = bytes(40)
     struct.pack_into("<H", out, nt + 6, nsec - 1)
     struct.pack_into("<I", out, soi, va)
+    _rdata_writable(out, False)
     return bytes(out)
+
+
+RDATA_NAME, MEM_WRITE = b".rdata\0\0", 0x80000000
+
+
+def _rdata_writable(out, on: bool):
+    """재생 설치만: .rdata 에 쓰기 허용. 관전자 시점(view)이 플레이어 비트 표 0x4F02A0(.rdata) 를 그리는 동안 바꾼다.
+    읽기 전용이면 v0.9078 처럼 재생 시작하자마자 ACCESS_VIOLATION (RhakMU.ERR 0x01077730)."""
+    nt, nsec, table, salign, falign, soi, secs = _layout(out)
+    for name, va, vsize, rptr, rsize, h in secs:
+        if name == RDATA_NAME and va <= PLAYER_BITS - 0x400000 < va + vsize:
+            c = _u32(out, h + 36)
+            struct.pack_into("<I", out, h + 36, (c | MEM_WRITE) if on else (c & ~MEM_WRITE))
+            return
+    if on:
+        raise ValueError("리플레이 기록 패치: 플레이어 비트 표가 있는 .rdata 섹션을 찾지 못했습니다.")
 
 
 def apply(data, enabled: bool = True, save: bool = False, play: bool = False, hash2: bool = True) -> bytes:
@@ -2119,6 +2136,7 @@ def apply(data, enabled: bool = True, save: bool = False, play: bool = False, ha
         out[MODE_OFF] = MODE_PLAY
         if out[HIGHRES_MARK:HIGHRES_MARK + len(RES_1280)] == RES_1280:
             out[RES_OFF:RES_OFF + len(RES_1280)] = RES_1280
+        _rdata_writable(out, True)
     out += body(save, play, hash2)
     return bytes(out)
 
