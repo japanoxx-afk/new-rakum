@@ -30,6 +30,10 @@ class EditorBuildTests(unittest.TestCase):
         self.assertEqual(built, page, 'python map_editor_web/src/build.py 로 다시 빌드하세요')
         self.assertIn('id="brushSize" min="0"', page)                 # 크기 0 = 벽
         self.assertIn('const WALL_BAND = { 5: 4, 7: 6, 8: 6 };', page)  # 언덕/높은 언덕/고지대 물 -> 경계 절벽
+        # 벽 모드로 좌·우·위로 이어 그릴 때 체크무늬를 꼭짓점 하나로만 메워 2x2 가 되지 않게
+        # (브라우저에서 확인: 이어 그린 두 점 사이 4 -> 3 꼭짓점, 남는 체크무늬 0)
+        self.assertIn('R.smoothDiagonals(m, ch, brush, S.brushSize === 0)', page)
+        self.assertIn('thin && tt === T ? [pickThin(m, other, T)] : other', page)
 
 
 class EditorServerTests(unittest.TestCase):

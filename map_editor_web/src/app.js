@@ -523,7 +523,7 @@
     const m = S.map, list = R.shapeVerts(m, shape); if (!list.length) return;
     const brush = paintBrush();
     let ch = R.paintVerts(m, list, brush);
-    ch = ch.concat(R.smoothDiagonals(m, ch, brush));
+    ch = ch.concat(R.smoothDiagonals(m, ch, brush, S.brushSize === 0));
     for (const [i, b] of ch) noteVert(i, b);
     const verts = ch.map(c => c[0]);
     for (const [A, B] of list) for (let dA = -1; dA <= 1; dA++) for (let dB = -1; dB <= 1; dB++) { const [u, vv] = R.fromAB(A + dA, B + dB); const i = R.vIndex(m, u, vv); if (i >= 0) verts.push(i); }
