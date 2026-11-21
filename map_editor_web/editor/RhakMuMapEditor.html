@@ -575,7 +575,9 @@ table.grid input[type=number]{width:64px}
   }
   // Shipped maps almost never use the diagonal masks (6/9: two opposite corners). After painting, turn such
   // checkerboard tiles into a normal edge/corner by giving the minority pair the painted brush (or the majority).
-  function smoothDiagonals(m, changed, T) {
+  // thin (벽 모드): 칠한 브러시 쌍(T)을 잇는 체크무늬는 반대쪽 두 꼭짓점이 아니라 하나만 칠해 모서리 타일로 만든다.
+  //   왼쪽·오른쪽·위로 한 칸씩 이어 그릴 때 두 꼭짓점을 다 칠하면 2x2 덩어리가 되어 벽이 두꺼워진다.
+  function smoothDiagonals(m, changed, T, thin) {
     const extra = [];
     for (let round = 0; round < 6; round++) {
       const seen = new Set(), fix = [];
@@ -588,7 +590,8 @@ table.grid input[type=number]{width:64px}
             const bu = 2 * x + (y & 1);
             const keepNS = c.N === T || (c.E !== T && HEIGHT_OF(c.N) >= HEIGHT_OF(c.E));
             const tt = keepNS ? c.N : c.E;
-            fix.push([tt, keepNS ? [[bu + 1, y], [bu - 1, y]] : [[bu, y - 1], [bu, y + 1]]]);
+            const other = keepNS ? [[bu + 1, y], [bu - 1, y]] : [[bu, y - 1], [bu, y + 1]];
+            fix.push([tt, thin && tt === T ? [pickThin(m, other, T)] : other]);
           }
         }
       }
@@ -599,6 +602,16 @@ table.grid input[type=number]{width:64px}
       }
     }
     return extra;
+  }
+  // 벽 모드에서 체크무늬를 메울 꼭짓점 하나: 이미 같은 브러시 이웃이 더 많은 쪽 (같으면 첫째 = 아래/오른쪽)
+  function pickThin(m, pair, T) {
+    let best = pair[0], bn = -1;
+    for (const [uu, vv] of pair) {
+      let n = 0;
+      for (const [du, dv] of [[0, -2], [2, 0], [0, 2], [-2, 0], [1, -1], [1, 1], [-1, 1], [-1, -1]]) if (getV(m, uu + du, vv + dv) === T) n++;
+      if (n > bn) { bn = n; best = [uu, vv]; }
+    }
+    return best;
   }
   function HEIGHT_OF(t) { return [0, 1, 1, 1, 2, 2, 3, 3, 3][t] || 0; }
   function paint(m, u, v, T, s) { const ch = paintVerts(m, shapeVerts(m, { type: 'square', u, v, size: s }), T); return ch.concat(smoothDiagonals(m, ch, T)); }
@@ -1311,7 +1324,7 @@ table.grid input[type=number]{width:64px}
     const m = S.map, list = R.shapeVerts(m, shape); if (!list.length) return;
     const brush = paintBrush();
     let ch = R.paintVerts(m, list, brush);
-    ch = ch.concat(R.smoothDiagonals(m, ch, brush));
+    ch = ch.concat(R.smoothDiagonals(m, ch, brush, S.brushSize === 0));
     for (const [i, b] of ch) noteVert(i, b);
     const verts = ch.map(c => c[0]);
     for (const [A, B] of list) for (let dA = -1; dA <= 1; dA++) for (let dB = -1; dB <= 1; dB++) { const [u, vv] = R.fromAB(A + dA, B + dB); const i = R.vIndex(m, u, vv); if (i >= 0) verts.push(i); }
