@@ -243,6 +243,7 @@ class Recorder:
         seed = safe(self.reader.seed, None)
         options = safe(lambda: self.reader.options().hex(), "")
         frame0 = safe(self.reader.frame, None)
+        rules = safe(self.reader.rules, None)
         stamp = datetime.datetime.now()
         header = {"format": FORMAT, "date": stamp.isoformat(timespec="seconds"), "map": mapname,
                   "map_rkm": base64.b64encode(rkm).decode() if rkm else "",
@@ -251,6 +252,8 @@ class Recorder:
                   "seed": seed, "options": options, "frame0": frame0, "commands": self.cmd_reader is not None,
                   "races": [players[i].race for i in range(rm.PLAYER_COUNT)],
                   "slots": [players[i].active for i in range(rm.PLAYER_COUNT)]}
+        if rules is not None:
+            header["rules"] = rules            # 재생도 이 규칙으로 (선택 한도·집결지 금광 인식)
         name = f"{stamp:%Y%m%d_%H%M%S}_{_safe(Path(mapname.replace(chr(92), '/')).stem)}.rkr"
         self.writer = MatchWriter(replay_dir(self.base_dir) / name, header)
 

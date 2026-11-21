@@ -40,6 +40,7 @@ import game_version
 import replay_record_patch
 import replay_recorder
 import replay_model
+import replay_memory
 import game_address_patch
 import holepunch
 import arena_upload
@@ -62,7 +63,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9069"
+APP_VERSION = "0.9070"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1957,8 +1958,40 @@ class App(tk.Tk):
             messagebox.showerror("리플레이", f"재생 준비 실패: {e}")
             return
         self.recorder.pause_for_playback()
+        self._launch_replay(rp.header.get("rules"))
+
+    def _launch_replay(self, rules):
+        """게임 화면 재생 실행. 재생 패치는 로그인·로비 없이 시작 저장을 불러와 바로 경기를 보여 주므로
+        서버(로컬 서버 재시작·hosts 바꾸기·홀펀칭)를 건드리지 않는다 — 온라인 접속 설정은 그대로 둔다.
+        진행 규칙(선택 한도·집결지 금광 인식)은 기록한 경기와 같게 맞춘다 (다르면 재생이 어긋난다).
+        규칙이 없는 예전 리플레이: 온라인(NAS 서버) 경기는 선택 한도 12기로 맞춰 졌으므로 12기, 금광 인식은 이 PC 설정."""
+        if replay_memory.find_game_pid():
+            messagebox.showinfo("리플레이", "게임이 이미 실행 중입니다. 게임을 끈 뒤 다시 재생하세요.")
+            return
+        rules = rules or {}
+        self._rally_override = rules["rally_gold"] if "rally_gold" in rules else None
+        self._select24_override = bool(rules.get("select_24", False))
         self._replay_play = True
-        self._on_single_play()
+        try:
+            self._prepare_game_launch()
+        except Exception as e:
+            messagebox.showerror("게임 실행 중단", str(e))
+            return
+        finally:
+            self._replay_play = False
+            self._rally_override = self._select24_override = None
+            self._write_game_rules()                # 서버 PC 규칙 파일은 이 PC 설정으로 되돌림
+        game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
+        try:
+            proc = subprocess.Popen([os.path.join(game_dir, GAME_EXE)], cwd=game_dir)
+        except OSError as e:
+            messagebox.showerror("실행 오류", str(e))
+            return
+        if self.cfg.get('skip_version_warning', True):
+            threading.Thread(target=dismiss_version_warning, args=(proc,), daemon=True).start()
+        # 로그인 화면에서 누르는 첫 클릭이 없으므로 cnc-ddraw 가 마우스를 가두지 않아 윈도우 커서가
+        # 게임 커서 위에 겹쳐 보인다 -> 게임 창이 뜨면 그 첫 클릭(버튼 떼기)을 대신 보내 가둔다.
+        threading.Thread(target=cursor_guard.lock_game_cursor, daemon=True).start()
 
     def _replay_stats_window(self):
         path = self._selected_replay()
