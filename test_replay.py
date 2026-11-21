@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 import rally_gold_patch
+import rally_spawn_patch
 import replay_memory as rm
 import selection_patch
 import replay_record_patch as rrp
@@ -38,6 +39,7 @@ class FakeGame:
         self.pe[h:h + 8] = rrp.SECTION_NAME
         struct.pack_into("<I", self.pe, h + 12, self.sec_va - 0x400000)
         self.rally = bytearray(rally_gold_patch.SITE_ORIGINAL)      # 집결지 금광 인식 자리
+        self.spawn = bytearray(rally_spawn_patch.ORIGINAL)          # 집결지 쪽 생산 위치 자리
         for t, name, worker, hp in ((5, "일꾼", True, 40), (7, "검사", False, 60), (20, "병영", False, 900)):
             self.names[t * rm.NAME_SIZE:t * rm.NAME_SIZE + len(name.encode('cp949'))] = name.encode('cp949')
             struct.pack_into("<I", self.info, t * rm.TYPE_INFO_STRIDE, 0x9000000 + t * 0x100)
@@ -74,9 +76,10 @@ class FakeGame:
         self.ring[o + 8:o + 8 + len(batch)] = batch
         struct.pack_into("<II", self.ring, 0, total + need, pos + need)
 
-    def match_rules(self, rally_gold, select_24):
-        """이 경기에 쓰인 진행 규칙 패치를 메모리에 흉내: 금광 인식 점프, .sel24 섹션."""
+    def match_rules(self, rally_gold, select_24, rally_spawn=False):
+        """이 경기에 쓰인 진행 규칙 패치를 메모리에 흉내: 금광 인식 점프, .sel24 섹션, 생산 위치 호출."""
         self.rally[:] = rally_gold_patch.SITE_PATCHED if rally_gold else rally_gold_patch.SITE_ORIGINAL
+        self.spawn[:] = rally_spawn_patch.PATCHED if rally_spawn else rally_spawn_patch.ORIGINAL
         struct.pack_into("<H", self.pe, 0x80 + 6, 2 if select_24 else 1)
         h = 0x80 + 24 + 0xE0 + 40
         self.pe[h:h + 8] = selection_patch.SECTION_NAME if select_24 else bytes(8)
@@ -91,7 +94,8 @@ class FakeGame:
                    (rm.LOCAL_PLAYER, b"\x00"), (rm.FRAME, struct.pack("<I", self.frame)),
                    (rm.SEED, struct.pack("<I", self.seed)), (rm.GAME_OPTIONS, bytes(range(8))),
                    (0x400000, self.pe), (self.sec_va + rrp.BUF, self.ring),
-                   (0x400000 + rally_gold_patch.SITE, self.rally))
+                   (0x400000 + rally_gold_patch.SITE, self.rally),
+                   (0x400000 + rally_spawn_patch.SITE, self.spawn))
         for base, data in regions:
             if base <= addr and addr + size <= base + len(data):
                 return bytes(data[addr - base:addr - base + size])
@@ -191,18 +195,18 @@ class RecordAndModelTests(unittest.TestCase):
     def test_header_keeps_match_rules(self):
         # 재생은 기록한 경기와 같은 규칙이어야 한다: NAS 서버 경기는 선택 한도 12기로 맞춰지는데
         # 재생은 이 PC 설정(24기)으로 띄우던 문제 -> 경기 때 게임 메모리의 패치 상태를 그대로 남긴다.
-        for rally, sel in ((True, False), (False, True)):
-            with self.subTest(rally=rally, sel=sel):
+        for rally, sel, spawn in ((True, False, True), (False, True, False)):
+            with self.subTest(rally=rally, sel=sel, spawn=spawn):
                 for f in (self.base / "replays").glob("*.rkr"):
                     f.unlink()
                 self.g = FakeGame()
-                self.g.match_rules(rally, sel)
+                self.g.match_rules(rally, sel, spawn)
                 self.rec = rr.Recorder(self.base, lambda: str(self.game_dir), open_memory=lambda pid: self.g,
                                        find_pid=lambda: 1234, clock=lambda: self.clock[0])
                 self.play_match()
                 self.rec._finish("끝")
                 h, _ = M.load_header(next((self.base / "replays").glob("*.rkr")))
-                self.assertEqual(h["rules"], {"rally_gold": rally, "select_24": sel})
+                self.assertEqual(h["rules"], {"rally_gold": rally, "select_24": sel, "rally_spawn": spawn})
 
     def test_record_load_and_stats(self):
         self.play_match()
