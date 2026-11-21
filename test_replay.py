@@ -701,6 +701,39 @@ class InGameHookTests(unittest.TestCase):
         self.run_entry(mu, "panel", 0x4D65F8)
         self.run_entry(mu, "panel2", 0x4D6607)                           # 미니맵도
 
+    def test_spectator_view_only_while_drawing(self):
+        """관전자 시점: 재생이면 지형·유닛을 그리는 동안만 표[내 번호] = 0xFF (모든 참가자 시야), 마우스 그리기 직전에
+        1,2,4.. 로 되돌린다. 재생이 아니면(실제 대전) 표를 건드리지 않는다 (맵핵이 되면 안 됨)."""
+        from unicorn import UC_HOOK_CODE
+        from unicorn.x86_const import UC_X86_REG_ESP
+        bits = lambda mu: list(struct.unpack("<8H", mu.mem_read(rrp.PLAYER_BITS, 16)))
+        normal = [1 << p for p in range(8)]
+        for play in (True, False):
+            with self.subTest(play=play):
+                mu = self.overlay_machine()
+                mu.mem_write(0x4D4440, b"\xc3")
+                mu.mem_write(rrp.PLAYER_BITS, struct.pack("<8H", *normal))
+                mu.mem_write(0x400000 + rrp.MODE_OFF, bytes([rrp.MODE_PLAY if play else 0]))
+                mu.mem_write(0xB412CC, b"\x01")                              # 내 번호 1
+                seen = []
+                mu.mem_write(rrp.WORLD_DRAW, b"\xc3")                        # 원래 그리기: 그 순간의 표를 남김
+                mu.hook_add(UC_HOOK_CODE, lambda uc, a, s, _: seen.append(bits(uc)),
+                            begin=rrp.WORLD_DRAW, end=rrp.WORLD_DRAW)
+                esp = 0x2080000
+                mu.mem_write(0x4D65EE, b"\xf4")
+                mu.mem_write(esp, struct.pack("<I", 0x4D65EE))            # call 0x4D34D0 의 복귀 주소
+                mu.reg_write(UC_X86_REG_ESP, esp)
+                mu.emu_start(self.BASE + rrp.OFF["view"], 0x4D65EE, count=1000)
+                self.assertEqual(mu.reg_read(UC_X86_REG_ESP), esp + 4)
+                want = normal.copy()
+                if play:
+                    want[1] = 0xFF
+                self.assertEqual(seen, [want])
+                if not play:
+                    mu.mem_write(self.BASE, rrp.body(play=False))           # 실제 대전 설치
+                self.run_entry(mu, "overlay", 0x4D660C)
+                self.assertEqual(bits(mu), normal)
+
     def test_panel_shows_selected_players_info(self):
         """패널을 그리는 동안만 내 번호를 고른 유닛의 주인으로: 상대 건물의 생산·업그레이드 창."""
         from unicorn import UC_HOOK_CODE
@@ -921,7 +954,7 @@ class InGameHookTests(unittest.TestCase):
         import subprocess, types
         import minimap_patch as mm
         o = mm.build(exe.read_bytes(), False, True, False, False, False)      # 단축키 없음, 기록 없음
-        for commit in ("0ae10e0", "5b6a921", "d723ca0", "e790797", "4467186", "9f4f6ff", "5a04ac7"):  # v0.9055 ~ v0.9058, v0.9064, v0.9072, v0.9075
+        for commit in ("0ae10e0", "5b6a921", "d723ca0", "e790797", "4467186", "9f4f6ff", "5a04ac7", "63b868a", "bc10600"):  # v0.9055 ~ v0.9058, v0.9064, v0.9072, v0.9075~v0.9077
             src = subprocess.run(["git", "show", commit + ":replay_record_patch.py"], capture_output=True,
                                  cwd=Path(__file__).resolve().parent).stdout.decode("utf-8")
             if not src:
