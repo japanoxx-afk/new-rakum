@@ -75,16 +75,16 @@ def replace(path,original,changed):
 def apply(path,enabled=True):
     path=Path(path);data=path.read_bytes();replace(path,data,transform(data,enabled))
 
-def prepare(path,highres,rally_gold=True,hotkeys=True,select24=False,record=False,start_save=False,play=False,rally_spawn=False):
+def prepare(path,highres,rally_gold=True,hotkeys=True,select24=False,record=False,start_save=False,play=False,rally_spawn=False,wide_checks=True):
     import viewport_patch
     path=Path(path);original=path.read_bytes()
     if highres:
         for name,digest in viewport_patch.manifest()['dll_hashes'].items():
             if hashlib.sha256((path.parent/name).read_bytes()).hexdigest()!=digest:raise ValueError(f'지원하지 않는 {name}')
         if not (path.parent/'ddraw.dll').is_file():raise ValueError('ddraw.dll이 필요합니다.')
-    replace(path,original,build(original,highres,rally_gold,hotkeys,select24,record,start_save,play,rally_spawn))
+    replace(path,original,build(original,highres,rally_gold,hotkeys,select24,record,start_save,play,rally_spawn,wide_checks))
 
-def build(original,highres,rally_gold=True,hotkeys=True,select24=False,record=False,start_save=False,play=False,rally_spawn=False):
+def build(original,highres,rally_gold=True,hotkeys=True,select24=False,record=False,start_save=False,play=False,rally_spawn=False,wide_checks=True):
     """설치 파일 바이트 -> 실행용 최종 바이트 (메모리 안에서만; 파일은 건드리지 않음)."""
     import viewport_patch,peer_address_patch,sync_port_patch,panel_guard_patch,rally_gold_patch,hotkey_patch,selection_patch,menu_free_guard_patch,replay_record_patch,queue_cancel_patch
     import rally_construct_patch,rally_spawn_patch
@@ -105,5 +105,5 @@ def build(original,highres,rally_gold=True,hotkeys=True,select24=False,record=Fa
     data=rally_construct_patch.transform(data,True)   # 건설 중인 건물에도 집결지 지정 (항상, 보내는 쪽만)
     data=rally_spawn_patch.transform(data,rally_spawn)   # 생산 유닛이 집결지 쪽에서 나옴 (대전 규칙)
     data=selection_patch.apply(data,select24)      # 미니맵 섹션 뒤 .sel24 (선택 한도 24)
-    data=replay_record_patch.apply(data,record or play,start_save,play)    # 그 뒤 .rkrec (리플레이 기록/재생)
+    data=replay_record_patch.apply(data,record or play,start_save,play,wide_checks or not play)    # 그 뒤 .rkrec (리플레이 기록/재생; 넓은 검사값은 기록 항상, 재생은 그 리플레이에 맞춤)
     return hotkey_patch.apply(data,hotkeys)        # 맨 뒤에 단축키 섹션 (.sel24 가 있으면 24칸 판)
