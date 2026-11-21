@@ -5,6 +5,7 @@
 typedef void *(__cdecl *create_t)(void *, void *);
 typedef int (__cdecl *send_t)(const char *, const char *, int);
 typedef int (__cdecl *recv_t)(char *, int, char *, int *);
+typedef int (__cdecl *myip_t)(char *, int);
 int main(int argc, char **argv)
 {
     HMODULE tg, org; create_t cr; send_t sd; recv_t rv; int i, sent = 0, count, ms;
@@ -22,6 +23,11 @@ int main(int argc, char **argv)
     printf("ready\n"); fflush(stdout);
     for (i = 0; i < ms / 20; i++) {
         int port, n;
+        if (i == 40) {   /* the game asks when it creates a room, well after the socket is bound */
+            myip_t mi = (myip_t)GetProcAddress(tg, "TGNet_Get_MyIPaddress");
+            char ip[128] = "";
+            printf("myip %s\n", mi && mi(ip, sizeof ip) ? ip : "-"); fflush(stdout);
+        }
         if (sent < count && i >= 50 && i % 10 == 5) {
             char m[32]; int k = sprintf(m, "msg %d", sent++);
             sd(argv[2], m, k);

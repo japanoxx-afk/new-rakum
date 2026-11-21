@@ -33,3 +33,8 @@ __declspec(dllexport) int __cdecl Fake_Recv(char *buf, int len, char *from, int 
     if (n > 0) { lstrcpyA(from, inet_ntoa(src.sin_addr)); *port = ntohs(src.sin_port); }
     return n;
 }
+__declspec(dllexport) int __cdecl TGNet_Get_MyIPaddress(char *buf, int size)
+{
+    lstrcpynA(buf, "26.9.9.9", size);   /* like a PC whose first adapter is Radmin */
+    return 1;
+}
