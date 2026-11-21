@@ -61,7 +61,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9019"
+SERVER_VERSION = "0.9020"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -687,7 +687,14 @@ class ClientSession:
 
             payload = self._buf[4:psize]
             self._buf = self._buf[psize:]
-            await self._handle(ptype, payload)
+            try:
+                await self._handle(ptype, payload)
+            except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError, TimeoutError):
+                raise
+            except Exception as e:
+                # 한 패킷 처리 오류로 로비 접속을 끊지 않는다. 끊기면 게임이 끝난 뒤 로비가 먹통이 된다
+                # (0.9017~0.9019 런처 내장 서버: 게임 시작 때 uuid 모듈이 없어 방장이 끊겼음).
+                log.error(f"{self.peer}: 0x{ptype:04X} 처리 오류 (접속 유지): {e}", exc_info=True)
 
     async def _handle(self, ptype: int, payload: bytes):
         log.debug(f"{self.peer} -> 0x{ptype:04X} payload_len={len(payload)}")
@@ -816,7 +823,10 @@ class ClientSession:
             score = struct.unpack_from("<i", payload, 1)[0] if len(payload) >= 5 else 0   # 래더 패배는 음수
             log.info(f"  Post-game 0x24FF from {self.account!r}: code={code} score={score} raw={payload.hex()}")
             if self.account:
-                record_match_result(self.account, code, score)
+                try:
+                    record_match_result(self.account, code, score)
+                except Exception as e:                # 기록 실패해도 결과 응답(0x25FF)은 보낸다
+                    log.error(f"  Match result record failed: {e}", exc_info=True)
             self._end_game()
             self.send(P_POST_GAME_ACK, bytes([2, 0]))
 
@@ -1031,8 +1041,11 @@ class ClientSession:
         room = STATE.find_room_by_title(self.room_title)
         if room and self.account == room.owner:
             players = [room.owner] + list(room.members)
-            record_match_start(room.map_name, players, room.title)
-            log.info(f"  Match recorded: map={room.map_name!r} players={players}")
+            try:
+                record_match_start(room.map_name, players, room.title)
+                log.info(f"  Match recorded: map={room.map_name!r} players={players}")
+            except Exception as e:                    # 기록 실패가 게임 시작을 막으면 안 된다
+                log.error(f"  Match record failed: {e}", exc_info=True)
 
         all_in_room = STATE.clients_in_room(self.room_title)
 
