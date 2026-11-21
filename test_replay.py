@@ -779,12 +779,16 @@ class InGameHookTests(unittest.TestCase):
                 self.assertEqual(struct.unpack("<I", mu.mem_read(rrp.TYPE_TABLE + 5 * 0x1C, 4))[0], 0x2058000)
 
     def test_spectator_view_only_while_drawing(self):
-        """관전자 시점: 재생이면 지형·유닛을 그리는 동안만 표[내 번호] = 0xFF (모든 참가자 시야), 마우스 그리기 직전에
-        1,2,4.. 로 되돌린다. 재생이 아니면(실제 대전) 표를 건드리지 않는다 (맵핵이 되면 안 됨)."""
+        """맵 전체 밝힘: 재생이면 지형·유닛을 그리는 동안만 표[내 번호]=0xFF, 모든 유닛 시야 마스크 0xFF,
+        타일 안개 지도 0(밝음), 미니맵 안개 그림 = 지형 그림. 마우스 그리기 직전에 표·마스크를 되돌린다(진행은 원래 시야).
+        재생이 아니면(실제 대전) 아무것도 건드리지 않는다 (맵핵이 되면 안 됨)."""
         from unicorn import UC_HOOK_CODE
         from unicorn.x86_const import UC_X86_REG_ESP
         bits = lambda mu: list(struct.unpack("<8H", mu.mem_read(rrp.PLAYER_BITS, 16)))
         normal = [1 << p for p in range(8)]
+        seen_mask = {3: 0x0002, 40: 0x0000, 0x6A5: 0x0101}            # 칸 -> 시야 마스크 (원래 값)
+        mask = lambda mu, u: struct.unpack("<H", mu.mem_read(rrp.UNIT_SEEN + u * 0x138, 2))[0]
+        MM = 0x2010000                                                  # 미니맵 객체 (가짜)
         for play in (True, False):
             with self.subTest(play=play):
                 mu = self.overlay_machine()
@@ -792,24 +796,34 @@ class InGameHookTests(unittest.TestCase):
                 mu.mem_write(rrp.PLAYER_BITS, struct.pack("<8H", *normal))
                 mu.mem_write(0x400000 + rrp.MODE_OFF, bytes([rrp.MODE_PLAY if play else 0]))
                 mu.mem_write(0xB412CC, b"\x01")                              # 내 번호 1
+                for u, m in seen_mask.items():
+                    mu.mem_write(rrp.UNIT_SEEN + u * 0x138, struct.pack("<H", m))
+                mu.mem_write(rrp.FOG_MAP, b"\xff" * rrp.FOG_MAP_SIZE)          # 전부 안개
+                mu.mem_write(rrp.MINIMAP, struct.pack("<I", MM))
+                mu.mem_write(MM + 0x2C, bytes(range(256)) * 0x80)              # 지형 그림
+                mu.mem_write(MM + 0x1002C, b"\x77" * 0x8000)                   # 안개 입힌 그림
                 seen = []
-                mu.mem_write(rrp.WORLD_DRAW, b"\xc3")                        # 원래 그리기: 그 순간의 표를 남김
-                mu.hook_add(UC_HOOK_CODE, lambda uc, a, s, _: seen.append(bits(uc)),
-                            begin=rrp.WORLD_DRAW, end=rrp.WORLD_DRAW)
+                mu.mem_write(rrp.WORLD_DRAW, b"\xc3")                        # 원래 그리기: 그 순간의 상태를 남김
+                mu.hook_add(UC_HOOK_CODE, lambda uc, a, s, _: seen.append(
+                    (bits(uc), {u: mask(uc, u) for u in seen_mask}, set(bytes(uc.mem_read(rrp.FOG_MAP, rrp.FOG_MAP_SIZE))),
+                     bytes(uc.mem_read(MM + 0x1002C, 0x8000)) == bytes(range(256)) * 0x80)),
+                    begin=rrp.WORLD_DRAW, end=rrp.WORLD_DRAW)
                 esp = 0x2080000
                 mu.mem_write(0x4D65EE, b"\xf4")
                 mu.mem_write(esp, struct.pack("<I", 0x4D65EE))            # call 0x4D34D0 의 복귀 주소
                 mu.reg_write(UC_X86_REG_ESP, esp)
-                mu.emu_start(self.BASE + rrp.OFF["view"], 0x4D65EE, count=1000)
+                mu.emu_start(self.BASE + rrp.OFF["view"], 0x4D65EE, count=200000)
                 self.assertEqual(mu.reg_read(UC_X86_REG_ESP), esp + 4)
                 want = normal.copy()
                 if play:
                     want[1] = 0xFF
-                self.assertEqual(seen, [want])
-                if not play:
+                    self.assertEqual(seen, [(want, {u: (m & 0xFF00) | 0xFF for u, m in seen_mask.items()}, {0}, True)])
+                else:
+                    self.assertEqual(seen, [(want, seen_mask, {0xFF}, False)])
                     mu.mem_write(self.BASE, rrp.body(play=False))           # 실제 대전 설치
                 self.run_entry(mu, "overlay", 0x4D660C)
                 self.assertEqual(bits(mu), normal)
+                self.assertEqual({u: mask(mu, u) for u in seen_mask}, seen_mask)   # 진행용 시야는 원래대로
 
     def test_panel_shows_selected_players_info(self):
         """패널을 그리는 동안만 내 번호를 고른 유닛의 주인으로: 상대 건물의 생산·업그레이드 창."""
@@ -1031,7 +1045,7 @@ class InGameHookTests(unittest.TestCase):
         import subprocess, types
         import minimap_patch as mm
         o = mm.build(exe.read_bytes(), False, True, False, False, False)      # 단축키 없음, 기록 없음
-        for commit in ("0ae10e0", "5b6a921", "d723ca0", "e790797", "4467186", "9f4f6ff", "5a04ac7", "63b868a", "bc10600", "3b315f0"):  # v0.9055 ~ v0.9058, v0.9064, v0.9072, v0.9075~v0.9077, v0.9080
+        for commit in ("0ae10e0", "5b6a921", "d723ca0", "e790797", "4467186", "9f4f6ff", "5a04ac7", "63b868a", "bc10600", "3b315f0", "ae7590b"):  # v0.9055 ~ v0.9058, v0.9064, v0.9072, v0.9075~v0.9077, v0.9080, v0.9082
             src = subprocess.run(["git", "show", commit + ":replay_record_patch.py"], capture_output=True,
                                  cwd=Path(__file__).resolve().parent).stdout.decode("utf-8")
             if not src:
