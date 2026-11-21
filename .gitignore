@@ -2,3 +2,9 @@ __pycache__/
 *.pyc
 research/runtime/
 arena_secret.py
+
+# 리플레이 디버깅 도구의 개인 게임 사본·덤프 (tools/replay_debug/README.md)
+tools/replay_debug/game/
+tools/replay_debug/hashdump.json
+tools/replay_debug/raw_*.bin
+tools/replay_debug/*.log
