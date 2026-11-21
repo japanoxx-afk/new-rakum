@@ -86,6 +86,34 @@ class Replay:
         return None
 
 
+def map_state(rp: Replay, game_dir) -> tuple:
+    """게임 화면 재생에 쓸 맵 파일: ('ok'|'missing'|'differs'|'unknown', 경로).
+    시작 저장은 맵 이름만 담고 있어서, 게임 폴더에 그 맵이 없으면 '맵 없다' 창이 뜨고 게임이 끝난다."""
+    name = (rp.header.get("map") or "").replace("\\", "/")
+    data = rp.map_bytes()
+    if not name or not data:
+        return "unknown", None
+    path = Path(game_dir) / name
+    try:
+        cur = path.read_bytes()
+    except FileNotFoundError:
+        return "missing", path
+    except OSError:
+        return "unknown", path
+    return ("ok" if cur == data else "differs"), path
+
+
+def install_map(rp: Replay, path: Path) -> None:
+    """리플레이에 든 맵을 게임 폴더에 쓴다. 같은 이름의 다른 맵이 있으면 <이름>.bak 으로 보관한다."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        bak = path.with_name(path.name + ".bak")
+        if not bak.exists():
+            path.replace(bak)
+    path.write_bytes(rp.map_bytes())
+
+
 def ingame_data(rp: Replay):
     """게임 화면 재생 자료: {'start', 'save', 'records'} 또는 무엇이 없는지 알려 주는 문자열.
     records = [(프레임, 플레이어, 바이트)], 같은 프레임에서는 검사값(턴 처리 시작) -> 명령 순서 (기록과 같음)."""
