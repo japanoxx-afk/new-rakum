@@ -184,7 +184,11 @@ class DoubleClickTests(Base):
 
     def test_site_bytes(self):
         on = ps.transform(self.original, True)
-        import capstone
+        self.assertEqual(on[ps.SCAN_SITE:ps.SCAN_SITE + 2], b'\x90\x90')
+        try:
+            import capstone
+        except ImportError as e:
+            self.skipTest(str(e))
         md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
         text = [f'{i.mnemonic} {i.op_str}' for i in md.disasm(on[ps.PICK_SITE:ps.PICK_SITE + 18], 0x433603)]
         self.assertEqual(text, ['mov cl, byte ptr [eax + 0x775a48]', 'cmp cl, byte ptr [0xb412cc]', 'jne 0x433bdd'])
