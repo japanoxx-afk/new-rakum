@@ -56,6 +56,25 @@ class PatchFileTests(Base):
         except ImportError as e:
             self.skipTest(str(e))
 
+    def test_upgrades_from_v0_9086_installs(self):
+        """v0.9086 (시험판·배포판)이 설치해 둔 게임 파일을 걷어내고 지금 판으로 바꾼다.
+        (v0.9087 은 이 상태를 몰라 '코드 충돌' 로 게임 실행이 막혔다.)"""
+        fresh = ps.transform(self.original, True)
+        self.assertEqual(len(ps.LEGACY_SITES), 2)
+        for sites in ps.LEGACY_SITES:
+            old = bytearray(self.original)
+            for offset, original, patched in sites:
+                self.assertEqual(bytes(old[offset:offset + len(original)]), original)
+                old[offset:offset + len(patched)] = patched
+            self.assertTrue(ps.state(old))
+            self.assertEqual(ps.transform(old, False), self.original)
+            self.assertEqual(ps.transform(old, True), fresh)
+            self.assertEqual(minimap_patch.build(bytes(old), False), minimap_patch.build(self.original, False))
+        bad = bytearray(fresh)
+        bad[ps.SCAN_SITE + 2] ^= 1
+        with self.assertRaises(ValueError):
+            ps.state(bad)
+
     def test_caves_are_free_in_original(self):
         caves = [(va - 0x400000, size) for va, size in ps.CHUNKS.values()] + [(ps.VOICE_CAVE - 0x400000, len(ps.VOICE_CODE))]
         for offset, size in caves:

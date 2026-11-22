@@ -40,6 +40,7 @@ import hotkey_patch
 import selection_patch
 import game_version
 import replay_record_patch
+import replay_assoc
 import replay_recorder
 import replay_model
 import replay_memory
@@ -65,7 +66,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9087"
+APP_VERSION = "0.9091"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -132,7 +133,7 @@ def run_as_admin():
         return
     if getattr(sys, "frozen", False):
         exe = sys.executable
-        args = ""
+        args = subprocess.list2cmdline(sys.argv[1:])     # 더블클릭한 리플레이 경로 등을 그대로 넘김
     else:
         exe = sys.executable
         args = f'"{os.path.abspath(__file__)}"'
@@ -1856,6 +1857,7 @@ class App(tk.Tk):
     def _build_replay_tab(self, notebook):
         frame = ttk.Frame(notebook, padding=12)
         notebook.add(frame, text="  리플레이  ")
+        self.notebook, self.replay_tab = notebook, frame
         top = ttk.Frame(frame)
         top.pack(fill="x")
         ttk.Label(top, text="리플레이", style="Title.TLabel").pack(side="left")
@@ -1884,7 +1886,8 @@ class App(tk.Tk):
         ttk.Checkbutton(btns, text="경기 시작 저장(게임 화면 재생에 필요)", variable=self.replay_start_save_var,
                         command=self._on_replay_start_save_toggle).pack(side="right", padx=(0, 8))
         ttk.Label(frame, text="런처를 켜 둔 채 게임하면 경기마다 자동 저장됩니다. 더블클릭하면 게임 화면으로 바로 재생합니다 "
-                              "(로그인 없음 · 1·2·4 키 배속 · I 키 HUD 숨기기 · 상대 건물 클릭 시 생산·업그레이드 진행 · "
+                              "(리플레이 파일을 탐색기에서 더블클릭해도 됩니다 · 1·2·4 키 배속 · U 키 자원 표 · I 키 화면 정보 전체 · "
+                              "모든 참가자의 시야를 함께 표시 · 상대 건물 클릭 시 생산·업그레이드 진행 · "
                               "끝내기: Esc → 나가기).",
                   style="Muted.TLabel", wraplength=640, justify="left").pack(anchor="w")
         cols = ("date", "time", "map", "players", "arena")
@@ -1939,8 +1942,8 @@ class App(tk.Tk):
         self.replay_summary.insert("1.0", text)
         self.replay_summary.configure(state="disabled")
 
-    def _play_replay(self):
-        path = self._selected_replay()
+    def _play_replay(self, path=None):
+        path = path or self._selected_replay()
         if not path:
             messagebox.showinfo("리플레이", "재생할 리플레이를 고르세요.")
             return
@@ -1950,9 +1953,26 @@ class App(tk.Tk):
         except (OSError, ValueError, EOFError, tk.TclError) as e:
             messagebox.showerror("리플레이", f"리플레이를 열 수 없습니다.\n{e}")
 
-    def _play_replay_ingame(self):
+    def open_replay_file(self, path):
+        """탐색기에서 더블클릭한 리플레이 파일: 리플레이 탭을 보여 주고 게임 화면으로 재생."""
+        try:
+            self.deiconify()
+            self.lift()
+            self.notebook.select(self.replay_tab)
+        except (tk.TclError, AttributeError):
+            pass
+        self._play_replay_ingame(pathlib.Path(path))
+
+    def _poll_open_request(self):
+        """켜져 있는 동안 다른 런처 실행(리플레이 더블클릭)이 넘긴 파일을 받아 재생."""
+        path = replay_assoc.take_request()
+        if path:
+            self.open_replay_file(path)
+        self.after(1000, self._poll_open_request)
+
+    def _play_replay_ingame(self, path=None):
         """실제 게임 화면 리플레이: 시작 저장을 불러와 기록된 명령을 게임에 다시 넣는다."""
-        path = self._selected_replay()
+        path = path or self._selected_replay()
         if not path:
             messagebox.showinfo("리플레이", "재생할 리플레이를 고르세요.")
             return
@@ -1964,7 +1984,7 @@ class App(tk.Tk):
             return
         if isinstance(data, str):
             if messagebox.askyesno("리플레이", data + "\n\n대신 간단 보기로 열까요?"):
-                self._play_replay()
+                self._play_replay(path)
             return
         game_dir = pathlib.Path(self.cfg.get("game_dir", DEFAULT_GAME_DIR))
         # 맵이 없으면 게임이 '맵 없다' 창을 띄우고 끝난다 -> 리플레이에 든 맵을 넣는다
@@ -2564,9 +2584,13 @@ if __name__ == "__main__":
     if "--server" in sys.argv:
         run_server_mode()
     else:
+        # 탐색기에서 리플레이(.rkr)를 더블클릭해 실행된 경우: 런처가 켜져 있으면 넘기고 끝낸다
+        replay_arg = replay_assoc.find_replay_arg(sys.argv[1:])
+        if replay_arg and replay_assoc.hand_over(replay_arg):
+            sys.exit(0)
         run_as_admin()
 
-        latest, url, size = check_for_update()
+        latest, url, size = (None, None, 0) if replay_arg else check_for_update()   # 리플레이를 열 때는 묻지 않음
         if latest and url:
             _root = tk.Tk()
             _root.withdraw()
@@ -2583,9 +2607,17 @@ if __name__ == "__main__":
                     _r.destroy()
 
         app = App()
+        replay_assoc.mark_running()
         if getattr(sys, 'frozen', False):
             try:
                 launcher_update.make_shortcut(sys.executable)
             except Exception as e:
                 messagebox.showwarning('바로가기', f'고정 바로가기를 만들지 못했습니다: {e}')
+            try:
+                replay_assoc.register(sys.executable)     # .rkr 더블클릭 -> 이 런처로 게임 화면 재생
+            except OSError:
+                pass
+        app.after(1000, app._poll_open_request)
+        if replay_arg:
+            app.after(600, lambda: app.open_replay_file(replay_arg))
         app.mainloop()

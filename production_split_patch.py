@@ -320,24 +320,78 @@ def _sites():
     return tuple(sites)
 
 
-def state(data) -> bool:
-    flags = []
-    for offset, original, patched in SITES:
+def _match(data, sites):
+    """True = 모두 바뀜, False = 모두 원래, None = 섞임·모르는 바이트."""
+    flags = set()
+    for offset, original, patched in sites:
         value = bytes(data[offset:offset + len(original)])
         if value not in (original, patched):
-            raise ValueError(f"생산 나눠 맡기기 패치 코드 충돌: {offset:#x}")
-        flags.append(value == patched)
-    if len(set(flags)) != 1:
-        raise ValueError("불완전한 생산 나눠 맡기기 패치")
-    return flags[0]
+            return None
+        flags.add(value == patched)
+    return flags.pop() if len(flags) == 1 else None
+
+
+def _legacy(data):
+    """이전 판(v0.9086)이 설치한 상태면 그 자리 목록."""
+    for sites in LEGACY_SITES:
+        if all(bytes(data[o:o + len(p)]) == p for o, _, p in sites):
+            return sites
+    return None
+
+
+def state(data) -> bool:
+    now = _match(data, SITES)
+    if now is not None:
+        return now
+    if _legacy(data):
+        return True
+    raise ValueError("생산 나눠 맡기기 패치: 불완전하거나 알 수 없는 변경이 있습니다.")
 
 
 def transform(data, enabled=True) -> bytes:
-    state(data)
     out = bytearray(data)
+    if _match(data, SITES) is None:
+        old = _legacy(data)
+        if not old:
+            raise ValueError("생산 나눠 맡기기 패치: 불완전하거나 알 수 없는 변경이 있습니다.")
+        for offset, original, _ in old:                # 이전 판을 걷어냄
+            out[offset:offset + len(original)] = original
     for offset, original, patched in SITES:
         out[offset:offset + len(original)] = patched if enabled else original
     return bytes(out)
 
+
+# 이전 판이 설치한 상태 — 걷어낼 때 인식: (파일 오프셋, 원래, 바꾼 것)
+LEGACY_SITES = (
+    (   # v0.9086 시험판 (집결지 동시 지정 전)
+        (0x33603, bytes.fromhex("33c9668b883a5a770085c97405e9c8050000"), bytes.fromhex("8a88485a77003a0dcc12b4000f85c8050000")),
+        (0x33ad8, bytes.fromhex("7518"), bytes.fromhex("9090")),
+        (0x47cf0, bytes.fromhex("558bec83ec40"), bytes.fromhex("e9cb3f0a0090")),
+        (0x6049f, bytes.fromhex("0fbf05d012b40069c0380100000fbf883e5a770081e10010000085c9744b"), bytes.fromhex("803d3c088000017760a1d012b4009869c038010000f6803f5a770010744b")),
+        (0xebcc0, bytes(64), bytes.fromhex("817c240408400000751a608a54242c80fa05740a80fa06740580fa0a7505e9e5fcffff615589e583ec40e907c0f5ff9090909090909090909090909090909090")),
+        (0xeb9c8, bytes(56), bytes.fromhex("0fbf05d012b40085c00f840c03000089c369e8380100000fbfad465a7700e8e5fdffff89c78b356e3643000fbf0d3c088000e951ffffff90")),
+        (0xeb950, bytes(48), bytes.fromhex("49781466ad9850e874feffff39f87304978b1c2458ebe983ff40730566895c2428e96d03000090909090909090909090")),
+        (0xeb7d0, bytes(48), bytes.fromhex("5669f03801000081c6385a77006a405866837e08007e158a66103a25cc12b400750a66396e0e0f84d40000005ec39090")),
+        (0xeb8d0, bytes(48), bytes.fromhex("0fb74606f6c410741880fa057515663d0510750f0fbe4652403c057206b040eb0231c05ec39090909090909090909090")),
+    ),
+    (   # v0.9086
+        (0x33603, bytes.fromhex("33c9668b883a5a770085c97405e9c8050000"), bytes.fromhex("8a88485a77003a0dcc12b4000f85c8050000")),
+        (0x33ad8, bytes.fromhex("7518"), bytes.fromhex("9090")),
+        (0x47cf0, bytes.fromhex("558bec83ec40"), bytes.fromhex("e9d13c0a0090")),
+        (0x6049f, bytes.fromhex("0fbf05d012b40069c0380100000fbf883e5a770081e10010000085c9744b"), bytes.fromhex("803d3c088000017760a1d012b4009869c038010000f6803f5a770010744b")),
+        (0x47e60, bytes.fromhex("558bec83ec44"), bytes.fromhex("e9dc380a0090")),
+        (0xeb9c6, bytes(58), bytes.fromhex("817c240408400000751a608a54242c80fa05740a80fa06740580fa0a7505e9d2020000615589e583ec40e901c3f5ff9090909090909090909090")),
+        (0xebcbb, bytes(69), bytes.fromhex("0fbf05d012b40085c00f841ffdffff89c369e8380100000fbfad465a7700e870fcffff89c78b356e3643000fbf0d3c088000e973ffffff9090909090909090909090909090")),
+        (0xebc65, bytes(27), bytes.fromhex("490f888402000066ad9850e8d9fcffff39f87304978b1c2458ebe5")),
+        (0xebef0, bytes(16), bytes.fromhex("83ff40730566895c2428e9eafaffff90")),
+        (0xeb94e, bytes(50), bytes.fromhex("5669f03801000081c6385a77006a405866837e08007e158a66103a25cc12b400750a66396e0e0f846cfcffff5ec390909090")),
+        (0xeb5e6, bytes(26), bytes.fromhex("0fb74606f6c410740a80fa057507e97f01000031c05ec3909090")),
+        (0xeb778, bytes(24), bytes.fromhex("663d0510750b0fbe4652403c057202b0405ec39090909090")),
+        (0xeb741, bytes(31), bytes.fromhex("807c2404037509803d3c08800001777f5589e583ec44e90ac7f5ff90909090")),
+        (0xeb7d0, bytes(48), bytes.fromhex("600fbf1dd012b40069c3380100000fbfa8465a77008b356e3643000fbf3d3c088000b206e91b04000090909090909090")),
+        (0xebc14, bytes(44), bytes.fromhex("4f781b66ad9850e82efdffff5983f84072073d0010000072e7e99efcffff66891dd012b40061c39090909090")),
+        (0xeb8d0, bytes(48), bytes.fromhex("66890dd012b400ff742430ff742430ff742430ff742430e865feffff83c410b206e91e03000090909090909090909090")),
+    ),
+)
 
 SITES = _sites()

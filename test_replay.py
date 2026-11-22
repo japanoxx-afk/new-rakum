@@ -465,7 +465,32 @@ class InGameHookTests(unittest.TestCase):
             self.texts.append((arg(uc, 1), arg(uc, 2), bytes(uc.mem_read(arg(uc, 3), arg(uc, 4))).decode("cp949")))
             return 1
 
+        self.fills, self.sprites, self.bk = [], [], [None]
+        EXT = STUB + 0x3000                                           # ExtTextOutA (GetProcAddress 로 찾음)
+        mu.mem_write(EXT, b"\xc2\x20\x00")
+
+        def ext_text_out(uc, a, sz, _):
+            l, t, r_, b_ = struct.unpack("<4i", uc.mem_read(arg(uc, 4), 16))
+            self.fills.append((arg(uc, 3), l, t, r_ - l, b_ - t, self.bk[0]))
+            uc.reg_write(UC_X86_REG_EAX, 1)
+        mu.hook_add(UC_HOOK_CODE, ext_text_out, begin=EXT, end=EXT)
+
+        def set_bk(uc):
+            self.bk[0] = arg(uc, 1)
+            return 0
+
+        def get_proc(uc):
+            self.calls.append(("getproc", arg(uc, 0), cstr(uc, arg(uc, 1))))
+            return EXT
+
+        def put_sprite(uc):
+            self.sprites.append(tuple(struct.unpack("<i", struct.pack("<I", arg(uc, k)))[0] for k in range(7))
+                                + (struct.unpack("<4I", uc.mem_read(uc.reg_read(UC_X86_REG_ESP) + 4 + 28, 16)),))
+            return 0
+
         apis = {0x4EC284: (2, create_dir), 0x4EC27C: (7, create_file), 0x4EC260: (5, read_file),
+                0x4EC01C: (2, set_bk), 0x4EC278: (1, lambda uc: 0x7700 if cstr(uc, arg(uc, 0)) == b"GDI32" else 0),
+                0x4EC1C0: (2, get_proc), 0x4EC4B0: (11, put_sprite),
                 0x4EC1AC: (1, lambda uc: 1), 0x4EC350: (1, lambda uc: 0xFF80 if arg(uc, 0) in self.keys else 0),
                 0x4EC020: (2, lambda uc: 1), 0x4EC038: (2, lambda uc: 1), 0x4EC03C: (2, lambda uc: 1), 0x4EC034: (5, text_out)}
         for k, (imp, (n, fn)) in enumerate(apis.items()):
@@ -620,14 +645,14 @@ class InGameHookTests(unittest.TestCase):
         self.files[b"RKREPLAY.RKP"] = rrp.build_rkp(start, records, name)
         return mu
 
-    def run_entry(self, mu, entry, ret):
+    def run_entry(self, mu, entry, ret, count=200000):
         ESP, ECX, EBP = self.regs
         mu.mem_write(ret, b"\xf4")
         esp = 0x2080000
         mu.mem_write(esp, struct.pack("<I", ret))
         mu.reg_write(ESP, esp)
         mu.reg_write(EBP, 0x6666)
-        mu.emu_start(self.BASE + rrp.OFF[entry], ret, count=200000)
+        mu.emu_start(self.BASE + rrp.OFF[entry], ret, count=count)
         self.assertEqual(mu.reg_read(ESP), esp + 4)
         self.assertEqual(mu.reg_read(EBP), 0x6666)
 
@@ -696,37 +721,102 @@ class InGameHookTests(unittest.TestCase):
         mu.mem_write(rrp.FLAGS_OFF + self.BASE + rrp.F_PLAY, struct.pack("<I", 1))
         return mu
 
-    def test_overlay_draws_resources_and_production(self):
+    def sprite_table(self, mu):
+        """위 자원줄 아이콘: 패널 [[0x801E58+0x10]+0x14] 의 그림 표 59..63 (0x18 간격: +0xA 폭, +0xC 높이, +0x10/+0x14 자료)."""
+        P, S = 0x2020000, 0x2021000
+        mu.mem_write(0x801E68, struct.pack("<I", P))
+        mu.mem_write(P + 0x14, struct.pack("<I", S))
+        for k in range(5):
+            e = S + (59 + k) * 0x18
+            mu.mem_write(e + 0xA, struct.pack("<hh", 16 + k, 16))
+            mu.mem_write(e + 0x10, struct.pack("<II", 0xA000 + k, 0xB000 + k))
+        mu.mem_write(0x106A604, struct.pack("<4I", 0, 0, 1280, 720))
+
+    def test_overlay_draws_resource_table(self):
+        """오른쪽 위 자원 표: 바탕(테두리·몸·머리줄·구분선), 머리줄 아이콘 5개(금·물·카르마·글로리·인구), 참가자마다 한 줄.
+        생산·업그레이드 줄은 없다 (v0.9088~)."""
         mu = self.overlay_machine()
+        self.sprite_table(mu)
         mu.mem_write(0x4D4440, b"\xc3")
         self.run_entry(mu, "overlay", 0x4D660C)
-        lines = [t for x, y, t in self.texts[1::2]]                       # 그림자 다음 색 글자
-        self.assertEqual(lines, ["aa   금 150  물 50  카르마 3  글로리 7  인구 6/15", "   생산 일꾼 25%",
-                                 "컴퓨터   금 90  물 40  카르마 0  글로리 1  인구 5/15", "   업그레이드 갑옷 0%"])
-        self.assertEqual(self.texts[0][:2], (1280 - 370 + 1, 31))         # 오른쪽 위, 그림자 +1
+        x0, y0 = 1280 - rrp.HUD_W - 8, rrp.HUD_Y
+        col = lambda k: x0 + rrp.HUD_COL0 + k * rrp.HUD_COL
+        row = lambda n: y0 + rrp.HUD_HEAD + 5 + n * rrp.HUD_ROW
+        want = [(x0 + 10, y0 + 6, "플레이어"), (x0 + 10, row(0), "aa")]
+        want += [(col(k), row(0), t) for k, t in enumerate(("150", "50", "3", "7", "6/15"))]
+        want += [(x0 + 10, row(1), "컴퓨터")] + [(col(k), row(1), t) for k, t in enumerate(("90", "40", "0", "1", "5/15"))]
+        self.assertEqual(self.texts[1::2], want)                           # 그림자 다음 색 글자
+        self.assertEqual(self.texts[0], (x0 + 11, y0 + 7, "플레이어"))     # 그림자 +1
+        h = rrp.HUD_HEAD + 5 + 2 * rrp.HUD_ROW
+        self.assertEqual(self.fills, [(2, x0, y0, rrp.HUD_W, h, rrp.HUD_LINE),
+                                      (2, x0 + 1, y0 + 1, rrp.HUD_W - 2, h - 2, rrp.HUD_BACK),
+                                      (2, x0 + 1, y0 + 1, rrp.HUD_W - 2, rrp.HUD_HEAD, rrp.HUD_HBACK),
+                                      (2, x0 + 1, y0 + 1 + rrp.HUD_HEAD, rrp.HUD_W - 2, 1, rrp.HUD_LINE)])
+        self.assertEqual(self.sprites, [(col(k), y0 + 3, 0xB000 + k, 16 + k, 16, 0, 0xA000 + k, (0, 0, 1280, 720))
+                                        for k in range(5)])
         self.assertEqual(self.dc_state, ["get", ("release", 0xDC)])
+        self.assertEqual([c for c in self.calls if c[0] == "getproc"], [("getproc", 0x7700, b"ExtTextOutA")])
+        self.run_entry(mu, "overlay", 0x4D660C)                           # 주소는 한 번만 찾음
+        self.assertEqual(len([c for c in self.calls if c[0] == "getproc"]), 1)
+        self.assertEqual(len(self.fills), 8)
 
-    def test_i_key_toggles_hud(self):
+    def test_overlay_without_icons_or_background(self):
+        """아이콘 표나 ExtTextOutA 를 못 찾아도 글자는 나온다 (튕기지 않음)."""
         mu = self.overlay_machine()
         mu.mem_write(0x4D4440, b"\xc3")
-        flags = lambda: bytes(mu.mem_read(self.BASE + rrp.FLAGS_OFF + rrp.F_HIDE, 1))[0]
+        mu.mem_write(0x4EC278, struct.pack("<I", struct.unpack("<I", mu.mem_read(0x4EC350, 4))[0] - 0))   # GetModuleHandle -> 0 (키 대체는 인자 1개)
+        self.keys = set()
+        self.run_entry(mu, "overlay", 0x4D660C)
+        self.assertEqual((self.fills, self.sprites), ([], []))
+        self.assertEqual(len(self.texts), 2 * 13)
+
+    def test_i_and_u_keys_toggle_hud(self):
+        """I = 화면 정보 전체(아래 패널·미니맵·자원 표), U = 자원 표만."""
+        mu = self.overlay_machine()
+        mu.mem_write(0x4D4440, b"\xc3")
+        flag = lambda f: bytes(mu.mem_read(self.BASE + rrp.FLAGS_OFF + f, 1))[0]
         self.keys = {0x49}
         self.run_entry(mu, "overlay", 0x4D660C)
-        self.assertEqual(flags(), 1)
+        self.assertEqual((flag(rrp.F_HIDE), flag(rrp.F_HIDE2)), (1, 0))
         self.assertEqual(self.texts, [])                                  # 숨김: 글자 없음
         self.run_entry(mu, "overlay", 0x4D660C)                           # 계속 누르고 있으면 그대로
-        self.assertEqual(flags(), 1)
+        self.assertEqual(flag(rrp.F_HIDE), 1)
         self.keys = set()
         self.run_entry(mu, "overlay", 0x4D660C)
         self.keys = {0x49}
         self.run_entry(mu, "overlay", 0x4D660C)
-        self.assertEqual(flags(), 0)
-        # 패널: 숨김이면 원래 그리기(0x463A20) 를 부르지 않음
+        self.assertEqual(flag(rrp.F_HIDE), 0)
+        self.assertTrue(self.texts)
+        # U: 자원 표만
+        self.texts.clear()
+        self.keys = {0x55}
+        self.run_entry(mu, "overlay", 0x4D660C)
+        self.assertEqual((flag(rrp.F_HIDE), flag(rrp.F_HIDE2)), (0, 1))
+        self.assertEqual(self.texts, [])
+        self.run_entry(mu, "overlay", 0x4D660C)
+        self.assertEqual(flag(rrp.F_HIDE2), 1)
+        seen = []
+        from unicorn import UC_HOOK_CODE
+        for at in (0x463A20, 0x46A3B0):                                  # U 로는 아래 패널·미니맵이 그대로 그려짐
+            mu.mem_write(at, b"\xc3")
+            mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: seen.append(a), begin=at, end=at)
+        mu.mem_write(0xB412D0, struct.pack("<h", 0))
+        self.run_entry(mu, "panel", 0x4D65F8)
+        self.run_entry(mu, "panel2", 0x4D6607)
+        self.assertEqual(seen, [0x463A20, 0x46A3B0])
+        self.keys = set()
+        self.run_entry(mu, "overlay", 0x4D660C)
+        self.keys = {0x55}
+        self.run_entry(mu, "overlay", 0x4D660C)
+        self.assertEqual(flag(rrp.F_HIDE2), 0)
+        # I: 패널·미니맵도 안 그림
         mu.mem_write(0x463A20, b"\xcc")
         mu.mem_write(0x46A3B0, b"\xcc")
         mu.mem_write(self.BASE + rrp.FLAGS_OFF + rrp.F_HIDE, b"\x01")
+        seen.clear()
         self.run_entry(mu, "panel", 0x4D65F8)
-        self.run_entry(mu, "panel2", 0x4D6607)                           # 미니맵도
+        self.run_entry(mu, "panel2", 0x4D6607)
+        self.assertEqual(seen, [])
 
     def test_play_keeps_native_unit_type_data(self):
         """저장은 종류마다 0x90 바이트만 담아(+0x96 '죽으면 시체로 남음' 등이 사라짐) 재생에서만 죽은 유닛 처리가 달라졌다
@@ -778,52 +868,147 @@ class InGameHookTests(unittest.TestCase):
                     self.assertEqual(struct.unpack_from("<h", data, 0x96)[0], 1)     # 자료 파일 값 유지
                 self.assertEqual(struct.unpack("<I", mu.mem_read(rrp.TYPE_TABLE + 5 * 0x1C, 4))[0], 0x2058000)
 
-    def test_spectator_view_only_while_drawing(self):
-        """맵 전체 밝힘: 재생이면 지형·유닛을 그리는 동안만 표[내 번호]=0xFF, 모든 유닛 시야 마스크 0xFF,
-        타일 안개 지도 0(밝음), 미니맵 안개 그림 = 지형 그림. 마우스 그리기 직전에 표·마스크를 되돌린다(진행은 원래 시야).
+    def test_combined_vision_only_while_drawing(self):
+        """스타크래프트2 리플레이처럼 모든 참가자의 시야를 합쳐 보여 준다 (v0.9088~).
+        재생이면 그리는 동안만: 표[내 번호]=0xFF (누구라도 보는 유닛이 보임), 탐색 지도 0 (안 가 본 곳도 그림),
+        타일 안개 = 아무도 안 보는 칸만 0xFF, 미니맵 = 지형 반 밝기 + 보는 칸 원래 밝기 + 유닛 점.
+        유닛 시야 마스크와 시야 지도는 건드리지 않는다 (진행이 달라지면 안 됨). 마우스 그리기 직전에 표·탐색 지도를 되돌린다.
         재생이 아니면(실제 대전) 아무것도 건드리지 않는다 (맵핵이 되면 안 됨)."""
         from unicorn import UC_HOOK_CODE
-        from unicorn.x86_const import UC_X86_REG_ESP
+        from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_ECX
         bits = lambda mu: list(struct.unpack("<8H", mu.mem_read(rrp.PLAYER_BITS, 16)))
         normal = [1 << p for p in range(8)]
-        seen_mask = {3: 0x0002, 40: 0x0000, 0x6A5: 0x0101}            # 칸 -> 시야 마스크 (원래 값)
+        seen_mask = {3: 0x0002, 40: 0x0000, 0x6A5: 0x0101}            # 유닛 -> 시야 마스크
         mask = lambda mu, u: struct.unpack("<H", mu.mem_read(rrp.UNIT_SEEN + u * 0x138, 2))[0]
+        cell = lambda x, y: y * 0x208 + x
         MM = 0x2010000                                                  # 미니맵 객체 (가짜)
+        terrain = bytes([0xDE, 0xF7]) * 0x4000                         # RGB565 0xF7DE
         for play in (True, False):
             with self.subTest(play=play):
                 mu = self.overlay_machine()
                 mu.mem_write(0x4D4440, b"\xc3")
                 mu.mem_write(rrp.PLAYER_BITS, struct.pack("<8H", *normal))
                 mu.mem_write(0x400000 + rrp.MODE_OFF, bytes([rrp.MODE_PLAY if play else 0]))
+                if not play:
+                    mu.mem_write(self.BASE, rrp.body(play=False))           # 실제 대전 설치
                 mu.mem_write(0xB412CC, b"\x01")                              # 내 번호 1
                 for u, m in seen_mask.items():
                     mu.mem_write(rrp.UNIT_SEEN + u * 0x138, struct.pack("<H", m))
-                mu.mem_write(rrp.FOG_MAP, b"\xff" * rrp.FOG_MAP_SIZE)          # 전부 안개
+                mu.mem_write(rrp.FOG_MAP, b"\x55" * rrp.FOG_MAP_SIZE)
+                explored = bytes([0x0F]) * rrp.FOG_MAP_SIZE                   # 녹화한 사람은 아무 데도 안 가 봄
+                mu.mem_write(rrp.EXPLORED, explored)
+                visible = bytearray(rrp.FOG_MAP_SIZE)
+                visible[cell(10, 20)] = 0x01                                  # 플레이어 0 만 보는 칸
+                visible[cell(11, 20)] = 0x06                                  # 1·2 가 보는 칸
+                visible[cell(300, 20)] = 0x02                                 # 지도 밖 (폭 200): 미니맵에는 안 찍음
+                mu.mem_write(rrp.VISIBLE, bytes(visible))
+                mu.mem_write(0xB412D4, struct.pack("<hh", 200, 100))          # 지도 폭·높이 (칸)
                 mu.mem_write(rrp.MINIMAP, struct.pack("<I", MM))
-                mu.mem_write(MM + 0x2C, bytes(range(256)) * 0x80)              # 지형 그림
-                mu.mem_write(MM + 0x1002C, b"\x77" * 0x8000)                   # 안개 입힌 그림
+                mu.mem_write(0x3001200 + 0x38, struct.pack("<I", 0xF7DE))   # 반 밝기 마스크 (RGB565)
+                mu.mem_write(MM + 0x2C, terrain)
+                mu.mem_write(MM + 0x1002C, b"\x77" * 0x8000)
+                mu.mem_write(MM + 0x20254, struct.pack("<520H", *[x // 2 for x in range(520)]))   # 칸 x -> 미니맵 점
+                mu.mem_write(MM + 0x20664, struct.pack("<520H", *[y // 4 for y in range(520)]))
                 seen = []
-                mu.mem_write(rrp.WORLD_DRAW, b"\xc3")                        # 원래 그리기: 그 순간의 상태를 남김
-                mu.hook_add(UC_HOOK_CODE, lambda uc, a, s, _: seen.append(
-                    (bits(uc), {u: mask(uc, u) for u in seen_mask}, set(bytes(uc.mem_read(rrp.FOG_MAP, rrp.FOG_MAP_SIZE))),
-                     bytes(uc.mem_read(MM + 0x1002C, 0x8000)) == bytes(range(256)) * 0x80)),
-                    begin=rrp.WORLD_DRAW, end=rrp.WORLD_DRAW)
+                mu.mem_write(0x469030, b"\xc3")                              # 미니맵 유닛 점 그리기
+                mu.hook_add(UC_HOOK_CODE, lambda uc, a, s_, _: seen.append(("dots", uc.reg_read(UC_X86_REG_ECX), bits(uc))),
+                            begin=0x469030, end=0x469030)
+                mu.mem_write(rrp.DRAW_LIST, b"\xc3")                         # 그릴 목록 만들기: 그 순간의 상태를 남김
+                mu.hook_add(UC_HOOK_CODE, lambda uc, a, s_, _: seen.append(
+                    ("draw", bits(uc), {u: mask(uc, u) for u in seen_mask}, bytes(uc.mem_read(rrp.FOG_MAP, rrp.FOG_MAP_SIZE)),
+                     bytes(uc.mem_read(rrp.EXPLORED, rrp.FOG_MAP_SIZE)), bytes(uc.mem_read(MM + 0x1002C, 0x8000)))),
+                    begin=rrp.DRAW_LIST, end=rrp.DRAW_LIST)
                 esp = 0x2080000
-                mu.mem_write(0x4D65EE, b"\xf4")
-                mu.mem_write(esp, struct.pack("<I", 0x4D65EE))            # call 0x4D34D0 의 복귀 주소
+                mu.mem_write(0x4D666E, b"\xf4")
+                mu.mem_write(esp, struct.pack("<I", 0x4D666E))            # call 0x43E520 의 복귀 주소 (화면 그리기의 첫 호출)
                 mu.reg_write(UC_X86_REG_ESP, esp)
-                mu.emu_start(self.BASE + rrp.OFF["view"], 0x4D65EE, count=200000)
+                mu.emu_start(self.BASE + rrp.OFF["view2"], 0x4D666E, count=5000000)
                 self.assertEqual(mu.reg_read(UC_X86_REG_ESP), esp + 4)
+                if play:
+                    want_bits = normal.copy()
+                    want_bits[1] = 0xFF
+                    self.assertEqual(seen[0], ("dots", MM, want_bits))
+                    tag, b_, masks, fog, canopy, mm = seen[1]
+                    self.assertEqual((tag, b_, masks), ("draw", want_bits, seen_mask))     # 유닛 시야 마스크는 그대로
+                    lit = {cell(10, 20), cell(11, 20), cell(300, 20)}
+                    self.assertEqual({i for i, v in enumerate(fog) if v == 0}, lit)       # 누구라도 보는 칸만 밝음
+                    self.assertEqual(set(fog), {0, 0xFF})
+                    self.assertEqual(set(canopy), {0})
+                    px = [struct.unpack_from("<H", mm, i)[0] for i in range(0, 0x8000, 2)]
+                    self.assertEqual({i for i, v in enumerate(px) if v == 0xF7DE}, {5 * 128 + 5})   # 칸 (10,20),(11,20) -> 점 (5,5)
+                    self.assertEqual({v for i, v in enumerate(px) if i != 5 * 128 + 5}, {0x7BEF})   # 나머지는 반 밝기
+                else:
+                    self.assertEqual(len(seen), 1)
+                    tag, b_, masks, fog, canopy, mm = seen[0]
+                    self.assertEqual((b_, masks, set(fog), canopy, set(mm)), (normal, seen_mask, {0x55}, explored, {0x77}))
+                seen.clear()                                                  # 0x4D34D0 자리(view)는 이제 그대로 넘김
+                mu.mem_write(rrp.WORLD_DRAW, b"\xc3")
+                mu.mem_write(0x4D65EE, b"\xf4")
+                mu.mem_write(esp, struct.pack("<I", 0x4D65EE))
+                mu.reg_write(UC_X86_REG_ESP, esp)
+                mu.emu_start(self.BASE + rrp.OFF["view"], 0x4D65EE, count=100)
+                self.assertEqual((seen, mu.reg_read(UC_X86_REG_ESP)), ([], esp + 4))
+                self.run_entry(mu, "overlay", 0x4D660C)
+                self.assertEqual(bits(mu), normal)
+                self.assertEqual(bytes(mu.mem_read(rrp.EXPLORED, rrp.FOG_MAP_SIZE)), explored)    # 탐색 지도는 원래대로
+                self.assertEqual(bytes(mu.mem_read(rrp.VISIBLE, rrp.FOG_MAP_SIZE)), bytes(visible))
+                self.assertEqual({u: mask(mu, u) for u in seen_mask}, seen_mask)
+
+    def test_click_picks_any_visible_unit_in_replay(self):
+        """마우스 입력 처리(0x430C00) 동안: 재생이면 표[내 번호]=0xFF, 탐색 지도 0 — 상대 유닛·건물도 늘 골라진다.
+        끝나면 되돌린다. 재생이 아니면(실제 대전) 그대로."""
+        from unicorn import UC_HOOK_CODE
+        bits = lambda mu: list(struct.unpack("<8H", mu.mem_read(rrp.PLAYER_BITS, 16)))
+        normal = [1 << p for p in range(8)]
+        explored = bytes([0x0F, 0x03]) * (rrp.FOG_MAP_SIZE // 2)
+        for play in (True, False):
+            with self.subTest(play=play):
+                mu = self.overlay_machine()
+                mu.mem_write(rrp.PLAYER_BITS, struct.pack("<8H", *normal))
+                mu.mem_write(0x400000 + rrp.MODE_OFF, bytes([rrp.MODE_PLAY if play else 0]))
+                mu.mem_write(0xB412CC, b"\x01")
+                mu.mem_write(rrp.EXPLORED, explored)
+                seen = []
+                mu.mem_write(0x430C06, b"\x8b\xe5\x5d\xc3")               # 원래 함수 몸: mov esp,ebp; pop ebp; ret
+                mu.hook_add(UC_HOOK_CODE, lambda uc, a, s_, _: seen.append(
+                    (bits(uc), set(bytes(uc.mem_read(rrp.EXPLORED, rrp.FOG_MAP_SIZE))))), begin=0x430C06, end=0x430C06)
+                self.run_entry(mu, "pick", 0x4D7B5C, count=2000000)   # 지도 복사(rep) 한 칸이 한 단계
                 want = normal.copy()
                 if play:
                     want[1] = 0xFF
-                    self.assertEqual(seen, [(want, {u: (m & 0xFF00) | 0xFF for u, m in seen_mask.items()}, {0}, True)])
-                else:
-                    self.assertEqual(seen, [(want, seen_mask, {0xFF}, False)])
-                    mu.mem_write(self.BASE, rrp.body(play=False))           # 실제 대전 설치
-                self.run_entry(mu, "overlay", 0x4D660C)
+                self.assertEqual(seen, [(want, {0} if play else {0x0F, 0x03})])
                 self.assertEqual(bits(mu), normal)
-                self.assertEqual({u: mask(mu, u) for u in seen_mask}, seen_mask)   # 진행용 시야는 원래대로
+                self.assertEqual(bytes(mu.mem_read(rrp.EXPLORED, rrp.FOG_MAP_SIZE)), explored)
+
+    def test_replay_mutes_alerts_and_production_sounds(self):
+        """재생: 알림 소리(0x49E5D0)는 건물 선택 소리(0x372..0x375)만, 유닛 생산 완료 소리(0x49E2B0)는 내지 않는다.
+        재생이 아니면 원래 함수 그대로."""
+        from unicorn import UC_HOOK_CODE
+        from unicorn.x86_const import UC_X86_REG_EAX
+        for play in (True, False):
+            mu = self.overlay_machine()
+            mu.mem_write(0x400000 + rrp.MODE_OFF, bytes([rrp.MODE_PLAY if play else 0]))
+            played = []
+            for at in (0x49E5D6, 0x49E2B6):
+                mu.mem_write(at, b"\xb0\x01\x8b\xe5\x5d\xc3")           # mov al,1; mov esp,ebp; pop ebp; ret
+                mu.hook_add(UC_HOOK_CODE, lambda uc, a, s_, _: played.append(
+                    (a, struct.unpack("<I", uc.mem_read(uc.reg_read(self.regs[2]) + 8, 4))[0])), begin=at, end=at)
+            ESP = self.regs[0]
+            for entry, arg in (("snd1", 0x100), ("snd1", 0x372), ("snd1", 0x375), ("snd1", 0x376), ("snd1", 0x371), ("snd2", 0x775B70)):
+                esp = 0x2080000
+                mu.mem_write(0x4D0000, b"\xf4")
+                mu.mem_write(esp, struct.pack("<II", 0x4D0000, arg))
+                mu.reg_write(ESP, esp)
+                mu.reg_write(UC_X86_REG_EAX, 0x77)
+                mu.emu_start(self.BASE + rrp.OFF[entry], 0x4D0000, count=1000)
+                self.assertEqual(mu.reg_read(ESP), esp + 4)
+                if entry == "snd2" and play:
+                    self.assertEqual(mu.reg_read(UC_X86_REG_EAX), 0)
+            if play:
+                self.assertEqual(played, [(0x49E5D6, 0x372), (0x49E5D6, 0x375)])
+            else:
+                self.assertEqual(played, [(0x49E5D6, 0x100), (0x49E5D6, 0x372), (0x49E5D6, 0x375), (0x49E5D6, 0x376),
+                                          (0x49E5D6, 0x371), (0x49E2B6, 0x775B70)])
 
     def test_panel_shows_selected_players_info(self):
         """패널을 그리는 동안만 내 번호를 고른 유닛의 주인으로: 상대 건물의 생산·업그레이드 창."""
