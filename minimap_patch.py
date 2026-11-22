@@ -32,9 +32,10 @@ def underlying(data):
 
 def _strip_text_patches(data):
     """.text 여유 공간을 쓰는 독립 패치들을 걷어낸 원본 상태 (고해상도 전체 파일 검증 전에 사용)."""
-    import rally_gold_patch,menu_free_guard_patch,queue_cancel_patch,rally_construct_patch,rally_spawn_patch
+    import rally_gold_patch,menu_free_guard_patch,queue_cancel_patch,rally_construct_patch,rally_spawn_patch,production_split_patch
     data=queue_cancel_patch.transform(menu_free_guard_patch.transform(rally_gold_patch.strip(data),False),False)
-    return rally_spawn_patch.transform(rally_construct_patch.transform(data,False),False)
+    data=rally_spawn_patch.transform(rally_construct_patch.transform(data,False),False)
+    return production_split_patch.transform(data,False)
 
 def transform(data,enabled=True):
     import viewport_patch,rally_gold_patch
@@ -87,7 +88,7 @@ def prepare(path,highres,rally_gold=True,hotkeys=True,select24=False,record=Fals
 def build(original,highres,rally_gold=True,hotkeys=True,select24=False,record=False,start_save=False,play=False,rally_spawn=False,wide_checks=True):
     """설치 파일 바이트 -> 실행용 최종 바이트 (메모리 안에서만; 파일은 건드리지 않음)."""
     import viewport_patch,peer_address_patch,sync_port_patch,panel_guard_patch,rally_gold_patch,hotkey_patch,selection_patch,menu_free_guard_patch,replay_record_patch,queue_cancel_patch
-    import rally_construct_patch,rally_spawn_patch
+    import rally_construct_patch,rally_spawn_patch,production_split_patch
     data=_strip_text_patches(underlying(original))
     peer_address_patch.state(data);sync_port_patch.state(data);panel_guard_patch.state(data)
     result=bytearray(data)
@@ -104,6 +105,7 @@ def build(original,highres,rally_gold=True,hotkeys=True,select24=False,record=Fa
     data=queue_cancel_patch.transform(data,True)   # ESC 는 예약된 대기열부터 취소 (항상)
     data=rally_construct_patch.transform(data,True)   # 건설 중인 건물에도 집결지 지정 (항상, 보내는 쪽만)
     data=rally_spawn_patch.transform(data,rally_spawn)   # 생산 유닛이 집결지 쪽에서 나옴 (대전 규칙)
+    data=production_split_patch.transform(data,True)   # 같은 건물 여러 개: 생산·연구를 나눠 맡김 (항상, 보내는 쪽만)
     data=selection_patch.apply(data,select24)      # 미니맵 섹션 뒤 .sel24 (선택 한도 24)
     data=replay_record_patch.apply(data,record or play,start_save,play,wide_checks or not play)    # 그 뒤 .rkrec (리플레이 기록/재생; 넓은 검사값은 기록 항상, 재생은 그 리플레이에 맞춤)
     return hotkey_patch.apply(data,hotkeys)        # 맨 뒤에 단축키 섹션 (.sel24 가 있으면 24칸 판)
