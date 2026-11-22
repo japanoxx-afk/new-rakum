@@ -15,7 +15,9 @@
 패치:
   1) 0x433603 (18바이트): '건물이면 그만' -> '내 유닛이 아니면 그만' (주인 +0x10 != [0xB412CC]).
      내 건물을 더블클릭하면 화면 안의 같은 종류 내 건물을 모두 고른다.
-  2) 0x433AD8 jne (2바이트) -> nop: 화면 탐색에서 건물도 고른다 (같은 종류·내 것만 고르는 원래 검사는 그대로).
+  2) 0x433AC0 (50바이트): 화면 탐색에서 건물도 고르되 누른 유닛과 분류(+2)가 같은 것만 (건물·유닛 종류 번호가 겹침).
+     0x433896 (59바이트): 공중 유닛 탐색은 누른 유닛이 건물이면 아무것도 고르지 않음.
+     선택 음성 0x49E400 세 곳 -> 건물이면 건너뜀 (여러 건물을 고를 때 유닛 음성이 나던 것).
   4) 0x46049F (30바이트): 같은 건물을 둘 이상 골랐으면 정보 창 건물이 연구 중이어도 생산·연구 버튼을 보여 준다
      (원래는 '취소'만 보여 줘서 다른 건물에 연구를 맡길 수 없었다). 하나만 골랐을 때는 원래대로.
   3) 0x447CF0 머리 (6바이트) -> 여유 공간 코드: 명령 0x4008 세부 5/6/10 이면 보낼 건물을 고른다.
@@ -48,7 +50,28 @@ PICK_ORIGINAL = bytes.fromhex("33c9668b883a5a770085c97405e9c8050000")
 PICK_PATCHED = (bytes.fromhex("8a88") + struct.pack("<I", OWNER) +           # mov cl, [eax+주인]
                 bytes.fromhex("3a0d") + struct.pack("<I", ME) +              # cmp cl, [내 번호]
                 b"\x0f\x85" + struct.pack("<i", 0x433BDD - 0x433615))        # jne 끝
-SCAN_SITE, SCAN_ORIGINAL, SCAN_PATCHED = 0x33AD8, bytes.fromhex("7518"), bytes.fromhex("9090")
+# 화면 탐색(땅 유닛 칸 0xB839CA)의 후보 검사 0x433AC0..0x433AF2 (50바이트): 원래 '건물이면 건너뜀' + '이미 고름(0x80)'.
+# -> '이미 고름' + '누른 유닛과 분류(+2)가 다르면 건너뜀'. 건물과 유닛은 종류 번호(+0xE)가 겹칠 수 있어서
+#    (무휼 본진과 일꾼이 같은 번호) 종류만 비교하면 본진을 더블클릭할 때 일꾼까지 섞여 골라졌다 (첫 선택이 건물이면
+#    이동 명령 0x441240 이 통째로 무시되어 '선택은 되는데 조종이 안 됨').
+SCAN_SITE = 0x33AC0
+SCAN_ORIGINAL = bytes.fromhex("0fbf051269760069c03801000033c9668b883a5a770085c975180fbf151269760033c0"
+                              "8a82e412b400258000000085c07405")
+SCAN_PATCHED = bytes.fromhex("0fbf0512697600f680e412b40080752269c0380100000fbf4d0c69c938010000668b903a5a7700"
+                             "663b913a5a77007502eb05")
+# 공중 유닛 칸(0xC8BACA) 탐색의 후보 검사 0x433896..0x4338D1 (59바이트): 체력·'이미 고름'은 그대로,
+# 누른 유닛이 건물이면 건너뜀 (건물 종류 번호가 공중 유닛 종류와 겹쳐 이 길로 와도 공중 유닛을 고르지 않게).
+AIR_SITE = 0x33896
+AIR_ORIGINAL = bytes.fromhex("0fbf151269760069d2380100000fbf82405a770085c07f05e9250300000fbf0d1269760033d2"
+                             "8a91e412b40081e28000000085d27405e902030000")
+AIR_PATCHED = bytes.fromhex("0fbf0512697600f680e412b40080752469c0380100006683b8405a7700007e140fbf4d0c69c938"
+                            "0100006683b93a5a7700007407e9a8000000") + b"\x90\x90"
+# 여럿 골랐을 때 선택 음성 0x49E400(유닛) 을 건물에도 불러 유닛 음성('마이')이 나왔다 -> 건물이면 건너뜀.
+# (건물 선택 소리는 더블클릭의 첫 클릭에서 이미 난다.) 선택 확정 0x432F30 의 세 곳.
+VOICE = 0x49E400
+VOICE_SITES = (0x331F7, 0x3333A, 0x33360)
+VOICE_CAVE = 0x4EBA0F
+VOICE_CODE = bytes.fromhex("8b44240466837802007505e9e129fbffc3")     # 건물(+2 != 0)이면 ret, 아니면 jmp 0x49E400
 SEND_SITE, SEND_ORIGINAL = SEND - 0x400000, bytes.fromhex("558bec83ec40")
 RALLY = 0x447E60                              # 건물 명령 0x400E 보내기 (부명령, 대상, 층, 지점) — 3 = 집결지
 RALLY_BODY = RALLY + 6
@@ -284,6 +307,11 @@ def _sites():
     send_jump = (b"\xe9" + struct.pack("<i", CHUNKS["entry"][0] - (SEND + 5))).ljust(len(SEND_ORIGINAL), b"\x90")
     rally_jump = (b"\xe9" + struct.pack("<i", CHUNKS["rentry"][0] - (RALLY + 5))).ljust(len(RALLY_ORIGINAL), b"\x90")
     sites = [(PICK_SITE, PICK_ORIGINAL, PICK_PATCHED), (SCAN_SITE, SCAN_ORIGINAL, SCAN_PATCHED),
+             (AIR_SITE, AIR_ORIGINAL, AIR_PATCHED), (VOICE_CAVE - 0x400000, bytes(len(VOICE_CODE)), VOICE_CODE)]
+    for at in VOICE_SITES:
+        sites.append((at, b"\xe8" + struct.pack("<i", VOICE - (0x400000 + at + 5)),
+                      b"\xe8" + struct.pack("<i", VOICE_CAVE - (0x400000 + at + 5))))
+    sites += [
              (SEND_SITE, SEND_ORIGINAL, send_jump), (PANEL_SITE, PANEL_ORIGINAL, PANEL_PATCHED),
              (RALLY_SITE, RALLY_ORIGINAL, rally_jump)]
     for k, (va, size) in CHUNKS.items():

@@ -57,8 +57,9 @@ class PatchFileTests(Base):
             self.skipTest(str(e))
 
     def test_caves_are_free_in_original(self):
-        for offset, before, _ in ps.SITES[5:]:
-            self.assertEqual(self.original[offset:offset + len(before)], bytes(len(before)))
+        caves = [(va - 0x400000, size) for va, size in ps.CHUNKS.values()] + [(ps.VOICE_CAVE - 0x400000, len(ps.VOICE_CODE))]
+        for offset, size in caves:
+            self.assertEqual(self.original[offset:offset + size], bytes(size))
 
     def test_every_build_has_it_and_is_idempotent(self):
         """모든 패치 조합에서 다른 패치와 겹치지 않고 늘 들어간다. 다시 빌드해도 같은 결과."""
@@ -230,7 +231,6 @@ class DoubleClickTests(Base):
 
     def test_site_bytes(self):
         on = ps.transform(self.original, True)
-        self.assertEqual(on[ps.SCAN_SITE:ps.SCAN_SITE + 2], b'\x90\x90')
         try:
             import capstone
         except ImportError as e:
@@ -238,7 +238,6 @@ class DoubleClickTests(Base):
         md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
         text = [f'{i.mnemonic} {i.op_str}' for i in md.disasm(on[ps.PICK_SITE:ps.PICK_SITE + 18], 0x433603)]
         self.assertEqual(text, ['mov cl, byte ptr [eax + 0x775a48]', 'cmp cl, byte ptr [0xb412cc]', 'jne 0x433bdd'])
-        self.assertEqual(on[ps.SCAN_SITE:ps.SCAN_SITE + 2], b'\x90\x90')
 
     def test_pick_rejects_others_and_accepts_mine(self):
         mu = _emulator(minimap_patch.build(self.original, False))
@@ -266,6 +265,69 @@ class PanelTests(Base):
             if mu.reg_read(UC_X86_REG_EIP) != 0x460508:
                 mu.emu_start(mu.reg_read(UC_X86_REG_EIP), 0, count=5)   # mov, cwde, imul, test, je
             self.assertEqual(mu.reg_read(UC_X86_REG_EIP), want, (count, hex(order)))
+
+
+class ScanTests(Base):
+    """더블클릭 화면 탐색의 후보 검사 (땅 0x433AC0, 공중 0x433896) 와 선택 음성 (0x49E400 대신)."""
+
+    def setUp(self):
+        from unicorn.x86_const import UC_X86_REG_EBP
+        self.mu = _emulator(minimap_patch.build(self.original, False))
+        self.mu.reg_write(UC_X86_REG_EBP, SCRATCH + 0x9000)
+        self.mu.mem_write(SCRATCH + 0x9000 + 0xC, struct.pack('<h', 5))      # 누른 유닛 5
+
+    def cand(self, n, cls, marked=False, hp=50, clicked_cls=None):
+        mu = self.mu
+        mu.mem_write(0x766912, struct.pack('<h', n))
+        mu.mem_write(UNITS + n * UNIT_SIZE + 2, struct.pack('<h', cls))
+        mu.mem_write(UNITS + n * UNIT_SIZE + 8, struct.pack('<h', hp))
+        mu.mem_write(0xB412E4 + n, bytes([0x80 if marked else 0]))
+        if clicked_cls is not None:
+            mu.mem_write(UNITS + 5 * UNIT_SIZE + 2, struct.pack('<h', clicked_cls))
+
+    def run_to(self, start, stops):
+        from unicorn import UC_HOOK_CODE
+        hit = []
+        def f(uc, a, sz, _):
+            if a in stops:
+                hit.append(a)
+                uc.emu_stop()
+        h = self.mu.hook_add(UC_HOOK_CODE, f)
+        self.mu.emu_start(start, 0, count=40)
+        self.mu.hook_del(h)
+        return hit[0]
+
+    def test_ground_scan_keeps_units_and_buildings_apart(self):
+        skip, go = 0x433AF2, 0x433AF7
+        for clicked, cand, marked, want in ((3, 3, False, go), (3, 0, False, skip), (0, 3, False, skip),
+                                            (0, 0, False, go), (0, 0, True, skip), (3, 3, True, skip)):
+            self.cand(9, cand, marked, clicked_cls=clicked)
+            self.assertEqual(self.run_to(0x433AC0, {skip, go}), want, (clicked, cand, marked))
+
+    def test_air_scan_never_for_a_clicked_building(self):
+        nxt, go = 0x433977, 0x4338D1
+        for clicked, marked, hp, want in ((0, False, 50, go), (3, False, 50, nxt), (0, True, 50, nxt), (0, False, 0, nxt)):
+            self.cand(9, 0, marked, hp, clicked_cls=clicked)
+            self.assertEqual(self.run_to(0x433896, {nxt, go}), want, (clicked, marked, hp))
+
+    def test_voice_only_for_units(self):
+        from unicorn.x86_const import UC_X86_REG_ESP
+        mu = self.mu
+        for cls, want in ((0, ps.VOICE), (2, SENTINEL)):
+            mu.mem_write(UNITS + 9 * UNIT_SIZE + 2, struct.pack('<h', cls))
+            esp = SCRATCH + 0x8000
+            mu.mem_write(esp, struct.pack('<II', SENTINEL, UNITS + 9 * UNIT_SIZE))
+            mu.reg_write(UC_X86_REG_ESP, esp)
+            from unicorn import UC_HOOK_CODE
+            hit = []
+            h = mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: (hit.append(a), uc.emu_stop()) if a in (ps.VOICE, SENTINEL) else None)
+            mu.emu_start(ps.VOICE_CAVE, 0, count=20)
+            mu.hook_del(h)
+            self.assertEqual(hit[0], want, cls)
+        built = minimap_patch.build(self.original, False)
+        for at in ps.VOICE_SITES:
+            rel = struct.unpack('<i', built[at + 1:at + 5])[0]
+            self.assertEqual(0x400000 + at + 5 + rel, ps.VOICE_CAVE)
 
 
 if __name__ == '__main__':
