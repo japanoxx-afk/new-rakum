@@ -153,7 +153,8 @@ class EditorServerTests(unittest.TestCase):
         (self.game / 'Data' / 'Maps' / 'Download').mkdir(parents=True)
         self.sample = b'J2M\0' + bytes(200)
         (self.game / 'Data' / 'Maps' / '[2]A.rkm').write_bytes(self.sample)
-        self.srv = mew.EditorServer(HERE, port=0)
+        self.tpl = self.game / 'tpl' / 'templates.json'
+        self.srv = mew.EditorServer(HERE, port=0, templates=self.tpl)
         self.srv.port = 0
         url = self.srv.start(self.game)
         self.base = 'http://127.0.0.1:%d' % self.srv.httpd.server_address[1]
@@ -190,6 +191,35 @@ class EditorServerTests(unittest.TestCase):
             self.assertEqual(code, 400, name)
         code, _ = _req(self.base + '/api/map?name=x.rkm', b'XXXX' + bytes(100), 'PUT')
         self.assertEqual(code, 400)
+
+
+    def test_tile_templates_round_trip(self):
+        self.assertEqual(_req(self.base + '/api/templates'), (200, b'[]'))
+        tpl = [{'n': 2, 'cells': [[0, 0, 15, 0], None, [10, 1, 0, 1], [10, 1, 0, 1]], 'ts': 1, 't': 1}]
+        code, _ = _req(self.base + '/api/templates', json.dumps(tpl).encode(), 'PUT')
+        self.assertEqual(code, 200)
+        code, body = _req(self.base + '/api/templates')
+        self.assertEqual(json.loads(body), tpl)
+        self.assertEqual(json.loads(self.tpl.read_text(encoding='utf-8')), tpl)
+        for bad in (b'{}', b'not json', json.dumps([{'n': 9, 'cells': []}]).encode(),
+                    json.dumps([{'n': 2, 'cells': [[0, 0, 0]] * 4}]).encode()):
+            self.assertEqual(_req(self.base + '/api/templates', bad, 'PUT')[0], 400, bad)
+        self.assertEqual(json.loads(_req(self.base + '/api/templates')[1]), tpl)   # 잘못된 요청은 기존 목록 유지
+
+
+class TileBlockToolTests(unittest.TestCase):
+    """타일 직접 배치: 1×1~8×8 블록 찍기·스포이드, 즐겨찾기 템플릿 (브라우저 확인: 3×3 찍기 9칸, 스포이드 복사 후 다른 곳에
+    찍기, ☆/★ 토글, 다시 열어도 목록 유지)."""
+
+    def test_page_has_block_tools_and_favorites(self):
+        page = (HERE / 'map_editor_web' / 'editor' / mew.EDITOR_PAGE).read_text(encoding='utf-8')
+        self.assertIn('id="tileSize" min="1" max="8" value="1"', page)
+        self.assertIn('id="tileFav"', page)
+        self.assertIn('id="tileFavs"', page)
+        self.assertIn("fetch('/api/templates', { method: 'PUT', body })", page)
+        # 블록은 타일 모서리를 따라 놓인 마름모: (p,q) <-> (u,v), u = 2x + (y&1)
+        self.assertIn('const m = S.map, u = p - q, v = p + q;', page)
+        self.assertIn('return [(u + v) / 2, (v - u) / 2];', page)
 
 
 class TileModTests(unittest.TestCase):

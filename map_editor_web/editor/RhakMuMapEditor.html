@@ -44,6 +44,15 @@ input[type=number]{width:70px}
 #palette canvas{width:100%;background:#000;border:1px solid transparent;cursor:pointer}
 #palette canvas.sel{border-color:var(--acc)}
 #palette .num{font-size:10px;color:var(--dim);text-align:center}
+.tbrush{display:flex;gap:8px;align-items:center;margin:4px 0}
+.tbrush canvas{width:112px;height:56px;background:#000;border-radius:3px;flex:none}
+.star{font-size:18px;line-height:1;padding:2px 8px;margin-top:4px;color:#d8c070}
+.star.on{color:#ffd040}
+.favgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;max-height:220px;overflow:auto}
+.favgrid .fav{position:relative;background:#161310;border:1px solid transparent;border-radius:3px;padding:2px;text-align:center;font-size:10.5px;color:var(--dim)}
+.favgrid .fav.cur{border-color:var(--acc)}
+.favgrid .fav canvas{width:100%;height:auto;display:block;cursor:pointer}
+.favgrid .fav .star{position:absolute;top:0;right:0;margin:0;padding:0 4px;font-size:14px;background:#0008;border:none}
 .hint{color:var(--dim);font-size:11.5px;margin-top:4px}
 .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle;border:1px solid #0008}
 dialog{background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:0;max-width:94vw}
@@ -137,6 +146,13 @@ table.grid input[type=number]{width:64px}
       </div></div>
       <div class="grp closed" id="gTile"><h3>타일 직접 배치</h3><div class="body">
         <div class="btns"><button data-tool="tile">타일 찍기</button><button data-tool="pick">스포이드</button></div>
+        <div class="row"><label>크기</label><input type="range" id="tileSize" min="1" max="8" value="1"><span id="tileSizeLbl">1×1</span></div>
+        <div class="tbrush"><canvas id="tileCur" width="112" height="56"></canvas>
+          <div><div id="tileCurLbl" class="hint">-</div><button id="tileFav" class="star" title="즐겨찾기에 템플릿으로 저장">☆</button></div></div>
+        <div class="hint">크기만큼 찍고, 스포이드도 같은 크기만큼 블록을 복사합니다 (<span class="kbd">[</span> <span class="kbd">]</span> 로 크기 조절).
+          ☆ 를 누르면 지금 붓이 즐겨찾기 템플릿으로 저장되고, ★ 을 다시 누르면 취소됩니다.</div>
+        <div class="subhead">즐겨찾기 템플릿</div>
+        <div id="tileFavs" class="favgrid"></div>
         <div id="tileInfo" class="hint">선택 타일: -</div>
         <div id="palette"></div>
       </div></div>
@@ -923,7 +939,7 @@ table.grid input[type=number]{width:64px}
   // ------------------------------------------------------------------ state
   const S = {
     map: null, name: 'New Map', fileHandle: null, dirHandle: null, dirty: false,
-    tool: 'brush', brush: 1, brushSize: 3, shape: 'circle', shapeDrag: null, tileSel: 10, startSel: 0, decoSel: 0, subSel: 0, res: 'gold',
+    tool: 'brush', brush: 1, brushSize: 3, shape: 'circle', shapeDrag: null, tileSel: 10, tileSize: 1, pattern: null, stampOrigin: null, templates: [], startSel: 0, decoSel: 0, subSel: 0, res: 'gold',
     cam: { x: 0, y: 0, z: 0.5 }, grid: false, cellGrid: false, marks: false,
     hover: null, sel: null, drag: null, painting: false,
     gfx: { fdb: null, idx: null, tilesets: {} },   // tilesets[ts] = {img:[], avg:[]}
@@ -1380,8 +1396,17 @@ table.grid input[type=number]{width:64px}
       ctx.fillStyle = (r.error || r.near) ? '#ff8070' : '#a0ff90'; ctx.font = 'bold ' + (16 / Math.max(z, .35)) + 'px sans-serif'; ctx.textAlign = 'center';
       ctx.fillText(r.error ? '언덕 가장자리가 아님' : r.near ? '다른 입구와 너무 가까움' : R.SUBTERRAIN[r.id], h.x, h.y - 140); ctx.textAlign = 'start';
     } else if (S.tool === 'tile' || S.tool === 'pick') {
-      const t = tileAt(h.x, h.y); if (!t) return; ctx.strokeStyle = '#ffd040'; drawDiamond(ctx, t[0] * 256 + (t[1] & 1) * 128, t[1] * 64, 128, 64); ctx.stroke();
-      if (S.tool === 'tile') { const set = S.gfx.tilesets[S.map.tileset]; if (set && set.img[S.tileSel]) { ctx.globalAlpha = .6; ctx.drawImage(set.img[S.tileSel], t[0] * 256 + (t[1] & 1) * 128 - 128, t[1] * 64 - 64); ctx.globalAlpha = 1; } }
+      const t = tileAt(h.x, h.y); if (!t) return;
+      const n = S.tileSize, set = S.gfx.tilesets[S.map.tileset], cells = S.tool === 'tile' ? brushCells() : null;
+      let p0, q0;
+      if (S.tool === 'tile') [p0, q0] = blockOrigin(t); else { const c = (n - 1) >> 1, pq = tilePQ(t); p0 = pq[0] - c; q0 = pq[1] - c; }
+      ctx.strokeStyle = S.tool === 'pick' ? '#60d0ff' : '#ffd040';
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+        const tt = pqTile(p0 + i, q0 + j); if (!tt) continue;
+        const cx = tt[0] * 256 + (tt[1] & 1) * 128, cy = tt[1] * 64, tp = cells && cells[i * n + j];
+        if (tp && set && set.img[tp[0]]) { ctx.globalAlpha = .6; ctx.drawImage(set.img[tp[0]], cx - 128, cy - 64, 256, 128); ctx.globalAlpha = 1; }
+        drawDiamond(ctx, cx, cy, 128, 64); ctx.stroke();
+      }
     } else if (['res', 'deco', 'sub'].includes(S.tool)) {
       const [x, y] = placeCell(h.x, h.y), ids = R.resourceIds(S.map.tileset);
       const o = S.tool === 'res' ? { kind: R.KIND.RES, id: S.res === 'gold' ? ids.gold : ids.well, x, y } : S.tool === 'deco' ? { kind: R.KIND.DECO, id: S.decoSel, x, y } : { kind: R.KIND.SUB, id: S.subSel, x, y };
@@ -1470,19 +1495,137 @@ table.grid input[type=number]{width:64px}
     m.objects.push(o); subTerrain(o); S.sel = o; showSel(); draw(); drawMinimap();
     toast(R.SUBTERRAIN[r.id] + ' 배치됨', 2500);
   }
-  function stampTile(wx, wy) {
-    const m = S.map, t = tileAt(wx, wy); if (!t) return; const k = t[1] * m.cw + t[0];
-    const def = R.TILE_DEF[S.tileSel]; if (!def) { toast('이 타일은 지형표에 없는 타일입니다'); return; }
-    if (m.tIdx[k] === S.tileSel) return;
-    noteTile(k, [m.tIdx[k], m.tA[k], m.tB[k], m.tC[k]]);
+  // ---- 타일 직접 배치: 1×1 ~ 8×8 블록 찍기 / 스포이드, 즐겨찾기 템플릿
+  // 블록은 타일 모서리를 따라 놓인 마름모 N×N: 칸 (p+i, q+j), 타일 (x,y) <-> u=2x+(y&1), v=y, p=(u+v)/2, q=(v-u)/2
+  const TILE_MAX = 8;
+  function tilePQ(t) { const u = 2 * t[0] + (t[1] & 1), v = t[1]; return [(u + v) / 2, (v - u) / 2]; }
+  function pqTile(p, q) {
+    const m = S.map, u = p - q, v = p + q; if (v < 0 || v >= m.ch) return null;
+    const x = (u - (v & 1)) / 2; return x >= 0 && x < m.cw ? [x, v] : null;
+  }
+  function tupleOf(k) {
+    const def = R.TILE_DEF[k]; if (!def) return null;
     const [a, b] = def, row = R.TRANS[a]; let pc = 0; for (let i = 0; i < 4; i++) if (b & (1 << i)) pc++;
-    m.tIdx[k] = S.tileSel; m.tA[k] = a; m.tB[k] = b; m.tC[k] = pc >= 2 ? row[1] : row[2];
+    return [k, a, b, pc >= 2 ? row[1] : row[2]];
+  }
+  // current brush as n*n cells (tuple [tile, a, b, c] or null = leave as is)
+  function brushCells() {
+    const n = S.tileSize;
+    if (S.pattern && S.pattern.n === n) return S.pattern.cells;
+    const tp = tupleOf(S.tileSel); return tp ? Array(n * n).fill(tp) : null;
+  }
+  function blockOrigin(t) {
+    const n = S.tileSize, c = (n - 1) >> 1; let [p, q] = tilePQ(t); p -= c; q -= c;
+    // while dragging a pattern, snap to the first stamp's lattice so copies line up without overlapping
+    const o = S.stampOrigin;
+    if (o && n > 1 && S.pattern) { p = o[0] + Math.round((p - o[0]) / n) * n; q = o[1] + Math.round((q - o[1]) / n) * n; }
+    return [p, q];
+  }
+  function writeTile(x, y, tp) {
+    const m = S.map, k = y * m.cw + x;
+    if (m.tIdx[k] === tp[0] && m.tA[k] === tp[1] && m.tB[k] === tp[2] && m.tC[k] === tp[3]) return;
+    noteTile(k, [m.tIdx[k], m.tA[k], m.tB[k], m.tC[k]]);
+    m.tIdx[k] = tp[0]; m.tA[k] = tp[1]; m.tB[k] = tp[2]; m.tC[k] = tp[3];
+    if (!R.TILE_DEF[tp[0]]) return;
     // keep vertex model in sync with the stamped tile's corners
-    const c = R.cornersOf(a, b), u = 2 * t[0] + (t[1] & 1);
-    for (const [uu, vv, ty] of [[u, t[1] - 1, c.N], [u + 1, t[1], c.E], [u, t[1] + 1, c.S], [u - 1, t[1], c.W]]) { const i = R.vIndex(m, uu, vv); if (i >= 0 && m.vert[i] !== ty) { noteVert(i, m.vert[i]); m.vert[i] = ty; } }
+    const c = R.cornersOf(tp[1], tp[2]), u = 2 * x + (y & 1);
+    for (const [uu, vv, ty] of [[u, y - 1, c.N], [u + 1, y, c.E], [u, y + 1, c.S], [u - 1, y, c.W]]) { const i = R.vIndex(m, uu, vv); if (i >= 0 && m.vert[i] !== ty) { noteVert(i, m.vert[i]); m.vert[i] = ty; } }
+  }
+  function stampTile(wx, wy) {
+    const m = S.map, t = tileAt(wx, wy); if (!t) return;
+    const cells = brushCells(); if (!cells) { toast('이 타일은 지형표에 없는 타일입니다'); return; }
+    const n = S.tileSize, [p0, q0] = blockOrigin(t), key = p0 + ',' + q0;
+    if (S.painting && S.lastStamp === key) return;
+    S.lastStamp = key; if (!S.stampOrigin) S.stampOrigin = [p0, q0];
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+      const tp = cells[i * n + j], tt = tp && pqTile(p0 + i, q0 + j); if (tt) writeTile(tt[0], tt[1], tp);
+    }
     draw(); drawMinimap();
   }
-  function pickTile(wx, wy) { const m = S.map, t = tileAt(wx, wy); if (!t) return; S.tileSel = m.tIdx[t[1] * m.cw + t[0]]; setTool('tile'); buildPalette(); }
+  function pickTile(wx, wy) {
+    const m = S.map, t = tileAt(wx, wy); if (!t) return;
+    const n = S.tileSize, c = (n - 1) >> 1, [p, q] = tilePQ(t), cells = [];
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+      const tt = pqTile(p - c + i, q - c + j), k = tt && tt[1] * m.cw + tt[0];
+      cells.push(tt ? [m.tIdx[k], m.tA[k], m.tB[k], m.tC[k]] : null);
+    }
+    const mid = cells[c * n + c];
+    S.tileSel = mid ? mid[0] : S.tileSel;
+    // 1×1 of a normal tile = plain palette selection; anything else keeps the exact tiles
+    S.pattern = (n === 1 && mid && R.TILE_DEF[mid[0]]) ? null : { n, cells };
+    setTool('tile'); buildPalette();
+    toast(n === 1 ? '타일 #' + S.tileSel + ' 선택' : n + '×' + n + ' 블록을 복사했습니다', 1800);
+  }
+  function setTileSize(n) {
+    n = Math.max(1, Math.min(TILE_MAX, n | 0)); S.tileSize = n;
+    if (S.pattern && S.pattern.n !== n) S.pattern = null;   // 크기를 바꾸면 선택 타일로 채우는 붓으로
+    $('tileSize').value = n; $('tileSizeLbl').textContent = n + '×' + n; renderTileBrush(); draw();
+  }
+  // thumbnail of n*n cells (isometric, 64x32 per tile) scaled into canvas `cv2`
+  function drawCells(cv2, n, cells) {
+    const g = cv2.getContext('2d'); g.clearRect(0, 0, cv2.width, cv2.height);
+    const set = S.map && S.gfx.tilesets[S.map.tileset];
+    const W = n * 64, H = n * 32, sc = Math.min(cv2.width / W, cv2.height / H), ox = (cv2.width - W * sc) / 2, oy = (cv2.height - H * sc) / 2;
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+      const tp = cells[i * n + j]; if (!tp) continue;
+      const x = ox + ((i - j) * 32 + (n - 1) * 32) * sc, y = oy + (i + j) * 16 * sc;
+      if (set && set.small[tp[0]]) g.drawImage(set.small[tp[0]], x, y, 64 * sc, 32 * sc);
+      else { g.fillStyle = FALLBACK[tp[1] % FALLBACK.length] || '#555'; g.beginPath(); g.moveTo(x + 32 * sc, y); g.lineTo(x + 64 * sc, y + 16 * sc); g.lineTo(x + 32 * sc, y + 32 * sc); g.lineTo(x, y + 16 * sc); g.closePath(); g.fill(); }
+    }
+  }
+  const TPL_KEY = 'rkm-tile-templates';
+  function tplKey(n, cells) { return n + ':' + cells.map(c => c ? c.join('.') : '-').join(','); }
+  function currentTpl() { const cells = brushCells(); return cells ? { n: S.tileSize, cells } : null; }
+  function favIndex(t) { if (!t) return -1; const k = tplKey(t.n, t.cells); return S.templates.findIndex(x => tplKey(x.n, x.cells) === k); }
+  function validTpl(t) { return t && Number.isInteger(t.n) && t.n >= 1 && t.n <= TILE_MAX && Array.isArray(t.cells) && t.cells.length === t.n * t.n && t.cells.every(c => c === null || (Array.isArray(c) && c.length === 4 && c.every(Number.isInteger))); }
+  async function loadTemplates() {
+    let list = null;
+    if (SRV.on) { try { const r = await fetch('/api/templates', { cache: 'no-store' }); if (r.ok) list = await r.json(); } catch (e) { list = null; } }
+    if (!Array.isArray(list) || !list.length) { try { list = JSON.parse(localStorage.getItem(TPL_KEY) || '[]'); } catch (e) { list = []; } }
+    S.templates = Array.isArray(list) ? list.filter(validTpl) : [];
+    renderTileBrush();
+  }
+  function saveTemplates() {
+    const body = JSON.stringify(S.templates);
+    try { localStorage.setItem(TPL_KEY, body); } catch (e) { /* 저장소 없음: 서버에만 */ }
+    // 연달아 누르면 순서대로 보낸다 (마지막 목록이 남도록)
+    if (SRV.on) S.tplSave = (S.tplSave || Promise.resolve()).then(() => fetch('/api/templates', { method: 'PUT', body }))
+      .then(r => { if (!r.ok) throw new Error(r.status); }).catch(() => toast('즐겨찾기를 런처에 저장하지 못했습니다', 3000));
+  }
+  function toggleFav() {
+    const t = currentTpl(); if (!t) { toast('먼저 타일을 고르거나 스포이드로 블록을 복사하세요'); return; }
+    const i = favIndex(t);
+    if (i >= 0) { S.templates.splice(i, 1); toast('즐겨찾기에서 뺐습니다', 1500); }
+    else { S.templates.unshift({ n: t.n, cells: t.cells.map(c => c && c.slice()), ts: S.map ? S.map.tileset : 0, t: Date.now() }); toast(t.n + '×' + t.n + ' 템플릿을 즐겨찾기에 저장했습니다', 1800); }
+    saveTemplates(); renderTileBrush();
+  }
+  function useTemplate(t) {
+    S.tileSize = t.n; $('tileSize').value = t.n; $('tileSizeLbl').textContent = t.n + '×' + t.n;
+    const mid = t.cells[((t.n - 1) >> 1) * t.n + ((t.n - 1) >> 1)];
+    if (mid) S.tileSel = mid[0];
+    S.pattern = { n: t.n, cells: t.cells.map(c => c && c.slice()) };
+    setTool('tile'); buildPalette();
+  }
+  function renderTileBrush() {
+    const cur = $('tileCur'); if (!cur) return;
+    const t = currentTpl();
+    if (t) drawCells(cur, t.n, t.cells); else cur.getContext('2d').clearRect(0, 0, cur.width, cur.height);
+    const fav = favIndex(t) >= 0, b = $('tileFav');
+    b.textContent = fav ? '★' : '☆'; b.classList.toggle('on', fav); b.title = fav ? '즐겨찾기 취소' : '즐겨찾기에 템플릿으로 저장';
+    $('tileCurLbl').textContent = !t ? '-' : (S.pattern ? '복사한 ' : '#' + S.tileSel + ' 채우기 ') + t.n + '×' + t.n;
+    const box = $('tileFavs'); box.innerHTML = '';
+    if (!S.templates.length) { box.innerHTML = '<div class="hint">☆ 를 누르면 지금 붓이 여기에 저장됩니다.</div>'; return; }
+    const curKey = t ? tplKey(t.n, t.cells) : '';
+    S.templates.forEach((tp, idx) => {
+      const d = document.createElement('div'); d.className = 'fav' + (tplKey(tp.n, tp.cells) === curKey ? ' cur' : '');
+      const c = document.createElement('canvas'); c.width = 84; c.height = 42; drawCells(c, tp.n, tp.cells);
+      c.title = tp.n + '×' + tp.n + ' 템플릿 — 클릭하면 이 블록으로 찍기'; c.onclick = () => useTemplate(tp);
+      const st = document.createElement('button'); st.className = 'star on'; st.textContent = '★'; st.title = '즐겨찾기 취소';
+      st.onclick = (e) => { e.stopPropagation(); S.templates.splice(idx, 1); saveTemplates(); renderTileBrush(); toast('즐겨찾기에서 뺐습니다', 1500); };
+      const lb = document.createElement('span'); lb.textContent = tp.n + '×' + tp.n;
+      d.append(c, st, lb); box.appendChild(d);
+    });
+  }
   function newObjRaw(kind) {
     const r = new Uint8Array(20); r.fill(0xcc);
     r[0] = kind === R.KIND.SUB ? 0xcd : 0; r[1] = 0; r[2] = kind; r[3] = 0xcc; r[5] = 0; r[6] = 0xcd; r[7] = 0xcc; return r;
@@ -1582,7 +1725,7 @@ table.grid input[type=number]{width:64px}
         else { S.painting = true; paintAt(w.x, w.y); }
         break;
       case 'ramp': placeRamp(w.x, w.y); break;
-      case 'tile': S.painting = true; stampTile(w.x, w.y); break;
+      case 'tile': S.stampOrigin = null; S.lastStamp = null; S.painting = true; stampTile(w.x, w.y); break;
       case 'pick': pickTile(w.x, w.y); break;
       case 'start': {
         const p = S.map.players[S.startSel]; if (!p) break; notePls();
@@ -1621,7 +1764,7 @@ table.grid input[type=number]{width:64px}
       else applyShape({ type: 'line', pts: [{ x: g.x0, y: g.y0 }, { x: g.x1, y: g.y1 }], size: paintSize() });
     }
     if (S.drag && S.drag.o.kind === R.KIND.SUB) { subTerrain(S.drag.o); draw(); drawMinimap(); }
-    if (S.act) endAct(); S.painting = false; S.drag = null; });
+    if (S.act) endAct(); S.painting = false; S.drag = null; S.stampOrigin = null; S.lastStamp = null; });
   cv.addEventListener('wheel', (e) => {
     if (!S.map) return; e.preventDefault();
     const dpr = S.dpr || 1, before = s2w(e.offsetX * dpr, e.offsetY * dpr);
@@ -1646,6 +1789,7 @@ table.grid input[type=number]{width:64px}
     else if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(k) && S.map) {
       const d = 300 / S.cam.z; if (k === 'arrowleft') S.cam.x -= d; if (k === 'arrowright') S.cam.x += d; if (k === 'arrowup') S.cam.y -= d; if (k === 'arrowdown') S.cam.y += d; e.preventDefault(); draw(); paintMinimap();
     } else if (k >= '1' && k <= '9' && !e.ctrlKey) { setBrush(+k - 1); }
+    else if ((k === '[' || k === ']') && (S.tool === 'tile' || S.tool === 'pick')) setTileSize(S.tileSize + (k === ']' ? 1 : -1));
     else if (k === 'escape') { S.sel = null; showSel(); draw(); }
   });
   addEventListener('keyup', (e) => { if (e.key === ' ') { S.space = false; cv.style.cursor = 'crosshair'; } });
@@ -1713,6 +1857,7 @@ table.grid input[type=number]{width:64px}
     const set = S.map && S.gfx.tilesets[S.map.tileset];
     const info = (k) => { const d = R.TILE_DEF[k]; return d ? R.TRANS[d[0]][0] + ' / 마스크 ' + d[1] : '지형표 밖 타일'; };
     $('tileInfo').textContent = '선택 타일: #' + S.tileSel + ' (' + info(S.tileSel) + ')';
+    renderTileBrush();
     for (let k = 0; k < 200; k++) {
       if (!(k in R.TILE_DEF)) continue;
       const c = document.createElement('canvas'); c.width = 64; c.height = 32; c.title = '#' + k + ' ' + info(k);
@@ -1720,12 +1865,14 @@ table.grid input[type=number]{width:64px}
       if (set && set.small[k]) g.drawImage(set.small[k], 0, 0);
       else { const [a, b] = R.TILE_DEF[k], cr = R.cornersOf(a, b); [['N', 32, 0], ['E', 64, 16], ['S', 32, 32], ['W', 0, 16]].forEach(([n, x, y]) => { g.fillStyle = FALLBACK[cr[n]]; g.beginPath(); g.moveTo(32, 16); g.lineTo(x, y); g.lineTo(n === 'N' ? 64 : n === 'E' ? 32 : n === 'S' ? 0 : 32, n === 'N' ? 16 : n === 'E' ? 32 : n === 'S' ? 16 : 0); g.fill(); }); g.fillStyle = '#fff'; g.font = '10px sans-serif'; g.fillText(k, 2, 10); }
       if (k === S.tileSel) c.className = 'sel';
-      c.onclick = () => { S.tileSel = k; setTool('tile'); buildPalette(); };
+      c.onclick = () => { S.tileSel = k; S.pattern = null; setTool('tile'); buildPalette(); };
       box.appendChild(c);
     }
   }
   document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => { if (b.dataset.res) S.res = b.dataset.res; if (b.dataset.res) $('resAmount').value = b.dataset.res === 'gold' ? 5000 : 3000; setTool(b.dataset.tool); });
   document.querySelectorAll('#shapeBtns button').forEach(b => b.onclick = () => { S.shape = b.dataset.shape; if (S.tool !== 'brush') S.tool = 'brush'; setTool('brush'); });
+  $('tileSize').oninput = (e) => setTileSize(+e.target.value);
+  $('tileFav').onclick = toggleFav;
   $('brushSize').oninput = (e) => { S.brushSize = +e.target.value; $('brushSizeLbl').textContent = S.brushSize || '벽'; draw(); };
   document.querySelectorAll('.grp>h3').forEach(h => h.onclick = () => h.parentElement.classList.toggle('closed'));
   ['lyObj', 'lyStart', 'lyMapEdge'].forEach(id => $(id).onchange = () => draw());
@@ -1849,10 +1996,11 @@ table.grid input[type=number]{width:64px}
   (async () => {
     await startBlank();
     const srv = await srvInit();
+    await loadTemplates();
     if (!srv) { $('modeLbl').textContent = '맵 폴더 자동 연결 안 됨 (맵에디터 실행.bat로 열면 자동 연결)'; }
     if (!S.srvName) toast('새 평지 맵(136×136, 4인, 늪지)으로 시작했습니다. 크기·타일셋은 [새 맵]/[맵 속성]에서 바꿀 수 있습니다.', 4500);
   })();
-  window.__editor = { S, R, loadMapBytes, attachDataFiles, render, paintAt, save };
+  window.__editor = { S, R, loadMapBytes, attachDataFiles, render, paintAt, save, stampTile, pickTile, setTileSize, toggleFav, useTemplate, tilePQ, pqTile, undo };
 })();
 
 </script>
