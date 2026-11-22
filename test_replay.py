@@ -913,6 +913,68 @@ class InGameHookTests(unittest.TestCase):
         self.assertEqual(struct.unpack("<i", mu.mem_read(pl + 0x864, 4))[0], 50000)
         self.assertEqual(struct.unpack("<i", mu.mem_read(0x7F7908 + 0x864, 4))[0], 0)
 
+    def human(self, mu, slot, name):
+        pl = 0x7F7908 + slot * 0x11E0
+        mu.mem_write(pl + 6, b"\x20")
+        mu.mem_write(pl + 8, name.encode() + b"\0")
+
+    def test_cheat_map_toggles_reveal_like_the_game(self):
+        """map: 게임 자체 지도 공개(0x404990 번호 0)처럼 켤 때 0x4991E0(ecx=0x915698) 후 비트 1, 끌 때 비트만 지움."""
+        from unicorn import UC_HOOK_CODE
+        mu = self.cheat_machine(0)
+        self.human(mu, 1, "seo")
+        self.human(mu, 0, "")                                              # 컴퓨터(빈 이름) 참가자
+        fog = []
+        mu.mem_write(0x4991E0, b"\xc3")
+        mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: fog.append(uc.reg_read(self.regs[1])), begin=0x4991E0, end=0x4991E0)
+        mu.mem_write(0x2010000, b"MAP\0")
+        eax, moved, ebp = self.call_thiscall(mu, "cheatmatch", 0x2010000, 0x404D4F)
+        self.assertEqual((eax & 0xFFFF, moved, ebp), (1, 8, 0x6666))
+        self.assertEqual(struct.unpack("<H", mu.mem_read(0xB412C8, 2))[0], 1)
+        self.assertEqual(fog, [0x915698])
+        self.assertEqual(self.cheat_calls, [("msg", "치트: 맵 밝힘 켜짐")])
+        self.call_thiscall(mu, "cheatmatch", 0x2010000, 0x404D4F)
+        self.assertEqual(struct.unpack("<H", mu.mem_read(0xB412C8, 2))[0], 0)
+        self.assertEqual((fog, self.cheat_calls[-1]), ([0x915698], ("msg", "치트: 맵 밝힘 꺼짐")))
+        # 대전: 명령 0x4013 번호 0x2F 로 모두에게, 처리에서 켬
+        mu = self.cheat_machine(1)
+        mu.mem_write(0x4991E0, b"\xc3")
+        mu.mem_write(0x2010000, b"map\0")
+        self.call_thiscall(mu, "cheatmatch", 0x2010000, 0x404D4F)
+        self.assertEqual(self.cheat_calls, [("send", rrp.CHEAT_MAP)])
+        self.call_thiscall(mu, "cheatexec", rrp.CHEAT_MAP, 0x440C6A, ebp=0x2070000)
+        self.assertEqual(struct.unpack("<H", mu.mem_read(0xB412C8, 2))[0], 1)
+
+    def test_cheats_off_when_another_person_plays(self):
+        """컴퓨터가 아닌 사람이 둘 이상이면 money·speed·map 모두 켜지지 않고 안내만 (모든 PC 같은 판단)."""
+        for multi in (0, 1):
+            mu = self.cheat_machine(multi)
+            mu.mem_write(0x4991E0, b"\xc3")
+            self.human(mu, 0, "seo")
+            self.human(mu, 1, "nyai")
+            self.human(mu, 2, "")                                          # 컴퓨터
+            pl = 0x7F7908 + 1 * 0x11E0
+            mu.mem_write(0x2070000 + 8, b"\x01")
+            for num in (rrp.CHEAT_MAP, rrp.CHEAT_MONEY, rrp.CHEAT_SPEED):
+                self.cheat_calls.clear()
+                self.call_thiscall(mu, "cheatexec", num, 0x440C6A, ebp=0x2070000)
+                self.assertEqual(self.cheat_calls, [("msg", "치트: 컴퓨터와 할 때만 됩니다")])
+            self.assertEqual(struct.unpack("<H", mu.mem_read(0xB412C8, 2))[0], 0)
+            self.assertEqual(struct.unpack("<i", mu.mem_read(pl + 0x864, 4))[0], 0)
+            if not multi:                                                   # 싱글에서 입력해도 마찬가지
+                self.cheat_calls.clear()
+                mu.mem_write(0x2010000, b"money\0")
+                self.call_thiscall(mu, "cheatmatch", 0x2010000, 0x404D4F)
+                self.assertEqual(self.cheat_calls, [("msg", "치트: 컴퓨터와 할 때만 됩니다")])
+                self.assertEqual(struct.unpack("<i", mu.mem_read(pl + 0x864, 4))[0], 0)
+        # 사람 하나 + 컴퓨터 여럿: 됨
+        mu = self.cheat_machine(0)
+        self.human(mu, 1, "seo")
+        self.human(mu, 0, "")
+        self.human(mu, 3, "")
+        self.call_thiscall(mu, "cheatexec", rrp.CHEAT_SPEED, 0x440C6A, ebp=0x2070000)
+        self.assertEqual(struct.unpack("<H", mu.mem_read(0xB412C8, 2))[0], 8)
+
     def test_other_text_and_cheats_go_to_the_game(self):
         mu = self.cheat_machine(0)
         mu.mem_write(0x2010000, "moneyx\0".encode())
