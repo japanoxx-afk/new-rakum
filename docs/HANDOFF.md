@@ -40,7 +40,7 @@ git clone https://github.com/japanoxx-afk/rtsarena.git
 5. 사용자가 머지하라고 하면 main 에 머지 (이 PC에선 `git commit-tree` 로 머지 커밋을 만들어 `main` 에 push).
    런처는 GitHub raw 의 `version.json` 으로 업데이트를 확인한다 — 머지 직후 몇 분은 CDN 캐시로 예전 버전이 보일 수 있다.
 
-현재 main: **v0.9085** (치트키 map, 치트는 컴퓨터 상대일 때만 — `replay_record_patch.py` cheatx; v0.9084 맵 에디터 타일 블록·즐겨찾기). main 에 안 들어간 브랜치: `launcher-v0.9031.1-compat`(예전 호환판), `launcher-v0.9061-nas-online`(NAS 서버, 아래),
+현재 main: **v0.9086** (같은 건물 여러 개로 생산·연구 나눠 맡기기·집결지 동시 지정 — `docs/notes/production-split.md`; v0.9085 치트키 map). main 에 안 들어간 브랜치: `launcher-v0.9031.1-compat`(예전 호환판), `launcher-v0.9061-nas-online`(NAS 서버, 아래),
 `launcher-v0.9081-replay-full-reveal`(예전 맵 전체 밝힘 시도 — v0.9083 으로 대체, 쓰지 않음).
 
 ## 3. 게임 화면 리플레이 — 현재 상태와 다음 할 일
