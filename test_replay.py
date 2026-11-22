@@ -913,16 +913,16 @@ class InGameHookTests(unittest.TestCase):
                 mu.mem_write(0x469030, b"\xc3")                              # 미니맵 유닛 점 그리기
                 mu.hook_add(UC_HOOK_CODE, lambda uc, a, s_, _: seen.append(("dots", uc.reg_read(UC_X86_REG_ECX), bits(uc))),
                             begin=0x469030, end=0x469030)
-                mu.mem_write(rrp.WORLD_DRAW, b"\xc3")                        # 원래 그리기: 그 순간의 상태를 남김
+                mu.mem_write(rrp.DRAW_LIST, b"\xc3")                         # 그릴 목록 만들기: 그 순간의 상태를 남김
                 mu.hook_add(UC_HOOK_CODE, lambda uc, a, s_, _: seen.append(
                     ("draw", bits(uc), {u: mask(uc, u) for u in seen_mask}, bytes(uc.mem_read(rrp.FOG_MAP, rrp.FOG_MAP_SIZE)),
                      bytes(uc.mem_read(rrp.EXPLORED, rrp.FOG_MAP_SIZE)), bytes(uc.mem_read(MM + 0x1002C, 0x8000)))),
-                    begin=rrp.WORLD_DRAW, end=rrp.WORLD_DRAW)
+                    begin=rrp.DRAW_LIST, end=rrp.DRAW_LIST)
                 esp = 0x2080000
-                mu.mem_write(0x4D65EE, b"\xf4")
-                mu.mem_write(esp, struct.pack("<I", 0x4D65EE))            # call 0x4D34D0 의 복귀 주소
+                mu.mem_write(0x4D666E, b"\xf4")
+                mu.mem_write(esp, struct.pack("<I", 0x4D666E))            # call 0x43E520 의 복귀 주소 (화면 그리기의 첫 호출)
                 mu.reg_write(UC_X86_REG_ESP, esp)
-                mu.emu_start(self.BASE + rrp.OFF["view"], 0x4D65EE, count=5000000)
+                mu.emu_start(self.BASE + rrp.OFF["view2"], 0x4D666E, count=5000000)
                 self.assertEqual(mu.reg_read(UC_X86_REG_ESP), esp + 4)
                 if play:
                     want_bits = normal.copy()
@@ -941,6 +941,13 @@ class InGameHookTests(unittest.TestCase):
                     self.assertEqual(len(seen), 1)
                     tag, b_, masks, fog, canopy, mm = seen[0]
                     self.assertEqual((b_, masks, set(fog), canopy, set(mm)), (normal, seen_mask, {0x55}, explored, {0x77}))
+                seen.clear()                                                  # 0x4D34D0 자리(view)는 이제 그대로 넘김
+                mu.mem_write(rrp.WORLD_DRAW, b"\xc3")
+                mu.mem_write(0x4D65EE, b"\xf4")
+                mu.mem_write(esp, struct.pack("<I", 0x4D65EE))
+                mu.reg_write(UC_X86_REG_ESP, esp)
+                mu.emu_start(self.BASE + rrp.OFF["view"], 0x4D65EE, count=100)
+                self.assertEqual((seen, mu.reg_read(UC_X86_REG_ESP)), ([], esp + 4))
                 self.run_entry(mu, "overlay", 0x4D660C)
                 self.assertEqual(bits(mu), normal)
                 self.assertEqual(bytes(mu.mem_read(rrp.EXPLORED, rrp.FOG_MAP_SIZE)), explored)    # 탐색 지도는 원래대로
