@@ -20,7 +20,9 @@ WangGun 리플레이(WGReplay.dll)와 같은 방식: 시작 상태는 게임 자
       없으면 '그곳엔 건설을 할 수 없습니다'로 기록된 건설 명령이 실패해 경기가 달라진다.
   14) 0x4D85F5 call free (LoadGAME 의 종류 데이터) -> 재생: 자료 파일 데이터를 보관, vision 끝(tload)에서 저장의 앞 0x90 바이트만
       덮어써 되돌림. 저장은 종류마다 0x90 바이트만 담아(0x4D93B2) +0x96 등이 사라졌다 (죽은 유닛 처리가 달라져 어긋남).
-  13) 0x4D65E9 call 0x4D34D0 (지형·유닛 그리기) -> 재생: 맵 전체 밝힘(v0.9083~) — 그리는 동안만 표[내 번호]=0xFF,
+  13') v0.9089~: 13) 의 전체 밝힘 대신 '모든 참가자 시야 합치기' (sview/mmap, 스타크래프트2 리플레이 방식) — 아래 SOURCES 주석.
+      코드 영역이 2쪽(0x2000)이 되어 BUF 이후가 0x1000 씩 밀렸다. 자원 표(draw)는 아이콘·표, U = 표, I = 화면 정보 전체.
+  13) (v0.9083~v0.9088) 0x4D65E9 call 0x4D34D0 (지형·유닛 그리기) -> 재생: 맵 전체 밝힘 — 그리는 동안만 표[내 번호]=0xFF,
       유닛 시야 마스크 0xFF(보관), 타일 안개 0, 미니맵 안개 = 지형 그림. overlay(8)에서 표·마스크를 되돌림. 시뮬레이션 시야는 그대로 (지도 공개 치트는 시야를 바꿔 경기가 어긋났음, v0.9076).
   2') 재생: 저장을 불러온 뒤 [0xB412CB]=1 — 기록한 경기처럼 대전 루프(Game_Multi)로 돈다
       (대전 여부에 따라 AI 등 시뮬레이션이 달라 싱글 루프로는 첫 검사에서 어긋남).
@@ -64,11 +66,14 @@ import struct
 SECTION_NAME = b".rkrec\0\0"
 DISPATCH = 0x4407E0
 FRAME = 0xB412B4
-CODE_SIZE = 0x1000
-BUF = 0x1000
+CODE_SIZE = 0x2000                    # v0.9088~: 코드 2쪽 (0x1000.. = 화면 정보·시야 합치기). 그 전 판은 0x1000
+BUF = CODE_SIZE
+OLD_CODE_SIZE, OLD_VIRTUAL_SIZE = 0x1000, 0x203000   # v0.9087 까지의 섹션 (걷어낼 때 인식)
 DATA = BUF + 0x10
 RING = 0x200000
-VIRTUAL_SIZE = (CODE_SIZE + 0x10 + RING + 0x1000 + 0xFFF) & ~0xFFF
+TYPES_OFF = BUF + RING + 0x100        # 빈 곳 (RKP 는 BUF+RING 까지): 자료 파일 종류 데이터 포인터 보관 (번호*4)
+CANOPY_OFF = BUF + RING + 0x1000      # 그리는 동안 탐색 지도(0x915D50, 0x42040 바이트) 보관
+VIRTUAL_SIZE = (CANOPY_OFF + 0x42040 + 0xFFF) & ~0xFFF
 CHARACTERISTICS = 0xE0000060
 WRAP = 0xFFFFFFFF
 MAX_BATCH = 0x4000
@@ -77,10 +82,11 @@ SAVE_NAME = b"RKREPLAY"
 PLAY_FILE = b"RKREPLAY.RKP"
 OFF = {"dispatch": 0x000, "start": 0x080, "turn": 0x280, "put": 0x300, "hash": 0x380, "send": 0x400, "feed": 0x480, "load": 0x600, "vision": 0x6c0,
        "cheatexec": 0x40, "cheatmsg": 0x3C0, "cheatapply": 0x590, "cheatmatch": 0x740, "cheatx": 0x984,
-       "panel": 0xA00, "panel2": 0xA80, "overlay": 0xAB0, "text": 0xB30, "draw": 0xBB0,
+       "panel": 0xA00, "panel2": 0xA80,
        "grid": 0x664, "gridrec": 0x7E0, "keys": 0xB80, "hash2": 0xFA8, "view": 0x720,
        "ldname": 0xE34, "tkeep": 0x2EC, "tkeep2": 0x6A0, "tload": 0xEC0, "vname": 0x3D8,
-       "rv1": 0x70E, "rv1b": 0x366, "rv2": 0x470, "rv2b": 0xE48, "rv3": 0xA6B, "rv4": 0xF42, "rv5": 0x77, "rvr": 0xF75, "rvr2": 0xE6E}
+       # 둘째 쪽 (v0.9088~)
+       "overlay": 0x1000, "sview": 0x1100, "mmap": 0x1200, "text": 0x1300, "draw": 0x1380}
 DATA_OFF = 0xE00                          # 글자 형식·색 (코드 영역 안, 이름·설정·임시 0x800..0x9FF 뒤)
 S_PLAYER, S_LINE, S_MAKE, S_UPG, S_CPU, COLORS = 0xE00, 0xE60, 0xE80, 0xE90, 0xEA0, 0xF00
 W_MONEY, W_SPEED, S_MONEY, S_SPON, S_SPOFF = 0xEB0, 0xEB8, 0xF20, 0xF60, 0xF90
@@ -92,7 +98,18 @@ CHEAT_TEXTS = ((S_MAPON, "치트: 맵 밝힘 켜짐", 20), (S_MAPOFF, "치트: �
                (S_DENY, "치트: 컴퓨터와 할 때만 됩니다", 32))
 RES_OFF, RES_800, RES_1280 = 0xD6DD4, bytes.fromhex("68580200006820030000"), bytes.fromhex("68d00200006800050000")
 HIGHRES_MARK = 0x237F8                    # 고해상도 패치가 대전 화면을 1280x720 으로 바꾼 자리
-F_HIDE, F_KEYPREV = 0x20, 0x21            # FLAGS_OFF 기준 바이트: HUD 숨김, I 키 이전 상태
+F_HIDE, F_KEYPREV = 0x20, 0x21            # FLAGS_OFF 기준 바이트: 화면 정보 전체 숨김(I), I 키 이전 상태
+F_HIDE2, F_KEYPREV2 = 0x22, 0x23          # 자원 표 숨김(U), U 키 이전 상태
+F_CANOPY = 0x31                           # 1 = 탐색 지도를 보관해 둠 (overlay 에서 되돌림)
+VAR_EXT = 0x868                           # ExtTextOutA 주소 (처음 그릴 때 GetProcAddress)
+# 자원 표 (오른쪽 위): 폭, 위, 머리줄 높이, 줄 높이, 첫 칸 x, 칸 폭, 이름 최대 바이트, 색 (COLORREF 0x00BBGGRR)
+HUD_W, HUD_Y, HUD_HEAD, HUD_ROW, HUD_COL0, HUD_COL, HUD_NAME_MAX = 440, 26, 22, 18, 114, 64, 14
+HUD_LINE, HUD_BACK, HUD_HBACK, HUD_LABEL, HUD_NUM = 0x607890, 0x181410, 0x302820, 0xA0C8E0, 0xF0F0F0
+# 둘째 쪽 자료
+S_GDI, S_EXT, S_NUM, S_POP, S_HEAD, HUD_OFFS = 0x1F00, 0x1F08, 0x1F18, 0x1F1C, 0x1F24, 0x1F30
+DATA2 = ((S_GDI, b"GDI32\0"), (S_EXT, b"ExtTextOutA\0"), (S_NUM, b"%d\0"), (S_POP, b"%d/%d\0"),
+         (S_HEAD, "플레이어".encode("cp949") + b"\0"),
+         (HUD_OFFS, struct.pack("<4H", 0x864, 0x868, 0x870, 0x86C)))   # 금, 물, 카르마, 글로리 (위 자원줄 순서)
 F_GRID, F_GRIDOK = 0x24, 0x28             # 비 효과 격자를 만들기 직전의 rand (기록), 기록했으면 1
 F_HASH2 = 0x30                            # 1 이면 검사값 해시에 전 칸(체력·죽은 프레임)과 플레이어 인구·자원도 섞음 (v0.9077~)
 NAME_OFF, PLAY_NAME_OFF, FLAGS_OFF, SCR_OFF = 0x800, 0x810, 0x820, 0x880
@@ -104,11 +121,10 @@ START_LEN2 = struct.calcsize(START_FMT2)
 RKP_GRID = 0x30                       # RKP 머리 +0x30: 격자 rand, +0x34: 있음(1)
 WEATHER, WEATHER_INIT = 0xAEF078, 0x49EFF0
 TYPE_TABLE, TYPE_SLOTS, SAVED_TYPE_BYTES = 0x4FCD88, 0xD2, 0x90   # 종류 표 (0x1C 간격), 저장이 담는 종류 데이터 크기
-TYPES_OFF = 0x201100                 # 섹션 안 빈 곳 (RKP 는 BUF+RING=0x201000 까지): 자료 파일 종류 데이터 포인터 보관 (번호*4)
 FOG_MAP, FOG_MAP_SIZE = 0x957D90, 0x42040   # 타일 안개(0xFF 어둠 .. 0 밝음), 로컬 플레이어 기준으로만 계산 -> 화면 전용
 MINIMAP = 0x801FE0                   # 미니맵 객체 포인터: +0x2C 지형 그림, +0x1002C 안개 입힌 그림 (각 0x8000)
 UNIT_SEEN = 0x775A38 + 0x5C          # 유닛 시야 마스크 (word, 플레이어 비트; 자동 공격 등 진행에 쓰임)
-SAVE_OFF = 0x202000                  # 섹션 안 빈 페이지: 그리는 동안 유닛 시야 마스크 보관
+EXPLORED, VISIBLE = 0x915D50, 0x999DD0   # 탐색 지도(0xF = 안 가 봄, 로컬 플레이어), 지금 시야 지도(칸마다 보는 플레이어 비트)
 PLAYER_BITS = 0x4F02A0                # 플레이어 비트 표 (word 1,2,4..0x80; 게임은 읽기만). 시야 판정 = 시야 비트 & 표[내 번호]
 WORLD_DRAW = 0x4D34D0                 # 지형·유닛 그리기 (그리기 함수 0x4D65E0 첫 호출, 뒤이어 패널·미니맵·마우스)
 # 게임 시작 때 비 효과 격자(0xAE7878, 칸마다 물방울 수명)를 rand 로 채운다 (0x4D763B, 2040칸 x 4번 = 8160번 + 1).
@@ -715,87 +731,6 @@ L_tn:
     .byte 0xf3, 0xa5
     ret
 """,
-    # view (0x4D65E9 call 0x4D34D0 대신, 재생만): 관전자 시점. 그리는 동안만 표[내 번호] = 0xFF 로 두어 유닛·지형 안개·
-    # 미니맵(고해상도 안개 .fogcode 와 미니맵 패치 포함)이 참가자 누구라도 보는 곳을 보여 준다. 마우스 그리기 직전
-    # (overlay) 에 표를 1,2,4.. 로 되돌린다. 시뮬레이션의 시야(유닛+0x5C, 시야 지도)는 그대로라 경기 진행은 같다.
-    # 재생 판정은 시작 방식 바이트 [0x4D6AA4] == 4 (재생 패치만 4) — 섹션 주소 계산 없이 짧게.
-    "view": f"""
-    cmp byte ptr [{0x400000 + MODE_OFF:#x}], {MODE_PLAY}
-    jne L_vx
-    jmp 0x1000070e
-L_vx:
-    push {WORLD_DRAW:#x}
-    ret
-""",
-    # rv1..rv5 (view 에서 이어짐, 재생만): 맵 전체 밝힘 (v0.9083). 빈칸에 나눠 넣고 상대 점프로 잇는다.
-    # 표[내 번호]=0xFF, 유닛 시야 마스크 보관(섹션 +SAVE_OFF) 후 0xFF, 타일 안개 0, 미니맵 안개 그림 = 지형 그림.
-    # rv1 의 pop 주소 = 섹션 + rv1 + 6 -> edi = 보관 페이지. 마스크는 overlay -> rvr 에서 되돌린다.
-    "rv1": f"""
-    pushad
-    call L_b
-L_b:
-    pop edi
-    add edi, {SAVE_OFF - (0x70e + 6):#x}
-    jmp 0x10000366
-""",
-    "rv1b": f"""
-    movsx eax, byte ptr [0xb412cc]
-    mov word ptr [eax*2+{PLAYER_BITS:#x}], 0xff
-    jmp 0x10000470
-""",
-    "rv2": f"""
-    mov esi, {UNIT_SEEN + 0x138:#x}
-    mov ecx, 0x6a5
-    jmp 0x10000e48
-""",
-    "rv2b": f"""
-L_m:
-    mov ax, word ptr [esi]
-    stosw
-    mov byte ptr [esi], 0xff
-    add esi, 0x138
-    loop L_m
-    jmp 0x10000a6b
-""",
-    "rv3": f"""
-    mov edi, {FOG_MAP:#x}
-    xor eax, eax
-    mov ecx, {FOG_MAP_SIZE // 4:#x}
-    rep stosd
-    jmp 0x10000f42
-""",
-    "rv4": f"""
-    mov esi, dword ptr [{MINIMAP:#x}]
-    test esi, esi
-    je L_n
-    lea edi, [esi+0x1002c]
-    add esi, 0x2c
-    xor ecx, ecx
-    mov ch, 0x20
-    .byte 0xf3, 0xa5
-L_n:
-    jmp 0x10000077
-""",
-    "rv5": f"""
-    popad
-    push {WORLD_DRAW:#x}
-    ret
-""",
-    # rvr (overlay 에서, 재생만, ebp = 섹션): 그리기 전에 보관한 유닛 시야 마스크를 되돌린다 (진행은 원래 시야로).
-    "rvr": f"""
-    lea esi, [ebp+{SAVE_OFF:#x}]
-    mov edi, {UNIT_SEEN + 0x138:#x}
-    mov ecx, 0x6a5
-    jmp 0x10000e6e
-""",
-    "rvr2": f"""
-L_r:
-    lodsw
-    mov word ptr [edi], ax
-    add edi, 0x138
-    loop L_r
-    ret
-""",
     # cheatexec (0x440C65 대신, ecx=0x6E66C8, [esp+4]=치트 번호, ebp=명령 처리 함수의 틀 -> [ebp+8] 플레이어)
     "cheatexec": f"""
     movzx eax, word ptr [esp+4]
@@ -1001,7 +936,115 @@ L_qgo:
     push 0x46a3b0
     ret
 """,
-    # overlay (0x4D6607 대신, 마우스 그리기 0x4D4440 직전): 관전자 시점 표 되돌리기(view), I 키 처리, 자원·생산 글자.
+    # view (0x4D65E9 call 0x4D34D0 대신): 재생이면 sview 로 (시작 방식 바이트 [0x4D6AA4] == 4 — 재생 패치만 4).
+    "view": f"""
+    cmp byte ptr [{0x400000 + MODE_OFF:#x}], {MODE_PLAY}
+    jne L_vx
+    jmp {0x10000000 + OFF['sview']:#x}
+L_vx:
+    push {WORLD_DRAW:#x}
+    ret
+""",
+    # sview (재생, 지형·유닛 그리기 직전): 스타크래프트2 리플레이처럼 '모든 참가자의 시야를 합친 화면' (v0.9088~).
+    #   표[내 번호] = 0xFF  -> 그리는 동안 누구라도 보는 유닛·건물이 보인다 (overlay 에서 되돌림).
+    #   탐색 지도 0x915D50 을 보관하고 0 으로 -> 녹화한 사람이 안 가 본 곳의 장식물·유닛도 그린다 (overlay 에서 되돌림).
+    #   타일 안개 0x957D90 = 지금 시야 지도 0x999DD0 (칸마다 보는 플레이어 비트) 이 0 이면 0xFF(안개), 아니면 0.
+    #   미니맵(mmap): 지형을 반 밝기로 깔고 누구라도 보는 칸만 원래 밝기, 그 위에 유닛 점.
+    # 시뮬레이션이 쓰는 시야(유닛 +0x5C, 0x999DD0)는 읽기만 한다. 안개 지도·미니맵 그림은 화면 전용.
+    "sview": "    pushad\n" + _base("sview") + f"""
+    movsx eax, byte ptr [0xb412cc]
+    mov word ptr [eax*2+{PLAYER_BITS:#x}], 0xff
+    cld
+    mov esi, {EXPLORED:#x}
+    lea edi, [ebp+{CANOPY_OFF:#x}]
+    mov ecx, {FOG_MAP_SIZE // 4:#x}
+    .byte 0xf3, 0xa5
+    mov edi, {EXPLORED:#x}
+    xor eax, eax
+    mov ecx, {FOG_MAP_SIZE // 4:#x}
+    rep stosd
+    mov byte ptr [ebp+{FLAGS_OFF + F_CANOPY:#x}], 1
+    mov esi, {VISIBLE:#x}
+    mov edi, {FOG_MAP:#x}
+    mov ecx, {FOG_MAP_SIZE:#x}
+L_f:
+    lodsb
+    cmp al, 1
+    sbb al, al
+    stosb
+    dec ecx
+    jne L_f
+    cmp byte ptr [ebp+{FLAGS_OFF + F_HIDE:#x}], 0
+    jne L_sd
+    lea eax, [ebp+{OFF['mmap']:#x}]
+    call eax
+L_sd:
+    popad
+    push {WORLD_DRAW:#x}
+    ret
+""",
+    # mmap (ebp = 섹션): 미니맵 그림(+0x1002C, 128x128 RGB16) = 지형(+0x2C) 반 밝기, 보는 칸은 원래 밝기, 유닛 점(0x469030).
+    #   칸 -> 미니맵 점: x 표 +0x20254, y 표 +0x20664 (word). 반 밝기 = (점 & [iCARUS+0x38]) >> 1 (게임이 쓰는 마스크).
+    "mmap": f"""
+    mov ebx, dword ptr [{MINIMAP:#x}]
+    test ebx, ebx
+    je L_md
+    mov eax, dword ptr [0x4ec438]
+    mov edx, dword ptr [eax+0x38]
+    lea esi, [ebx+0x2c]
+    lea edi, [ebx+0x1002c]
+    mov ecx, 0x4000
+L_h:
+    lodsw
+    and eax, edx
+    shr eax, 1
+    stosw
+    dec ecx
+    jne L_h
+    xor edx, edx
+L_y:
+    movsx eax, word ptr [0xb412d6]
+    cmp edx, eax
+    jge L_u
+    cmp edx, 520
+    jge L_u
+    movzx edi, word ptr [ebx+edx*2+0x20664]
+    cmp edi, 128
+    jae L_ny
+    shl edi, 8
+    imul esi, edx, 0x208
+    add esi, {VISIBLE:#x}
+    xor ecx, ecx
+L_x:
+    movsx eax, word ptr [0xb412d4]
+    cmp ecx, eax
+    jge L_ny
+    cmp ecx, 520
+    jge L_ny
+    cmp byte ptr [esi+ecx], 0
+    je L_nx
+    movzx eax, word ptr [ebx+ecx*2+0x20254]
+    cmp eax, 128
+    jae L_nx
+    lea eax, [edi+eax*2]
+    push edx
+    mov dx, word ptr [ebx+eax+0x2c]
+    mov word ptr [ebx+eax+0x1002c], dx
+    pop edx
+L_nx:
+    inc ecx
+    jmp L_x
+L_ny:
+    inc edx
+    jmp L_y
+L_u:
+    mov ecx, ebx
+    mov eax, 0x469030
+    call eax
+L_md:
+    ret
+""",
+    # overlay (0x4D6607 대신, 마우스 그리기 0x4D4440 직전; 재생만): 표·탐색 지도 되돌리기, I = 화면 정보 전체, U = 자원 표.
     "overlay": "    pushad\n" + _base("overlay") + f"""
     cmp dword ptr [ebp+{FLAGS_OFF + F_PLAY:#x}], 0
     je L_od
@@ -1015,27 +1058,45 @@ L_vr:
     shl eax, 1
     test ah, ah
     je L_vr
-    lea eax, [ebp+{OFF['rvr']:#x}]
-    call eax
+    cmp byte ptr [ebp+{FLAGS_OFF + F_CANOPY:#x}], 0
+    je L_nc
+    mov byte ptr [ebp+{FLAGS_OFF + F_CANOPY:#x}], 0
+    cld
+    lea esi, [ebp+{CANOPY_OFF:#x}]
+    mov edi, {EXPLORED:#x}
+    mov ecx, {FOG_MAP_SIZE // 4:#x}
+    .byte 0xf3, 0xa5
+L_nc:
     push 0x49
-    call dword ptr [0x4ec350]
-    test ax, ax
-    js L_kd
-    mov byte ptr [ebp+{FLAGS_OFF + F_KEYPREV:#x}], 0
-    jmp L_kc
-L_kd:
-    cmp byte ptr [ebp+{FLAGS_OFF + F_KEYPREV:#x}], 0
-    jne L_kc
-    mov byte ptr [ebp+{FLAGS_OFF + F_KEYPREV:#x}], 1
-    xor byte ptr [ebp+{FLAGS_OFF + F_HIDE:#x}], 1
-L_kc:
-    cmp byte ptr [ebp+{FLAGS_OFF + F_HIDE:#x}], 0
+    pop eax
+    lea ebx, [ebp+{FLAGS_OFF + F_HIDE:#x}]
+    call L_key
+    push 0x55
+    pop eax
+    lea ebx, [ebp+{FLAGS_OFF + F_HIDE2:#x}]
+    call L_key
+    mov al, byte ptr [ebp+{FLAGS_OFF + F_HIDE:#x}]
+    or al, byte ptr [ebp+{FLAGS_OFF + F_HIDE2:#x}]
     jne L_od
     lea eax, [ebp+{OFF['draw']:#x}]
     call eax
 L_od:
     popad
     push 0x4d4440
+    ret
+L_key:
+    push eax
+    call dword ptr [0x4ec350]
+    test ax, ax
+    js L_kd
+    mov byte ptr [ebx+1], 0
+    ret
+L_kd:
+    cmp byte ptr [ebx+1], 0
+    jne L_kr
+    mov byte ptr [ebx+1], 1
+    xor byte ptr [ebx], 1
+L_kr:
     ret
 """,
     # text(dc, x, y, 글자, 길이, 색) stdcall: 검은 그림자 + 색 글자
@@ -1067,163 +1128,257 @@ L_od:
     pop ebp
     ret 0x18
 """,
-    # draw (ebp = 섹션): [esp] dc, +4 y, +8 플레이어, +0xC 줄 수, +0x10 유닛, +0x14 진행, +0x18 x, +0x1C 남은 유닛, +0x20 이름표, +0x40 글자
+    # draw (ebp = 섹션): 오른쪽 위 자원 표. 머리줄 = 게임의 자원 아이콘(위 자원줄과 같은 그림), 줄마다 참가자.
+    #   edi = 지역 변수: +0 dc, +4 줄 y, +8 플레이어, +0xC 표 x, +0x10 참가자 수, +0x14 칸, +0x18 RECT, +0x30 글자
+    #   바탕은 ExtTextOutA(ETO_OPAQUE) 로 칠한다 (게임이 들여오지 않는 함수라 GetProcAddress, 못 찾으면 바탕 없이).
+    #   아이콘: 패널 [[0x801E58+0x10]+0x14] 의 그림 표(0x18 간격) 59..63 = 금·물·카르마·글로리·인구 (0x463AB0 과 같은 호출).
     "draw": f"""
-    sub esp, 0x140
+    sub esp, 0x80
+    mov edi, esp
+    xor eax, eax
+    mov ecx, 0x7f7908
+    mov edx, 8
+L_cn:
+    test byte ptr [ecx+6], 0x30
+    je L_c0
+    inc eax
+L_c0:
+    add ecx, 0x11e0
+    dec edx
+    jne L_cn
+    mov dword ptr [edi+0x10], eax
+    test eax, eax
+    je L_x
+    movsx eax, word ptr [0x106a5e0]
+    sub eax, {HUD_W + 8}
+    mov dword ptr [edi+0xc], eax
     mov eax, dword ptr [0x4ec438]
     mov esi, dword ptr [eax+0x18]
     test esi, esi
     je L_x
-    mov dword ptr [esp], 0
-    lea eax, [esp]
-    push eax
+    mov dword ptr [edi], 0
+    push edi
     push esi
     mov eax, dword ptr [esi]
     call dword ptr [eax+0x44]
     test eax, eax
     jne L_x
+    cmp dword ptr [ebp+{VAR_EXT:#x}], 0
+    jne L_bg
+    lea eax, [ebp+{S_GDI:#x}]
+    push eax
+    call dword ptr [0x4ec278]
+    test eax, eax
+    je L_tx
+    lea ecx, [ebp+{S_EXT:#x}]
+    push ecx
+    push eax
+    call dword ptr [0x4ec1c0]
+    test eax, eax
+    je L_tx
+    mov dword ptr [ebp+{VAR_EXT:#x}], eax
+L_bg:
+    mov eax, dword ptr [edi+0x10]
+    imul eax, eax, {HUD_ROW}
+    add eax, {HUD_HEAD + 5}
+    mov ebx, eax
+    mov eax, dword ptr [edi+0xc]
+    push {HUD_Y}
+    pop edx
+    mov ecx, {HUD_W}
+    mov esi, {HUD_LINE:#x}
+    call L_fill
+    mov eax, dword ptr [edi+0xc]
+    inc eax
+    push {HUD_Y + 1}
+    pop edx
+    mov ecx, {HUD_W - 2}
+    sub ebx, 2
+    mov esi, {HUD_BACK:#x}
+    call L_fill
+    mov eax, dword ptr [edi+0xc]
+    inc eax
+    push {HUD_Y + 1}
+    pop edx
+    mov ecx, {HUD_W - 2}
+    push {HUD_HEAD}
+    pop ebx
+    mov esi, {HUD_HBACK:#x}
+    call L_fill
+    mov eax, dword ptr [edi+0xc]
+    inc eax
+    push {HUD_Y + 1 + HUD_HEAD}
+    pop edx
+    mov ecx, {HUD_W - 2}
+    push 1
+    pop ebx
+    mov esi, {HUD_LINE:#x}
+    call L_fill
+L_tx:
     push dword ptr [0x106ae3c]
-    push dword ptr [esp+4]
+    push dword ptr [edi]
     call dword ptr [0x4ec020]
     push 1
-    push dword ptr [esp+4]
+    push dword ptr [edi]
     call dword ptr [0x4ec038]
-    movsx eax, word ptr [0x106a5e0]
-    sub eax, 370
-    mov dword ptr [esp+0x18], eax
-    mov dword ptr [esp+4], 30
-    mov dword ptr [esp+8], 0
+    push {HUD_LABEL:#x}
+    push {len("플레이어".encode("cp949"))}
+    lea eax, [ebp+{S_HEAD:#x}]
+    push eax
+    push {HUD_Y + 6}
+    mov eax, dword ptr [edi+0xc]
+    add eax, 10
+    push eax
+    push dword ptr [edi]
+    lea eax, [ebp+{OFF['text']:#x}]
+    call eax
+    mov dword ptr [edi+4], {HUD_Y + HUD_HEAD + 5}
+    mov dword ptr [edi+8], 0
 L_p:
-    mov ebx, dword ptr [esp+8]
+    mov ebx, dword ptr [edi+8]
     imul ebx, ebx, 0x11e0
     add ebx, 0x7f7908
     test byte ptr [ebx+6], 0x30
     je L_np
-    lea edi, [esp+0x40]
+    lea esi, [ebx+8]
+    cmp byte ptr [esi], 0
+    jne L_nm
+    lea esi, [ebp+{S_CPU:#x}]
+L_nm:
+    xor ecx, ecx
+L_ln:
+    cmp byte ptr [esi+ecx], 0
+    je L_le
+    inc ecx
+    cmp ecx, {HUD_NAME_MAX}
+    jb L_ln
+L_le:
+    mov eax, dword ptr [edi+8]
+    push dword ptr [ebp+eax*4+{COLORS:#x}]
+    push ecx
+    push esi
+    push dword ptr [edi+4]
+    mov eax, dword ptr [edi+0xc]
+    add eax, 10
+    push eax
+    push dword ptr [edi]
+    lea eax, [ebp+{OFF['text']:#x}]
+    call eax
+    mov dword ptr [edi+0x14], 0
+L_col:
+    mov eax, dword ptr [edi+0x14]
+    cmp eax, 4
+    je L_pop
+    movzx eax, word ptr [ebp+eax*2+{HUD_OFFS:#x}]
+    push dword ptr [ebx+eax]
+    lea eax, [ebp+{S_NUM:#x}]
+    push eax
+    lea eax, [edi+0x30]
+    push eax
+    mov eax, 0x4de774
+    call eax
+    add esp, 0xc
+    jmp L_put
+L_pop:
     movsx eax, word ptr [ebx]
     push eax
     movsx eax, word ptr [ebx+2]
     push eax
-    push dword ptr [ebx+0x86c]
-    push dword ptr [ebx+0x870]
-    push dword ptr [ebx+0x868]
-    push dword ptr [ebx+0x864]
-    lea eax, [ebx+8]
-    cmp byte ptr [eax], 0
-    jne L_nm
-    lea eax, [ebp+{S_CPU:#x}]
-L_nm:
+    lea eax, [ebp+{S_POP:#x}]
     push eax
-    lea eax, [ebp+{S_PLAYER:#x}]
+    lea eax, [edi+0x30]
     push eax
-    push edi
     mov eax, 0x4de774
     call eax
-    add esp, 0x24
-    mov ecx, dword ptr [esp+8]
-    mov edx, dword ptr [ebp+ecx*4+{COLORS:#x}]
-    push edx
+    add esp, 0x10
+L_put:
+    push {HUD_NUM:#x}
     push eax
-    push edi
-    push dword ptr [esp+0x10]
-    push dword ptr [esp+0x28]
-    push dword ptr [esp+0x14]
+    lea eax, [edi+0x30]
+    push eax
+    push dword ptr [edi+4]
+    mov eax, dword ptr [edi+0x14]
+    imul eax, eax, {HUD_COL}
+    add eax, dword ptr [edi+0xc]
+    add eax, {HUD_COL0}
+    push eax
+    push dword ptr [edi]
     lea eax, [ebp+{OFF['text']:#x}]
     call eax
-    add dword ptr [esp+4], 16
-    mov dword ptr [esp+0xc], 0
-    mov dword ptr [esp+0x10], {0x775a38 + 0x138:#x}
-    mov dword ptr [esp+0x1c], 0x6a5
-L_u:
-    mov esi, dword ptr [esp+0x10]
-    movsx eax, word ptr [esi+8]
-    test eax, eax
-    jle L_un
-    cmp word ptr [esi+2], 0
-    je L_un
-    movzx eax, byte ptr [esi+0x10]
-    cmp eax, dword ptr [esp+8]
-    jne L_un
-    movzx eax, word ptr [esi+6]
-    lea edx, [ebp+{S_MAKE:#x}]
-    cmp eax, 0x1005
-    je L_ok
-    lea edx, [ebp+{S_UPG:#x}]
-    cmp eax, 0x1006
-    je L_ok
-    cmp eax, 0x100a
-    jne L_un
-L_ok:
-    mov dword ptr [esp+0x20], edx
-    movsx ebx, word ptr [esi+0x50]
-    test ebx, ebx
-    jle L_un
-    cmp ebx, 0xd2
-    jge L_un
-    fld dword ptr [esi+0x4c]
-    fistp dword ptr [esp+0x14]
-    imul eax, ebx, 0x1c
-    mov eax, dword ptr [eax+0x4fcd88]
-    test eax, eax
-    je L_nt
-    movsx ecx, word ptr [eax+0x28]
-    test ecx, ecx
-    jle L_nt
-    mov eax, dword ptr [esp+0x14]
-    imul eax, eax, 100
-    cdq
-    idiv ecx
-    cmp eax, 100
-    jle L_pc
-    mov eax, 100
-    jmp L_pc
-L_nt:
-    xor eax, eax
-L_pc:
-    lea edi, [esp+0x40]
-    push eax
-    imul ebx, ebx, 0x80
-    add ebx, 0x5038ec
-    push ebx
-    push dword ptr [esp+0x28]
-    lea eax, [ebp+{S_LINE:#x}]
-    push eax
-    push edi
-    mov eax, 0x4de774
-    call eax
-    add esp, 0x14
-    mov ecx, dword ptr [esp+8]
-    mov edx, dword ptr [ebp+ecx*4+{COLORS:#x}]
-    push edx
-    push eax
-    push edi
-    push dword ptr [esp+0x10]
-    push dword ptr [esp+0x28]
-    push dword ptr [esp+0x14]
-    lea eax, [ebp+{OFF['text']:#x}]
-    call eax
-    add dword ptr [esp+4], 15
-    inc dword ptr [esp+0xc]
-    cmp dword ptr [esp+0xc], 6
-    jge L_ue
-L_un:
-    add dword ptr [esp+0x10], 0x138
-    dec dword ptr [esp+0x1c]
-    jne L_u
-L_ue:
-    add dword ptr [esp+4], 6
+    inc dword ptr [edi+0x14]
+    cmp dword ptr [edi+0x14], 5
+    jb L_col
+    add dword ptr [edi+4], {HUD_ROW}
 L_np:
-    inc dword ptr [esp+8]
-    cmp dword ptr [esp+8], 8
-    jl L_p
+    inc dword ptr [edi+8]
+    cmp dword ptr [edi+8], 8
+    jb L_p
     mov eax, dword ptr [0x4ec438]
     mov esi, dword ptr [eax+0x18]
-    push dword ptr [esp]
+    push dword ptr [edi]
     push esi
     mov eax, dword ptr [esi]
     call dword ptr [eax+0x68]
+    mov esi, dword ptr [0x801e68]
+    test esi, esi
+    je L_x
+    mov esi, dword ptr [esi+0x14]
+    test esi, esi
+    je L_x
+    add esi, {59 * 0x18}
+    xor ebx, ebx
+L_ic:
+    sub esp, 0x10
+    mov eax, esp
+    mov ecx, dword ptr [0x106a604]
+    mov dword ptr [eax], ecx
+    mov ecx, dword ptr [0x106a608]
+    mov dword ptr [eax+4], ecx
+    mov ecx, dword ptr [0x106a60c]
+    mov dword ptr [eax+8], ecx
+    mov ecx, dword ptr [0x106a610]
+    mov dword ptr [eax+0xc], ecx
+    push dword ptr [esi+0x10]
+    push 0
+    movsx eax, word ptr [esi+0xc]
+    push eax
+    movsx eax, word ptr [esi+0xa]
+    push eax
+    push dword ptr [esi+0x14]
+    push {HUD_Y + 3}
+    imul eax, ebx, {HUD_COL}
+    add eax, dword ptr [edi+0xc]
+    add eax, {HUD_COL0}
+    push eax
+    call dword ptr [0x4ec4b0]
+    add esi, 0x18
+    inc ebx
+    cmp ebx, 5
+    jb L_ic
 L_x:
-    add esp, 0x140
+    add esp, 0x80
+    ret
+L_fill:
+    mov dword ptr [edi+0x18], eax
+    mov dword ptr [edi+0x1c], edx
+    add eax, ecx
+    mov dword ptr [edi+0x20], eax
+    add edx, ebx
+    mov dword ptr [edi+0x24], edx
+    push esi
+    push dword ptr [edi]
+    call dword ptr [0x4ec01c]
+    xor eax, eax
+    push eax
+    push eax
+    push eax
+    lea ecx, [edi+0x18]
+    push ecx
+    push 2
+    push eax
+    push eax
+    push dword ptr [edi]
+    call dword ptr [ebp+{VAR_EXT:#x}]
     ret
 """,
 }
@@ -1231,7 +1386,7 @@ L_x:
 
 def data_blob() -> bytes:
     """글자 형식(cp949)과 플레이어 색 (COLORREF 0x00BBGGRR)."""
-    b = bytearray(CODE_SIZE - DATA_OFF)
+    b = bytearray(0x1000 - DATA_OFF)
     for off, text in ((S_PLAYER, "%s   금 %d  물 %d  카르마 %d  글로리 %d  인구 %d/%d"),
                       (S_LINE, "   %s %s %d%%"), (S_MAKE, "생산"), (S_UPG, "업그레이드"), (S_CPU, "컴퓨터"),
                       (W_MAP, "map"), (W_MONEY, "money"), (W_SPEED, "speed"), (S_MONEY, "치트: 자원 +50000, 인구 제한 해제"),
@@ -1254,11 +1409,15 @@ def assemble() -> bytes:
     for name, src in SOURCES.items():
         code = bytes(ks.asm(src, addr=0x10000000 + OFF[name])[0])
         nxt = min([o for o in OFF.values() if o > OFF[name]]
-                  + [NAME_OFF if OFF[name] < NAME_OFF else DATA_OFF if OFF[name] < DATA_OFF else CODE_SIZE])
+                  + [NAME_OFF if OFF[name] < NAME_OFF else DATA_OFF if OFF[name] < DATA_OFF else
+                     0x1000 if OFF[name] < 0x1000 else S_GDI])
         assert len(code) <= nxt - OFF[name], (name, len(code), nxt - OFF[name])
         if OFF[name] >= DATA_OFF:                       # 글자 자료 사이 빈칸(0)에만 (앞 글자의 끝 0 은 남김)
             assert not any(out[OFF[name] - 1:OFF[name] + len(code)]), name
         out[OFF[name]:OFF[name] + len(code)] = code
+    for off, raw in DATA2:                              # 둘째 쪽 자료
+        assert not any(out[off:off + len(raw) + 1]), hex(off)
+        out[off:off + len(raw)] = raw
     for off, text, room in CHEAT_TEXTS:                 # 이름·설정 영역의 빈 곳 (실행 중 쓰지 않는 자리)
         raw = text.encode("cp949") + b"\0"
         assert len(raw) <= room and not any(out[off:off + room]), text
@@ -1267,6 +1426,192 @@ def assemble() -> bytes:
 
 
 CODE = bytes.fromhex(
+    "60e8000000005d81ed0600000083ed0083bd280800000075198b7424288b4c242c0fb65c242485f674088d85"
+    "00030000ffd06168e0074400c3000000000000000fb74424048d50d183fa0276066890494000c30fbe550860"
+    "e8000000005d81ed1d00000083ed408d8d84090000ffd161b001c20400000000000000000000000060e80000"
+    "00005d81ed0600000081ed8000000083bd28080000000f85080100008dbd80080000a1781a6e00aba1c01e50"
+    "00abbee80fb400b905000000f3a5a1b412b400ab0fb605cc12b400abbe88ff6d00b902000000f3a58db54408"
+    "0000a5a58db580080000b934000000bbfe0000008d8500030000ffd083bd20080000000f85690100000fb605"
+    "cc12b40069c0e01100000510797f0089c3bef4616e008dbd00090000b908000000f3a589debff4616e00b908"
+    "000000f3a5c60513626e00008dbd40090000c7075553455266c74704735c83c70689deb91f000000acaa84c0"
+    "74064975f7c607006a008d854009000050ff1584c24e008d850008000050b820914d00ffd083c4040fb6c089"
+    "85240800008db500090000bff4616e00b908000000f3a5e9c6000000c7852c080000ffffffff6a0068800000"
+    "006a036a006a0168000000808d851008000050ff157cc24e0083f8ff0f849400000089c66a008d8580090000"
+    "5068000020008d85002000005056ff1560c24e0056ff15acc14e0081bd00200000524b50317563c785082000"
+    "00000000008b8510200000a3c01e5000ff35f00fb4008db514200000bfe80fb400b905000000f3a58f05f00f"
+    "b4008b8528200000a3781a6e008b850c200000a3b412b400c7852c080000000000008d8564060000ffd08d85"
+    "c0060000ffd0618b0da411b400c30000000000000000000060e8000000005d81ed0600000081ed8002000083"
+    "bd2808000000754c8d8580030000ffd08d9dc0080000a1b412b4008903a1c01e5000894304a1f80fb4008943"
+    "0889530c897b1089deb914000000bbfd0000008d8500030000ffd0615589e583ec446846a84400c361b001c3"
+    "803da46a4d00047505e9a60300006880d44d00c381f900400000775d8d510b83e2fc8dbd002000008b470453"
+    "8d1c1081fb00002000761bbb0000200029c383fb047208c7440710ffffffff011f31c08947048d5c071001d0"
+    "8947040117ff470ca1b412b400890358884304c643050066894b068d7b08fcf3a4c300000000000000000000"
+    "0000000000000000000000000000000031d231ffbe705b7700b9a50600000fbf460885c07e15476bd21f01c2"
+    "6bd21f0356126bd21f0fb7460e01c281c6380100004975da8d85a80f0000ffe0000000006a00ff3550a60601"
+    "6a0850b8c0a94d00ffd083c410c300008db5402000000fbe3dcc12b40069ffe011000081c710797f00b90800"
+    "0000f3a5c30000000000000060e8000000005d81ed0600000081ed0004000083bd2808000000750d615589e5"
+    "83ec4068f67a4400c3a1b412b40031d2b905000000f7f185d275336a006a006a006a000fbf0d14f44f0083c1"
+    "04516880f04e0068ff7f00006a00b9e80fb400b8109c4c00ffd08d8580040000ffd061c30000000000000000"
+    "00000000000000008b3db412b4008b9d082000003b9d042000000f83e90000008d941d602000008b0239f80f"
+    "87d80000000fb74a068d410b83e0fc01c38b0239f872d10fb642043dfd000000754c5357528d8580030000ff"
+    "d089d15aa1c01e50003b420c750a3b4a1475053b7a18742383bd2c08000000751a898534080000898d380800"
+    "0089bd3c0800005f5789bd2c0800005f5be97affffff83f8080f8371ffffff535783bd2c08000000743e8d72"
+    "0889cf85ff7e3566813e02407524510fb64e0449781b0fbf5c4e0569db380100003883485a770074ea668364"
+    "4e0500ebe2590fb75e0201de29df7fcb518d4a085150b8e0074400ffd083c40cff85300800005f5be90bffff"
+    "ff899d082000008d85800b0000ffe00083f831743a83e20769d2e01100008d8a6c817f00b004810150c30000"
+    "83c104fec875f36681ba08797f00e8037d0966818208797f00e8038d85200f0000eb1f668335c812b400088d"
+    "85600f000066f705c812b400080075068d85900f00008d8dc0030000ffe10000000000000000000060e80000"
+    "00005d81ed0600000081ed0006000083bd28080000007432c605cb12b40000803d8dff6d00027422c6058dff"
+    "6d0001fc8db500080000bff4626e00b909000000f3a48d85340e0000ffd0610fbe058dff6d00c30000000000"
+    "000000000000000083bd3420000001752fff35c01e5000ff35e80fb4008b8530200000a3c01e5000b978f0ae"
+    "00b8f0ef4900ffd08f05e80fb4008f05c01e5000c30000000fbf45f88b4c2404e8000000005a898c82531a20"
+    "00c300000000000000000000c605cb12b4000180bd402000000074088d85d8030000ffd0be705b7700bba506"
+    "00000fbf460885c07e1366817e060410740b56b8f0694300ffd083c40481c6380100004b75dc8d85c00e0000"
+    "ffe0000000000000000000000000000000000000803da46a4d00047505e9d209000068d0344d00c300000000"
+    "000000000000000060e8000000005d81ed0600000081ed400700008b7424248dbda80e0000bb2f000000e844"
+    "00000085c0751083c7084383fb3176ee6168704c4000c3803dcb12b40000740d53b810814400ffd083c404eb"
+    "1189d80fbe15cc12b4008d8d84090000ffd161b801000000c2040031c98a040e8a140f3c4172063c5a77020c"
+    "2038d0750d84d2740341ebe5b801000000c331c0c300000000000000000000000000000060e8000000005da1"
+    "c01e500089455ec64562016168f0ef4900c30000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000c4a1c6ae3a20b8ca20b9e0c8fb20c4d1c1fc0000c4a1c6ae"
+    "3a20b8ca20b9e0c8fb20b2a8c1fc000000000000000000000000000000000000000000000000000000000000"
+    "00000000c4a1c6ae3a20c4c4c7bbc5cdbfcd20c7d220b6a7b8b820b5cbb4cfb4d90000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "00000000000000000000000000000000bb08797f0031c9f64306307407807b080074014181c3e011000081fb"
+    "0808800072e583f901773883f82f7541f605c812b40001751bb998569100b8e0914900ffd0800dc812b40001"
+    "8d85d8080000eb158025c812b400fe8d85ec080000eb068d85200900008d8dc0030000ffe18d8d90050000ff"
+    "e100000000000000e8000000005881e8050000002d000a000083b82808000000744b80b840080000007401c3"
+    "0fbf15d012b40085d27e3681faa60600007d2e69d2380100000fb692485a770083fa08731c0fb605cc12b400"
+    "508815cc12b400b8203a4600ffd058a2cc12b400c368203a4600c30000000000000000000000000000000000"
+    "00000000e8000000005881e8050000002d800a000083b82808000000740a80b840080000007401c368b0a346"
+    "00c3000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000006a015f6a"
+    "215b8d473050ff1550c34e006685c07906891db812b400d1ebd1e783ff0872e2c30000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "00000000000000000000000000000000000000002573202020b1dd2025642020b9b02025642020c4abb8a3b8"
+    "b62025642020b1dbb7ceb8ae2025642020c0ceb1b82025642f2564008db500080000bff4616e00b909000000"
+    "f3a4c30000000000000000000000000000000000000000000000000020202025732025732025642525000000"
+    "00000000000000000000000000000000bbfdbbea000000000000000000000000bef7b1d7b7b9c0ccb5e50000"
+    "00000000c4c4c7bbc5cd00006d617000000000006d6f6e65790000007370656564000000608db504212000bf"
+    "a4cd4f00b9d10000008b0685c074198b1785d2741356575189d689c7b924000000f3a5595f5e890783c60483"
+    "c71ce2d961c3000000000000ff4848004090ff0040e04000ffff4000d060ff00ff902000f0f0f00060ffff00"
+    "c4a1c6ae3a20c0dabff8202b35303030302c20c0ceb1b820c1a6c7d120c7d8c1a60000000000000000000000"
+    "0000000000000000000000000000000000000000c4a1c6ae3a20bafcb8a520bbfdbbea20c4d1c1fc00000000"
+    "000000000000000000000000000000000000000000000000c4a1c6ae3a20bafcb8a520bbfdbbea20b2a8c1fc"
+    "0000000080bd5008000000744b66b9a50681ee380100000fbf46080346246bd21f01c24975ebbe08797f00b1"
+    "086bd21f03168b866408000003866808000003866c0800000386700800006bd21f01c281c6e01100004975d5"
+    "c300000060e8000000005d81ed0600000081ed0010000083bd28080000007468b9a0024f0031c04066890141"
+    "41d1e084e474f580bd5108000000741ac6855108000000fc8db500302000bf505d9100b910080100f3a56a49"
+    "588d9d40080000e82b0000006a55588d9d42080000e81d0000008a85400800000a854208000075088d858013"
+    "0000ffd0616840444d00c350ff1550c34e006685c07805c6430100c3807b01007507c6430101803301c30000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000060e80000"
+    "00005d81ed0600000081ed001100000fbe05cc12b40066c70445a0024f00ff00fcbe505d91008dbd00302000"
+    "b910080100f3a5bf505d910031c0b910080100f3abc6855108000001bed09d9900bf907d9500b940200400ac"
+    "3c0118c0aa4975f780bd400800000075088d8500120000ffd06168d0344d00c3000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "00000000000000000000000000000000000000000000000000000000000000008b1de01f800085db0f84a000"
+    "0000a138c44e008b50388d732c8dbb2c000100b90040000066ad21d0d1e866ab4975f531d20fbf05d612b400"
+    "39c27d6981fa080200007d610fb7bc536406020081ff80000000734ec1e70869f20802000081c6d09d990031"
+    "c90fbf05d412b40039c17d3281f9080200007d2a803c0e0074210fb7844b540202003d8000000073128d0447"
+    "52668b54032c668994032c0001005a41ebc342eb8c89d9b830904600ffd0c300000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000005589e56a00ff7508ff153cc04e00ff7518ff7514"
+    "8b451040508b450c4050ff7508ff1534c04e00ff751cff7508ff153cc04e00ff7518ff7514ff7510ff750cff"
+    "7508ff1534c04e005dc218000000000000000000000000000000000000000000000000000000000000000000"
+    "000000000000000000000000000000000000000081ec8000000089e731c0b908797f00ba08000000f6410630"
+    "74014081c1e01100004a75f089471085c00f847c0200000fbf05e0a506012dc001000089470ca138c44e008b"
+    "701885f60f845d020000c7070000000057568b06ff504485c00f854802000083bd6808000000752d8d85001f"
+    "000050ff1578c24e0085c00f84830000008d8d081f00005150ff15c0c14e0085c074718985680800008b4710"
+    "6bc01283c01b89c38b470c6a1a5ab9b8010000be90786000e8f90100008b470c406a1b5ab9b601000083eb02"
+    "be10141800e8e00100008b470c406a1b5ab9b60100006a165bbe20283000e8c70100008b470c406a315ab9b6"
+    "0100006a015bbe90786000e8ae010000ff353cae0601ff37ff1520c04e006a01ff37ff1538c04e0068e0c8a0"
+    "006a088d85241f0000506a208b470c83c00a50ff378d8500130000ffd0c7470435000000c74708000000008b"
+    "5f0869dbe011000081c308797f00f64306300f84bc0000008d7308803e0075068db5a00e000031c9803c0e00"
+    "74064183f90e72f48b4708ffb485000f00005156ff77048b470c83c00a50ff378d8500130000ffd0c7471400"
+    "0000008b471483f80474220fb78445301f0000ff34038d85181f0000508d473050b874e74d00ffd083c40ceb"
+    "1e0fbf03500fbf4302508d851c1f0000508d473050b874e74d00ffd083c41068f0f0f000508d473050ff7704"
+    "8b47146bc04003470c83c07250ff378d8500130000ffd0ff4714837f1405728b83470412ff4708837f08080f"
+    "821effffffa138c44e008b7018ff37568b06ff50688b35681e800085f674648b761485f6745d81c688050000"
+    "31db83ec1089e08b0d04a6060189088b0d08a606018948048b0d0ca606018948088b0d10a6060189480cff76"
+    "106a000fbf460c500fbf460a50ff76146a1d6bc34003470c83c07250ff15b0c44e0083c6184383fb0572ab81"
+    "c480000000c389471889571c01c889472001da89572456ff37ff151cc04e0031c05050508d4f18516a025050"
+    "ff37ff9568080000c30000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "000000000000000000000000000000004744493332000000457874546578744f757441000000000025640000"
+    "25642f2564000000c7c3b7b9c0ccbeee000000006408680870086c08"
+)
+# 이전 판 — 이미 설치된 파일을 걷어낼 때 인식: (코드, 각 위치의 섹션 안 대상)
+LEGACY = (
+    (bytes.fromhex(
     "60e8000000005d81ed0600000083ed0083bd280800000075198b7424288b4c242c0fb65c242485f674088d85"
     "00030000ffd06168e0074400c3000000000000000fb74424048d50d183fa0276066890494000c30fbe550860"
     "e8000000005d81ed1d00000083ed408d8d84090000ffd161b001c2040000006168d0344d00c3000060e80000"
@@ -1361,9 +1706,7 @@ CODE = bytes.fromhex(
     "0000000080bd5008000000744b66b9a50681ee380100000fbf46080346246bd21f01c24975ebbe08797f00b1"
     "086bd21f03168b866408000003866808000003866c0800000386700800006bd21f01c281c6e01100004975d5"
     "c3"
-)
-# 이전 판 — 이미 설치된 파일을 걷어낼 때 인식: (코드, 각 위치의 섹션 안 대상)
-LEGACY = (
+    ), (0, 0x80, 0x280, 0x400, 0x600, 0xA00, 0xAB0, 0xA80, 0x740, 0x40, 0x7E0, 0x720, 0x2EC)),          # v0.9085~v0.9087
     (bytes.fromhex(
     "60e8000000005d81ed0600000083ed0083bd280800000075198b7424288b4c242c0fb65c242485f674088d85"
     "00030000ffd06168e0074400c3000000000000000fb744240483f830740b83f83174066890494000c30fbe55"
@@ -2491,7 +2834,7 @@ def body(save: bool = False, play: bool = False, hash2: bool = True) -> bytes:
 def _legacy_bodies():
     out = []
     for code, targets in LEGACY:
-        base = bytearray(code.ljust(CODE_SIZE, b"\0"))
+        base = bytearray(code.ljust(OLD_CODE_SIZE, b"\0"))
         out.append((bytes(base), targets))
         if len(targets) == 3:                              # v0.9054: 이름 + 저장 끄기 표시 0/1
             base[0x800:0x809] = b"RKREPLAY\0"
@@ -2503,7 +2846,7 @@ def _legacy_bodies():
             base[0x810:0x81D] = PLAY_FILE + b"\0"
             for v in (0, 1):
                 for w in (0, 1):
-                    for h in ((0, 1) if code.ljust(CODE_SIZE, b"\0")[OFF["hash2"]:OFF["hash2"] + 4] != bytes(4) else (0,)):
+                    for h in ((0, 1) if code.ljust(OLD_CODE_SIZE, b"\0")[OFF["hash2"]:OFF["hash2"] + 4] != bytes(4) else (0,)):
                         struct.pack_into("<I", base, 0x820, v)
                         struct.pack_into("<I", base, 0x828, w)
                         base[FLAGS_OFF + F_HASH2] = h         # v0.9077~: 넓은 검사값 0/1
@@ -2518,8 +2861,9 @@ def _kind(data):
     if name != SECTION_NAME:
         return None, None
     raw = bytes(data[rptr:rptr + rsize])
-    ok_hdr = (vsize == VIRTUAL_SIZE and rsize == CODE_SIZE and rptr + rsize == len(data)
-              and _u32(data, soi) == va + VIRTUAL_SIZE and _u32(data, h + 36) == CHARACTERISTICS)
+    sizes = (VIRTUAL_SIZE, CODE_SIZE) if rsize == CODE_SIZE else (OLD_VIRTUAL_SIZE, OLD_CODE_SIZE)   # 새 판 / v0.9087 까지
+    ok_hdr = ((vsize, rsize) == sizes and rptr + rsize == len(data)
+              and _u32(data, soi) == va + vsize and _u32(data, h + 36) == CHARACTERISTICS)
     if not ok_hdr:
         raise ValueError("리플레이 기록 패치가 불완전하거나 알 수 없는 변경이 있습니다.")
     mode = MODE_PLAY if _u32(raw, FLAGS_OFF + F_PLAY) == 1 else 0
