@@ -645,14 +645,14 @@ class InGameHookTests(unittest.TestCase):
         self.files[b"RKREPLAY.RKP"] = rrp.build_rkp(start, records, name)
         return mu
 
-    def run_entry(self, mu, entry, ret):
+    def run_entry(self, mu, entry, ret, count=200000):
         ESP, ECX, EBP = self.regs
         mu.mem_write(ret, b"\xf4")
         esp = 0x2080000
         mu.mem_write(esp, struct.pack("<I", ret))
         mu.reg_write(ESP, esp)
         mu.reg_write(EBP, 0x6666)
-        mu.emu_start(self.BASE + rrp.OFF[entry], ret, count=200000)
+        mu.emu_start(self.BASE + rrp.OFF[entry], ret, count=count)
         self.assertEqual(mu.reg_read(ESP), esp + 4)
         self.assertEqual(mu.reg_read(EBP), 0x6666)
 
@@ -953,6 +953,62 @@ class InGameHookTests(unittest.TestCase):
                 self.assertEqual(bytes(mu.mem_read(rrp.EXPLORED, rrp.FOG_MAP_SIZE)), explored)    # 탐색 지도는 원래대로
                 self.assertEqual(bytes(mu.mem_read(rrp.VISIBLE, rrp.FOG_MAP_SIZE)), bytes(visible))
                 self.assertEqual({u: mask(mu, u) for u in seen_mask}, seen_mask)
+
+    def test_click_picks_any_visible_unit_in_replay(self):
+        """마우스 입력 처리(0x430C00) 동안: 재생이면 표[내 번호]=0xFF, 탐색 지도 0 — 상대 유닛·건물도 늘 골라진다.
+        끝나면 되돌린다. 재생이 아니면(실제 대전) 그대로."""
+        from unicorn import UC_HOOK_CODE
+        bits = lambda mu: list(struct.unpack("<8H", mu.mem_read(rrp.PLAYER_BITS, 16)))
+        normal = [1 << p for p in range(8)]
+        explored = bytes([0x0F, 0x03]) * (rrp.FOG_MAP_SIZE // 2)
+        for play in (True, False):
+            with self.subTest(play=play):
+                mu = self.overlay_machine()
+                mu.mem_write(rrp.PLAYER_BITS, struct.pack("<8H", *normal))
+                mu.mem_write(0x400000 + rrp.MODE_OFF, bytes([rrp.MODE_PLAY if play else 0]))
+                mu.mem_write(0xB412CC, b"\x01")
+                mu.mem_write(rrp.EXPLORED, explored)
+                seen = []
+                mu.mem_write(0x430C06, b"\x8b\xe5\x5d\xc3")               # 원래 함수 몸: mov esp,ebp; pop ebp; ret
+                mu.hook_add(UC_HOOK_CODE, lambda uc, a, s_, _: seen.append(
+                    (bits(uc), set(bytes(uc.mem_read(rrp.EXPLORED, rrp.FOG_MAP_SIZE))))), begin=0x430C06, end=0x430C06)
+                self.run_entry(mu, "pick", 0x4D7B5C, count=2000000)   # 지도 복사(rep) 한 칸이 한 단계
+                want = normal.copy()
+                if play:
+                    want[1] = 0xFF
+                self.assertEqual(seen, [(want, {0} if play else {0x0F, 0x03})])
+                self.assertEqual(bits(mu), normal)
+                self.assertEqual(bytes(mu.mem_read(rrp.EXPLORED, rrp.FOG_MAP_SIZE)), explored)
+
+    def test_replay_mutes_alerts_and_production_sounds(self):
+        """재생: 알림 소리(0x49E5D0)는 건물 선택 소리(0x372..0x375)만, 유닛 생산 완료 소리(0x49E2B0)는 내지 않는다.
+        재생이 아니면 원래 함수 그대로."""
+        from unicorn import UC_HOOK_CODE
+        from unicorn.x86_const import UC_X86_REG_EAX
+        for play in (True, False):
+            mu = self.overlay_machine()
+            mu.mem_write(0x400000 + rrp.MODE_OFF, bytes([rrp.MODE_PLAY if play else 0]))
+            played = []
+            for at in (0x49E5D6, 0x49E2B6):
+                mu.mem_write(at, b"\xb0\x01\x8b\xe5\x5d\xc3")           # mov al,1; mov esp,ebp; pop ebp; ret
+                mu.hook_add(UC_HOOK_CODE, lambda uc, a, s_, _: played.append(
+                    (a, struct.unpack("<I", uc.mem_read(uc.reg_read(self.regs[2]) + 8, 4))[0])), begin=at, end=at)
+            ESP = self.regs[0]
+            for entry, arg in (("snd1", 0x100), ("snd1", 0x372), ("snd1", 0x375), ("snd1", 0x376), ("snd1", 0x371), ("snd2", 0x775B70)):
+                esp = 0x2080000
+                mu.mem_write(0x4D0000, b"\xf4")
+                mu.mem_write(esp, struct.pack("<II", 0x4D0000, arg))
+                mu.reg_write(ESP, esp)
+                mu.reg_write(UC_X86_REG_EAX, 0x77)
+                mu.emu_start(self.BASE + rrp.OFF[entry], 0x4D0000, count=1000)
+                self.assertEqual(mu.reg_read(ESP), esp + 4)
+                if entry == "snd2" and play:
+                    self.assertEqual(mu.reg_read(UC_X86_REG_EAX), 0)
+            if play:
+                self.assertEqual(played, [(0x49E5D6, 0x372), (0x49E5D6, 0x375)])
+            else:
+                self.assertEqual(played, [(0x49E5D6, 0x100), (0x49E5D6, 0x372), (0x49E5D6, 0x375), (0x49E5D6, 0x376),
+                                          (0x49E5D6, 0x371), (0x49E2B6, 0x775B70)])
 
     def test_panel_shows_selected_players_info(self):
         """패널을 그리는 동안만 내 번호를 고른 유닛의 주인으로: 상대 건물의 생산·업그레이드 창."""
