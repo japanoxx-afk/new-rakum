@@ -65,7 +65,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9086"
+APP_VERSION = "0.9087"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
