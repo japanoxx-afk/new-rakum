@@ -57,7 +57,7 @@ class PatchFileTests(Base):
             self.skipTest(str(e))
 
     def test_caves_are_free_in_original(self):
-        for offset, before, _ in ps.SITES[4:]:
+        for offset, before, _ in ps.SITES[5:]:
             self.assertEqual(self.original[offset:offset + len(before)], bytes(len(before)))
 
     def test_every_build_has_it_and_is_idempotent(self):
@@ -177,6 +177,52 @@ class SendTests(Base):
         self.assertEqual(struct.unpack('<HHh', bytes(mu.mem_read(SCRATCH + 0x200, 6))), (0x4011, 9, 50))
         mu.mem_write(SHOWN, struct.pack('<h', 0))         # 정보 창 유닛 없음: 그대로
         self.assertEqual(self.send(mu, 0x4008, 50, 5), 50)
+
+
+class RallyTests(SendTests):
+    """0x447E60(3 = 집결지, 대상, 층, 지점): 같은 종류 내 건물을 여럿 골랐으면 건물마다 명령 0x400E 를 하나씩."""
+
+    def rally(self, mu, sub=3, target=0, layer=1, point=0x00C80190):
+        from unicorn import UC_HOOK_CODE
+        from unicorn.x86_const import UC_X86_REG_ESP
+        sent = []
+        h = mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, _: sent.append(bytes(uc.mem_read(SCRATCH + 0x200, 0xF))),
+                        begin=SEND, end=SEND)
+        esp = SCRATCH + 0x8000
+        mu.mem_write(esp, struct.pack('<IIIII', SENTINEL, sub, target, layer, point))
+        mu.reg_write(UC_X86_REG_ESP, esp)
+        mu.emu_start(0x447E60, SENTINEL, count=100000)
+        mu.hook_del(h)
+        self.assertEqual(mu.reg_read(UC_X86_REG_ESP), esp + 4)
+        out = []
+        for pkt in sent:
+            t, size, s_, unit, tgt, lay, pt = struct.unpack('<HHHhhBI', pkt)
+            self.assertEqual((t, size, s_, tgt, lay, pt), (0x400E, 0xF, sub, target, layer, point))
+            out.append(unit)
+        return out
+
+    def test_rally_goes_to_every_selected_building(self):
+        for sel24 in (False, True):
+            mu = self.machine(sel24)
+            self.unit(mu, 60)                                  # 쉼
+            self.unit(mu, 61, order=0x1005, queue=2)           # 생산 중
+            self.unit(mu, 62, order=0x1006)                    # 연구 중
+            self.unit(mu, 63, order=0x1004)                    # 건설 중 (집결지 가능, 건설 중 집결지 패치)
+            self.unit(mu, 64, kind=FORGE)                      # 다른 종류
+            self.unit(mu, 65, owner=2)                         # 남의 것
+            self.unit(mu, 66, hp=0)                            # 죽음
+            self.select(mu, [60, 61, 62, 63, 64, 65, 66])
+            self.assertEqual(self.rally(mu), [60, 61, 62, 63])
+            self.assertEqual(struct.unpack('<h', bytes(mu.mem_read(SHOWN, 2)))[0], 60)   # 정보 창 유닛 그대로
+
+    def test_single_building_and_other_subcommands_unchanged(self):
+        mu = self.machine()
+        self.unit(mu, 70)
+        self.unit(mu, 71)
+        self.select(mu, [70])
+        self.assertEqual(self.rally(mu), [70])
+        self.select(mu, [70, 71], shown=70)
+        self.assertEqual(self.rally(mu, sub=1, target=5), [70])        # 공격 대상 지정 등은 정보 창 건물만
 
 
 class DoubleClickTests(Base):

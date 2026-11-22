@@ -24,6 +24,10 @@
      그 밖에는 받을 수 없음. 가장 적은 건물에 보낸다 (같으면 정보 창 유닛, 그다음 선택 순서).
      받을 건물이 없으면 원래대로 정보 창 유닛에 보낸다 (게임이 원래처럼 무시).
 
+  5) 0x447E60 머리 (6바이트) -> 여유 공간 코드: 부명령 3(집결지)이고 둘 이상 골랐으면 선택 중 같은 종류·내 것·
+     체력 > 0 건물마다 정보 창 유닛을 잠깐 그 건물로 두고 원래 함수를 불러 명령 0x400E 를 하나씩 보낸다
+     (우클릭 0x43194F, 미니맵 우클릭 0x467DA6·0x4702D6 이 이 함수를 부름). 끝나면 정보 창 유닛을 되돌린다.
+
 동기화: 보내는 쪽에서 명령 안의 건물 번호만 고르는 것이라 게임 진행 코드는 그대로다.
   상대 PC가 이 패치를 쓰지 않아도 같은 명령을 같은 결과로 실행한다.
 """
@@ -46,19 +50,28 @@ PICK_PATCHED = (bytes.fromhex("8a88") + struct.pack("<I", OWNER) +           # m
                 b"\x0f\x85" + struct.pack("<i", 0x433BDD - 0x433615))        # jne 끝
 SCAN_SITE, SCAN_ORIGINAL, SCAN_PATCHED = 0x33AD8, bytes.fromhex("7518"), bytes.fromhex("9090")
 SEND_SITE, SEND_ORIGINAL = SEND - 0x400000, bytes.fromhex("558bec83ec40")
+RALLY = 0x447E60                              # 건물 명령 0x400E 보내기 (부명령, 대상, 층, 지점) — 3 = 집결지
+RALLY_BODY = RALLY + 6
+RALLY_SITE, RALLY_ORIGINAL = RALLY - 0x400000, bytes.fromhex("558bec83ec44")
 # 정보 창 건물이 연구 등으로 바쁘면 패널이 '취소'만 보여 준다 (0x4604BB). 같은 건물 여럿을 골랐으면
 # 버튼 목록(0x460508)을 보여 줘서 쉬는 다른 건물에 맡길 수 있게 한다 (하나만 골랐을 때는 원래대로).
 PANEL_SITE = 0x6049F
 PANEL_ORIGINAL = bytes.fromhex("0fbf05d012b40069c0380100000fbf883e5a770081e10010000085c9744b")
 PANEL_PATCHED = bytes.fromhex("803d3c088000017760a1d012b4009869c038010000f6803f5a770010744b")
 
-# (VA, 크기) — 원본과 모든 패치 조합에서 0 인 .text 여유 공간 (시험이 확인)
-CHUNKS = {"entry": (0x4EBCC0, 0x40), "pick": (0x4EB9C8, 0x38), "scan": (0x4EB950, 0x30),
-          "load": (0x4EB7D0, 0x30), "load2": (0x4EB8D0, 0x30)}
+# (VA, 크기) — 원본과 모든 패치 조합에서 0 인 .text 여유 공간 조각들 (시험이 확인).
+# 남은 여유 공간이 잘게 나뉘어 있어 코드를 작은 조각으로 나누고 jmp 로 잇는다. 이름은 모든 조각에서 공통.
+CHUNKS = {
+    "entry": (0x4EB9C6, 0x3A), "pick": (0x4EBCBB, 0x45), "scan": (0x4EBC65, 0x1B), "pend": (0x4EBEF0, 0x10),
+    "load": (0x4EB94E, 0x32), "load2": (0x4EB5E6, 0x1A), "load3": (0x4EB778, 0x18),
+    "rentry": (0x4EB741, 0x1F), "rpick": (0x4EB7D0, 0x30),
+    "rscan": (0x4EBC14, 0x2C), "rsend": (0x4EB8D0, 0x30),
+}
 
 SOURCES = {
-    # 0x447CF0 대신: [esp+4] 종류, [esp+8] 유닛, [esp+0xC] 세부
+    # ---- 생산·연구: 0x447CF0 대신. [esp+4] 종류, [esp+8] 유닛, [esp+0xC] 세부
     "entry": """
+entry:
     cmp dword ptr [esp+4], 0x4008
     jne orig
     pushal
@@ -81,6 +94,7 @@ orig:
 """,
     # dl = 세부. ebx = 고른 건물, edi = 그 할 일 수, ebp = 종류, esi = 선택 목록, ecx = 남은 개수
     "pick": """
+pick:
     movsx eax, word ptr [{SHOWN}]
     test eax, eax
     je {done}
@@ -94,9 +108,9 @@ orig:
     jmp {scan}
 """,
     "scan": """
-next:
+scan:
     dec ecx
-    js end
+    js {pend}
     lodsw
     cwde
     push eax
@@ -107,88 +121,159 @@ next:
     mov ebx, dword ptr [esp]
 keep:
     pop eax
-    jmp next
-end:
+    jmp scan
+""",
+    "pend": """
+pend:
     cmp edi, 0x40
     jae out
     mov word ptr [esp+0x28], bx
 out:
     jmp {done}
 """,
-    # eax = 유닛 -> eax = 할 일 수 (0x40 이상 = 받을 수 없음). dl = 세부, bp = 종류. esi 만 쓰고 되돌림.
+    # eax = 유닛 -> eax = 할 일 수. dl = 세부, bp = 종류. esi 만 쓰고 되돌림.
+    #   0 쉼, 1..4 생산 중(1 + 예약; 세부 5만), 그 밖은 받을 수 없음:
+    #   0x40 / 0x40 + 주인*0x100 (죽음·남의 것·다른 종류, 0x1000 미만), 상태값 0x1xxx (바쁨: 생산 못 받음·연구 중 등)
     "load": """
+load:
     push esi
     imul esi, eax, 0x138
     add esi, {UNITS}
     push 0x40
     pop eax
     cmp word ptr [esi+8], 0
-    jle ret_
+    jle lret
     mov ah, byte ptr [esi+0x10]
     cmp ah, byte ptr [{ME}]
-    jne ret_
+    jne lret
     cmp word ptr [esi+0xe], bp
     je {load2}
-ret_:
+lret:
     pop esi
     ret
 """,
     "load2": """
+load2:
     movzx eax, word ptr [esi+6]
     test ah, 0x10
     je idle
     cmp dl, 5
-    jne r
+    jne l2ret
+    jmp {load3}
+idle:
+    xor eax, eax
+l2ret:
+    pop esi
+    ret
+""",
+    "load3": """
+load3:
     cmp ax, 0x1005
-    jne r
+    jne l3ret
     movsx eax, byte ptr [esi+0x52]
     inc eax
     cmp al, 5
-    jb r
+    jb l3ret
     mov al, 0x40
-    jmp r
-idle:
-    xor eax, eax
-r:
+l3ret:
     pop esi
     ret
+""",
+    # ---- 집결지: 0x447E60 대신. [esp+4] 부명령(3 = 집결지), 인자 4개. 같은 종류 건물을 여럿 골랐으면
+    #      건물마다 정보 창 유닛을 잠깐 그 건물로 두고 원래 함수를 불러 명령 0x400E 를 하나씩 보낸다.
+    "rentry": """
+rentry:
+    cmp byte ptr [esp+4], 3
+    jne rorig
+    cmp byte ptr [{SEL_COUNT}], 1
+    ja {rpick}
+rorig:
+    push ebp
+    mov ebp, esp
+    sub esp, 0x44
+    jmp {RALLY_BODY}
+""",
+    "rpick": """
+rpick:
+    pushal
+    movsx ebx, word ptr [{SHOWN}]
+    imul eax, ebx, 0x138
+    movsx ebp, word ptr [eax+{TYPE}]
+    mov esi, dword ptr [{SEL_LIST_REF}]
+    movsx edi, word ptr [{SEL_COUNT}]
+    mov dl, 6
+    jmp {rscan}
+""",
+    # load 의 값: 0 (쉼) 또는 0x1000 이상(바쁨)이면 집결지를 받는 내 같은 종류 건물
+    "rscan": """
+rscan:
+    dec edi
+    js rfin
+    lodsw
+    cwde
+    push eax
+    call {load}
+    pop ecx
+    cmp eax, 0x40
+    jb rok
+    cmp eax, 0x1000
+    jb rscan
+rok:
+    jmp {rsend}
+rfin:
+    mov word ptr [{SHOWN}], bx
+    popal
+    ret
+""",
+    "rsend": """
+rsend:
+    mov word ptr [{SHOWN}], cx
+    push dword ptr [esp+0x30]
+    push dword ptr [esp+0x30]
+    push dword ptr [esp+0x30]
+    push dword ptr [esp+0x30]
+    call {rorig}
+    add esp, 0x10
+    mov dl, 6
+    jmp {rscan}
 """,
 }
 
 # 미리 조립한 코드 (assemble() 과 같아야 함 — 시험이 확인)
 CODE = {
-    "entry": bytes.fromhex("817c240408400000751a608a54242c80fa05740a80fa06740580fa0a7505e9e5fcffff615589e583ec40e907c0f5ff"),
-    "pick": bytes.fromhex("0fbf05d012b40085c00f840c03000089c369e8380100000fbfad465a7700e8e5fdffff89c78b356e3643000fbf0d3c088000e951ffffff"),
-    "scan": bytes.fromhex("49781466ad9850e874feffff39f87304978b1c2458ebe983ff40730566895c2428e96d030000"),
-    "load": bytes.fromhex("5669f03801000081c6385a77006a405866837e08007e158a66103a25cc12b400750a66396e0e0f84d40000005ec3"),
-    "load2": bytes.fromhex("0fb74606f6c410741880fa057515663d0510750f0fbe4652403c057206b040eb0231c05ec3"),
+    "entry": bytes.fromhex("817c240408400000751a608a54242c80fa05740a80fa06740580fa0a7505e9d2020000615589e583ec40e901c3f5ff"),
+    "pick": bytes.fromhex("0fbf05d012b40085c00f841ffdffff89c369e8380100000fbfad465a7700e870fcffff89c78b356e3643000fbf0d3c088000e973ffffff"),
+    "scan": bytes.fromhex("490f888402000066ad9850e8d9fcffff39f87304978b1c2458ebe5"),
+    "pend": bytes.fromhex("83ff40730566895c2428e9eafaffff"),
+    "load": bytes.fromhex("5669f03801000081c6385a77006a405866837e08007e158a66103a25cc12b400750a66396e0e0f846cfcffff5ec3"),
+    "load2": bytes.fromhex("0fb74606f6c410740a80fa057507e97f01000031c05ec3"),
+    "load3": bytes.fromhex("663d0510750b0fbe4652403c057202b0405ec3"),
+    "rentry": bytes.fromhex("807c2404037509803d3c08800001777f5589e583ec44e90ac7f5ff"),
+    "rpick": bytes.fromhex("600fbf1dd012b40069c3380100000fbfa8465a77008b356e3643000fbf3d3c088000b206e91b040000"),
+    "rscan": bytes.fromhex("4f781b66ad9850e82efdffff5983f84072073d0010000072e7e99efcffff66891dd012b40061c3"),
+    "rsend": bytes.fromhex("66890dd012b400ff742430ff742430ff742430ff742430e865feffff83c410b206e91e030000"),
 }
 
 
-def _labels():
-    return {"done": 0, **{k: v[0] for k, v in CHUNKS.items() if k != "entry"}}
-
-
 def assemble() -> dict:
-    """keystone 으로 다섯 조각을 조립 (조각 사이 주소가 서로 맞을 때까지 반복)."""
+    """keystone 으로 조각들을 조립. 이름(줄 첫머리 'x:')은 모든 조각에서 공통이고, 다른 조각의 이름은
+    {x} 로 적어 주소로 바꾼다. 조각 사이 주소가 서로 맞을 때까지 반복."""
+    import re
     from keystone import Ks, KS_ARCH_X86, KS_MODE_32
     ks = Ks(KS_ARCH_X86, KS_MODE_32)
-    consts = dict(SEND_BODY=hex(SEND_BODY), SHOWN=hex(SHOWN), SEL_LIST_REF=hex(SEL_LIST_REF), SEL_COUNT=hex(SEL_COUNT),
-                  TYPE=hex(TYPE), ME=hex(ME), UNITS=hex(UNITS))
-    owner = {"done": "entry"}   # 다른 조각에서 부르는, 조각 안의 이름
-    labels = _labels()
-    for _ in range(5):
+    consts = dict(SEND_BODY=hex(SEND_BODY), RALLY_BODY=hex(RALLY_BODY), SHOWN=hex(SHOWN), SEL_LIST_REF=hex(SEL_LIST_REF),
+                  SEL_COUNT=hex(SEL_COUNT), TYPE=hex(TYPE), ME=hex(ME), UNITS=hex(UNITS))
+    defined = {name: re.findall(r"^(\w+):", src, re.M) for name, src in SOURCES.items()}
+    labels = {lab: CHUNKS[name][0] for name, labs in defined.items() for lab in labs}
+    for _ in range(6):
         code, found = {}, {}
         for name, src in SOURCES.items():
             va = CHUNKS[name][0]
-            text = src.format(**consts, **{k: hex(v or va) for k, v in labels.items()})
-            # 이 조각에서 정의한 이름은 keystone 이 직접 풀도록 바깥 이름 목록에서 뺌
-            local = {k for k, c in owner.items() if c == name}
-            text = src.format(**consts, **{k: (k if k in local else hex(v or va)) for k, v in labels.items()})
+            text = src.format(**consts, **{k: (k if k in defined[name] else hex(v)) for k, v in labels.items()})
             code[name] = bytes(ks.asm(text, addr=va)[0])
-            for label in local:                          # 이 조각 안의 이름 위치 (끝에 붙인 .long 값)
-                tail = bytes(ks.asm(text + f"\n.long {label}", addr=va)[0])[-4:]
-                found[label] = struct.unpack("<I", tail)[0]
+            for lab in defined[name]:                    # 이 조각 안의 이름 위치 (끝에 붙인 .long 값)
+                tail = bytes(ks.asm(text + f"\n.long {lab}", addr=va)[0])[-4:]
+                found[lab] = struct.unpack("<I", tail)[0]
         if all(labels[k] == found[k] for k in found):
             return code
         labels.update(found)
@@ -196,9 +281,11 @@ def assemble() -> dict:
 
 
 def _sites():
-    jump = (b"\xe9" + struct.pack("<i", CHUNKS["entry"][0] - (SEND + 5))).ljust(len(SEND_ORIGINAL), b"\x90")
+    send_jump = (b"\xe9" + struct.pack("<i", CHUNKS["entry"][0] - (SEND + 5))).ljust(len(SEND_ORIGINAL), b"\x90")
+    rally_jump = (b"\xe9" + struct.pack("<i", CHUNKS["rentry"][0] - (RALLY + 5))).ljust(len(RALLY_ORIGINAL), b"\x90")
     sites = [(PICK_SITE, PICK_ORIGINAL, PICK_PATCHED), (SCAN_SITE, SCAN_ORIGINAL, SCAN_PATCHED),
-             (SEND_SITE, SEND_ORIGINAL, jump), (PANEL_SITE, PANEL_ORIGINAL, PANEL_PATCHED)]
+             (SEND_SITE, SEND_ORIGINAL, send_jump), (PANEL_SITE, PANEL_ORIGINAL, PANEL_PATCHED),
+             (RALLY_SITE, RALLY_ORIGINAL, rally_jump)]
     for k, (va, size) in CHUNKS.items():
         assert len(CODE[k]) <= size, (k, len(CODE[k]), size)
         sites.append((va - 0x400000, bytes(size), CODE[k].ljust(size, b"\x90")))
