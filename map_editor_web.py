@@ -3,6 +3,7 @@
 - 에디터(HTML + 타일 아틀라스)를 로컬 HTTP 서버(127.0.0.1:47231)로 띄우고 브라우저로 연다.
 - 서버는 map_editor_web/editor 의 server.ps1 과 같은 API 를 제공한다:
     GET /api/ping, GET /api/maps, GET|PUT /api/map?name=<Data\\Maps 기준 상대경로>.rkm
+    GET|PUT /api/templates  (타일 직접 배치 즐겨찾기 템플릿, JSON 목록)
   저장 시 기존 파일은 .bak 으로 백업한다.
 - 상하대칭 언덕 입구 타일 모드(Data\\tile\\*.jtl / *_Bridge.brg) 설치·제거.
   게임은 Data\\tile 의 개별 파일을 FDB 보다 먼저 읽으므로 원본 FDB 는 건드리지 않는다.
@@ -51,7 +52,36 @@ def safe_map_path(maps_dir: Path, rel: str | None) -> Path | None:
     return full
 
 
-def _make_handler(root: Path, maps_dir: Path):
+TEMPLATES_FILE = 'map_editor_templates.json'
+TEMPLATES_MAX_BYTES = 2_000_000
+_TEMPLATES_LOCK = threading.Lock()
+
+
+def templates_path() -> Path:
+    """즐겨찾기 템플릿 저장 위치: %LOCALAPPDATA%\\RhakMu (런처 설정과 같은 곳)."""
+    root = os.environ.get('LOCALAPPDATA') or str(Path.home())
+    return Path(root) / 'RhakMu' / TEMPLATES_FILE
+
+
+def valid_templates(data) -> bool:
+    if not isinstance(data, list) or len(data) > 500:
+        return False
+    for t in data:
+        if not isinstance(t, dict):
+            return False
+        n, cells = t.get('n'), t.get('cells')
+        if not isinstance(n, int) or not 1 <= n <= 8 or not isinstance(cells, list) or len(cells) != n * n:
+            return False
+        for c in cells:
+            if c is not None and not (isinstance(c, list) and len(c) == 4
+                                      and all(isinstance(v, int) and 0 <= v <= 0xFFFF for v in c)):
+                return False
+    return True
+
+
+def _make_handler(root: Path, maps_dir: Path, tpl_path: Path | None = None):
+    tpl_path = tpl_path or templates_path()
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):  # 콘솔 없는 런처에서 stderr 출력 방지
             pass
@@ -87,6 +117,12 @@ def _make_handler(root: Path, maps_dir: Path):
                             items.append({'name': str(f.relative_to(maps_dir)).replace('/', '\\'),
                                           'size': st.st_size, 'mtime': int(st.st_mtime * 1000)})
                 return self._json({'folder': str(maps_dir), 'maps': items})
+            if path == '/api/templates':
+                try:
+                    data = json.loads(tpl_path.read_text(encoding='utf-8'))
+                except (OSError, ValueError):
+                    data = []
+                return self._json(data if valid_templates(data) else [])
             if path == '/api/map':
                 full = safe_map_path(maps_dir, self._name())
                 if full is None:
@@ -109,6 +145,22 @@ def _make_handler(root: Path, maps_dir: Path):
         do_HEAD = do_GET
 
         def do_PUT(self):
+            if unquote(urlparse(self.path).path) == '/api/templates':
+                n = int(self.headers.get('Content-Length') or 0)
+                if n <= 0 or n > TEMPLATES_MAX_BYTES:
+                    return self._send(400, 'bad size')
+                try:
+                    data = json.loads(self.rfile.read(n).decode('utf-8'))
+                except ValueError:
+                    return self._send(400, 'bad json')
+                if not valid_templates(data):
+                    return self._send(400, 'bad templates')
+                with _TEMPLATES_LOCK:   # 요청은 스레드마다 처리된다: 쓰기는 하나씩, 임시 파일은 따로
+                    tpl_path.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = tpl_path.with_name(f'{tpl_path.name}.{threading.get_ident()}.tmp')
+                    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+                    os.replace(tmp, tpl_path)
+                return self._json({'ok': True, 'count': len(data)})
             if unquote(urlparse(self.path).path) != '/api/map':
                 return self._send(404, 'not found')
             full = safe_map_path(maps_dir, self._name())
@@ -134,8 +186,9 @@ def _make_handler(root: Path, maps_dir: Path):
 class EditorServer:
     """런처 프로세스 안에서 도는 에디터용 로컬 웹 서버 (daemon 스레드)."""
 
-    def __init__(self, resource_dir, port: int = PORT):
+    def __init__(self, resource_dir, port: int = PORT, templates: Path | None = None):
         self.root = editor_dir(resource_dir)
+        self.templates = templates
         self.port = port
         self.httpd: ThreadingHTTPServer | None = None
         self.maps_dir: Path | None = None
@@ -155,7 +208,7 @@ class EditorServer:
         self.stop()
         if not (self.root / EDITOR_PAGE).is_file():
             raise FileNotFoundError(f'에디터 파일이 없습니다: {self.root / EDITOR_PAGE}')
-        self.httpd = ThreadingHTTPServer(('127.0.0.1', self.port), _make_handler(self.root, maps))
+        self.httpd = ThreadingHTTPServer(('127.0.0.1', self.port), _make_handler(self.root, maps, self.templates))
         self.httpd.daemon_threads = True
         self.maps_dir = maps
         self.thread = threading.Thread(target=self.httpd.serve_forever, name='map-editor-http', daemon=True)
