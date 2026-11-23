@@ -85,6 +85,8 @@ git clone https://github.com/japanoxx-afk/rtsarena.git
 특히 `20261122_052001_[4](N4)_Fighting_Spirit.rkr`(넓은 검사값, v0.9082 로 끝까지 같음), `20261122_022438_[4](N4)_Fighting_Spirit1.1.rkr`, `20261121_205441_[4](N4)_Fighting_Spirit.rkr`.
 
 ## 4. 기타 진행 중·참고
+- **v0.9095 맵 에디터**: 기본 보기 = 게임 보기(셀 격자 똑바로), 찍기 블록 = 셀 격자 방향 사각형 (사용자 요청 "타일찍기 기준을 셀격자로").
+  정사각형 보기는 버튼으로. `map_editor_web/README.md` "보기와 찍기 블록".
 - **v0.9094**: 맵 에디터 정사각형(평면) 보기 (`map_editor_web/README.md`), 리플레이 목록이 깨진 파일 하나로 비던 문제
   (`replay_model.READ_ERRORS` — zlib.error 를 따로 잡아야 함; 기록 파일은 `MatchWriter` 가 배타 생성 `xt`, 겹치면 `_2`),
   여러 건물 선택 때 집결지 깃발 (`production_split_patch.FLAG_SITE` 0x4D34E3 jne→jl, 그리기 0x4D34D0 은 선택 수 1 일 때만 그렸음).
