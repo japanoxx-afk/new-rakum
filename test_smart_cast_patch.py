@@ -15,7 +15,7 @@ from test_production_split_patch import _emulator, EXE, UNITS, UNIT_SIZE, SHOWN,
 SENTINEL = SCRATCH + 0x9000
 BUF = SCRATCH + 0x200
 MAGE, OTHER = 0x31, 0x32
-SPELL, INSTANT = 0x2025, 0x2021          # 명령 표: 0x25 는 대상 고르기 함수가 있고 0x21 은 없다
+SPELL, INSTANT, TOGGLE = 0x2025, 0x2021, 0x2022     # 대상을 찍는 마법, 누르자마자 쓰는 마법, 마나가 들지 않는 것
 SLOT, COST = 2, 50
 POINT = (100 * 32) | ((80 * 32) << 16)    # 찍은 지점 (칸 100, 80 의 픽셀)
 
@@ -31,7 +31,8 @@ class Base(unittest.TestCase):
 class PatchTests(Base):
     def test_code_matches_source(self):
         try:
-            self.assertEqual(sc.assemble(), sc.CODE)
+            self.assertEqual(sc.assemble(), (sc.CODE, sc.CODE2))
+            self.assertLessEqual(len(sc.CODE), sc.CODE2_OFFSET)
         except ImportError as e:
             self.skipTest(str(e))
 
@@ -41,13 +42,33 @@ class PatchTests(Base):
             built = minimap_patch.build(self.original, *args)
             self.assertTrue(sc.state(built))
             under = sc.strip(built)
+            self.assertTrue(sc.current(built))
             self.assertFalse(sc.state(under))
-            self.assertEqual(under[sc.SITE:sc.SITE + 6], sc.SITE_ORIGINAL)
+            for site in (sc.SITE, sc.SITE2):
+                self.assertEqual(under[site:site + 6], sc.SITE_ORIGINAL)
+                self.assertEqual(self.original[site:site + 6], sc.SITE_ORIGINAL)
             self.assertEqual(hotkey_patch.state(under), keys)                 # 그 아래 섹션들은 그대로
             self.assertEqual(sc.apply(under, True), built)
             self.assertEqual(sc.apply(built, False), under)
             self.assertEqual(minimap_patch.build(built, *args), built)
             self.assertEqual(minimap_patch.underlying(built), minimap_patch.underlying(under))
+
+    def test_upgrades_from_the_v0_9096_test_build(self):
+        """v0.9096 시험판이 설치해 둔 상태(자리 하나, 예전 코드)를 알아보고 지금 판으로 바꾼다."""
+        import struct as st
+        built = minimap_patch.build(self.original, False)
+        under = sc.strip(built)
+        self.assertEqual(len(sc.LEGACY), 1)
+        for code, used in sc.LEGACY:
+            old = bytearray(built)
+            va = st.unpack_from('<I', built, sc._layout(built)[6][-1][5] + 12)[0]
+            old[-sc.SECTION_SIZE:] = code.ljust(sc.SECTION_SIZE, bytes(1))
+            for k, (site, original, offset) in enumerate(sc.SITES):
+                old[site:site + 6] = sc._jump(site, va, offset) if k in used else original
+            self.assertTrue(sc.state(old))
+            self.assertFalse(sc.current(old))
+            self.assertEqual(sc.strip(old), under)
+            self.assertEqual(minimap_patch.build(bytes(old), False), built)
 
     def test_unknown_state_is_rejected(self):
         built = bytearray(minimap_patch.build(self.original, False))
@@ -74,8 +95,9 @@ class CastTests(Base):
         mu.mem_write(record + 0x42, struct.pack('<h', SLOT))
         for order in (SPELL, INSTANT):
             mu.mem_write(sc.MAGIC_TABLE + (order - 0x2020) * 0x14, struct.pack('<I', record))
-        self.assertNotEqual(struct.unpack('<I', bytes(mu.mem_read(sc.ORDER_TABLE + (SPELL & 0xFF) * 0x14, 4)))[0], 0)
-        self.assertEqual(struct.unpack('<I', bytes(mu.mem_read(sc.ORDER_TABLE + (INSTANT & 0xFF) * 0x14, 4)))[0], 0)
+        free = SCRATCH + 0x500                                               # 마나가 들지 않는 것 (변신 등)
+        mu.mem_write(free + 0x42, struct.pack('<h', SLOT))
+        mu.mem_write(sc.MAGIC_TABLE + (TOGGLE - 0x2020) * 0x14, struct.pack('<I', free))
         self.sent = []
         mu.hook_add(UC_HOOK_CODE, lambda uc, a, s, _: self.sent.append(self.packet(uc)), begin=SEND, end=SEND)
         return mu
@@ -88,6 +110,8 @@ class CastTests(Base):
             return ('select', list(struct.unpack(f'<{body[4]}H', body[5:5 + 2 * body[4]])))
         if kind == 0x4009:
             return ('order',) + struct.unpack('<HhBI', body[4:13])
+        if size == 5:
+            return ('instant', kind, body[4])
         return (hex(kind), body)
 
     def unit(self, mu, n, kind=MAGE, mana=100, cell=(0, 0), order=2, hp=100, building=0):
@@ -154,7 +178,6 @@ class CastTests(Base):
         for n in (30, 31, 32):
             self.unit(mu, n, cell=(n, n))
         self.select(mu, [30, 31, 32])
-        self.assertEqual(self.cast(mu, order=INSTANT), [self.order_packet(order=INSTANT)])     # 누르자마자 쓰는 마법
         for order in (0x2001, 0x2003, 0x2007, 0x2011, 0x2061, 0x206B):                         # 공격·이동 등, 건물 마법
             self.assertEqual(self.cast(mu, order=order), [self.order_packet(order=order)], hex(order))
         self.select(mu, [30])                                                                  # 하나만 골랐을 때
@@ -167,6 +190,57 @@ class CastTests(Base):
         mu.mem_write(sc.MAGIC_TABLE + (SPELL - 0x2020) * 0x14, bytes(4))                       # 마법 자료 없음
         self.unit(mu, 30)
         self.assertEqual(self.cast(mu), [self.order_packet()])
+
+    def press(self, mu, command=0x400D, number=INSTANT - 0x2020):
+        """누르자마자 쓰는 마법 버튼: 0x447E10(명령, 마법 번호)."""
+        from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_EBX, UC_X86_REG_ESI, UC_X86_REG_EDI, UC_X86_REG_EBP
+        self.sent.clear()
+        esp = SCRATCH + 0x8000
+        mu.mem_write(esp, struct.pack('<III', SENTINEL, command, number))
+        saved = {r: 0x2000 + r for r in (UC_X86_REG_EBX, UC_X86_REG_ESI, UC_X86_REG_EDI, UC_X86_REG_EBP)}
+        for r, v in saved.items():
+            mu.reg_write(r, v)
+        mu.reg_write(UC_X86_REG_ESP, esp)
+        mu.emu_start(sc.SITE2_VA, SENTINEL, count=100000)
+        self.assertEqual(mu.reg_read(UC_X86_REG_ESP), esp + 4)
+        for r, v in saved.items():
+            self.assertEqual(mu.reg_read(r), v)
+        return list(self.sent)
+
+    def test_instant_spell_goes_to_the_caster_with_most_mana(self):
+        k = INSTANT - 0x2020
+        for sel24 in (False, True):
+            mu = self.machine(sel24)
+            self.unit(mu, 50, mana=120)
+            self.unit(mu, 51, mana=200)
+            self.unit(mu, 52, mana=160)
+            self.unit(mu, 53, mana=999, kind=OTHER)                           # 다른 종류는 빼고
+            self.unit(mu, 54, mana=999, hp=0)                                 # 죽은 유닛도
+            ids = [50, 51, 52, 53, 54]
+            self.select(mu, ids)
+            self.assertEqual(self.press(mu), [('select', [51]), ('instant', 0x400D, k), ('select', ids)])
+            self.unit(mu, 51, mana=200 - COST)                                # 쓰고 나면 마나가 줄어 다음 유닛 차례
+            self.assertEqual(self.press(mu)[0], ('select', [52]))
+            self.unit(mu, 52, mana=160 - COST)
+            self.assertEqual(self.press(mu)[0], ('select', [51]))
+            for n in (50, 51, 52):
+                self.unit(mu, n, mana=COST - 1)                               # 쓸 유닛이 없으면 원래대로
+            self.assertEqual(self.press(mu), [('instant', 0x400D, k)])
+
+    def test_free_abilities_and_other_commands_go_to_everyone(self):
+        mu = self.machine()
+        for n in (60, 61, 62):
+            self.unit(mu, n)
+        self.select(mu, [60, 61, 62])
+        self.assertEqual(self.press(mu, number=TOGGLE - 0x2020), [('instant', 0x400D, TOGGLE - 0x2020)])   # 마나 0: 모두에게
+        self.assertEqual(self.press(mu, number=0x41), [('instant', 0x400D, 0x41)])                         # 건물 마법
+        self.assertEqual(self.press(mu, number=0), [('instant', 0x400D, 0)])
+        for command in (0x400C, 0x4006, 0x4011):                                                           # 같은 함수로 보내는 다른 명령
+            self.assertEqual(self.press(mu, command=command), [('instant', command, INSTANT - 0x2020)])
+        self.select(mu, [60])                                                                              # 하나만 골랐을 때
+        self.assertEqual(self.press(mu), [('instant', 0x400D, INSTANT - 0x2020)])
+        self.select(mu, [60, 61, 62], shown=0)
+        self.assertEqual(self.press(mu), [('instant', 0x400D, INSTANT - 0x2020)])
 
     def test_unpatched_game_sends_one_order(self):
         """원본 0x447D60 은 명령 하나만 보낸다 (비교 기준)."""

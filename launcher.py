@@ -68,7 +68,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9096"
+APP_VERSION = "0.9097"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1712,7 +1712,7 @@ class App(tk.Tk):
                               rally_spawn, wide_checks)
         self.cfg['command_cadence_99ms'] = False
         installed = exe.read_bytes()
-        if not smart_cast_patch.state(installed):
+        if not smart_cast_patch.current(installed):
             raise RuntimeError('마법 순차 시전 패치 검증 실패. 게임을 실행하지 않았습니다.')
         installed = smart_cast_patch.strip(installed)           # 맨 뒤 섹션(.scast) 아래를 차례로 확인
         if hotkey_patch.state(installed) != hotkeys:
