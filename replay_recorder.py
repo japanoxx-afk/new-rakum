@@ -58,8 +58,19 @@ class MatchWriter:
     """한 경기의 장면을 파일에 이어 쓴다."""
 
     def __init__(self, path: Path, header: dict):
-        self.path = path
-        self.f = gzip.open(path, "wt", encoding="utf-8", compresslevel=6)
+        # 다른 런처가 같은 경기를 같은 이름으로 쓰고 있으면 (런처를 두 개 켠 경우) 한 파일에 섞여 깨진다:
+        # 이미 있는 이름은 쓰지 않고 _2, _3 … 을 붙인 새 파일에 쓴다.
+        path = Path(path)
+        for n in range(1, 100):
+            candidate = path if n == 1 else path.with_name(f"{path.stem}_{n}{path.suffix}")
+            try:
+                self.f = gzip.open(candidate, "xt", encoding="utf-8", compresslevel=6)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise FileExistsError(str(path))
+        self.path = path = candidate
         self.f.write(json.dumps(header, ensure_ascii=False, separators=(",", ":")) + "\n")
         self.last_units: dict = {}
         self.last_key = -1e9

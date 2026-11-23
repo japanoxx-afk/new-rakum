@@ -60,7 +60,7 @@ class PatchFileTests(Base):
         """v0.9086 (시험판·배포판)이 설치해 둔 게임 파일을 걷어내고 지금 판으로 바꾼다.
         (v0.9087 은 이 상태를 몰라 '코드 충돌' 로 게임 실행이 막혔다.)"""
         fresh = ps.transform(self.original, True)
-        self.assertEqual(len(ps.LEGACY_SITES), 2)
+        self.assertEqual(len(ps.LEGACY_SITES), 3)                 # v0.9086 시험판, v0.9086, v0.9087~v0.9093
         for sites in ps.LEGACY_SITES:
             old = bytearray(self.original)
             for offset, original, patched in sites:
@@ -74,6 +74,28 @@ class PatchFileTests(Base):
         bad[ps.SCAN_SITE + 2] ^= 1
         with self.assertRaises(ValueError):
             ps.state(bad)
+
+    def test_rally_flag_is_drawn_for_several_selected_buildings(self):
+        """집결지 깃발 그리기(0x4D34D0) 머리: 원래는 고른 것이 하나일 때만 다음 검사로 넘어간다.
+        패치하면 여러 개여도 넘어간다 (0 개는 여전히 끝으로). 게임 코드 그대로 실행."""
+        try:
+            from unicorn import Uc, UC_ARCH_X86, UC_MODE_32
+            from unicorn.x86_const import UC_X86_REG_EIP
+        except ImportError:
+            self.skipTest("unicorn 없음")
+        patched = ps.transform(self.original, True)
+        self.assertEqual(patched[ps.FLAG_SITE:ps.FLAG_SITE + 6], ps.FLAG_PATCHED)
+        NEXT, END = 0x4D34E9, 0x4D377E
+        for image, expect in ((self.original, {0: END, 1: NEXT, 2: END, 12: END}),
+                              (patched, {0: END, 1: NEXT, 2: NEXT, 12: NEXT, 24: NEXT})):
+            for count, want in expect.items():
+                mu = Uc(UC_ARCH_X86, UC_MODE_32)
+                mu.mem_map(0x400000, 0x200000)
+                mu.mem_write(0x400000, bytes(image[:0x200000]))
+                mu.mem_map(0x800000, 0x1000)
+                mu.mem_write(SEL_COUNT, struct.pack("<H", count))
+                mu.emu_start(0x4D34D9, 0, count=3)              # movsx eax,[count]; cmp eax,1; jcc
+                self.assertEqual(mu.reg_read(UC_X86_REG_EIP), want, (image is patched, count))
 
     def test_caves_are_free_in_original(self):
         caves = [(va - 0x400000, size) for va, size in ps.CHUNKS.values()] + [(ps.VOICE_CAVE - 0x400000, len(ps.VOICE_CODE))]

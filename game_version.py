@@ -8,6 +8,14 @@
 확인 방법: 설치된 Rhakmu.exe 를 런처의 패치 과정으로 '패치 없는 상태'로 되돌려 만든 결과가
 원본 1.000d 로 만든 결과와 같은지 본다 (런처가 이미 패치한 파일도 1.000d 로 인정).
 다르거나 되돌릴 수 없으면 기존 파일을 백업하고 런처에 포함된 원본 1.000d 로 바꾼다.
+
+공식 패치 Patch1003.exe (2003-04-11, 게임을 새로 설치한 뒤 따로 깔아야 했던 것) 가 하는 일은 이것뿐이다
+(설치 파일을 풀어 확인 — 'IFFH' 묶음: [dword 원래 크기][dword 압축 크기][crc][시각][ff*8][이름 길이][이름][deflate]):
+  1. Rhakmu.exe  -> 1.000d (sha256 1982c777… = 런처에 든 것과 같은 파일)
+  2. Rhakmu.000  -> Rhakmu.exe 의 디버그 정보(PDB). 게임 실행·대전과 무관해서 런처는 넣지 않는다.
+  3. +패치 내용+.txt (안내문)
+  4. 레지스트리 HKLM/SOFTWARE/TriggerSoft/RhakMu 의 GameVer = 1003 (TriggerSoft 실행기의 업데이트 확인용)
+그래서 런처가 1 과 4 를 해 주면 Patch1003.exe 를 깔지 않은 새 설치본도 같은 상태가 된다 (apply_official_patch).
 """
 from __future__ import annotations
 
@@ -19,6 +27,8 @@ from pathlib import Path
 
 ORIGINAL_SHA256 = "1982c777f14ef8b2a422769585f81d04d169bcbeb33f2a2afe67c343e9bcbc9a"
 ORIGINAL_SIZE = 1069098
+OFFICIAL_VERSION = 1003               # Patch1003 = 1.000d
+REGISTRY_KEY = r"SOFTWARE\TriggerSoft\RhakMu"
 BUNDLED_DIR = "game_1000d"            # PyInstaller datas 안의 폴더 (spec 참고)
 
 
@@ -79,4 +89,45 @@ def ensure(path) -> str:
     if path.read_bytes() != original:
         raise ValueError("Rhakmu.exe 1.000d 교체 후 검증 실패 (백업: %s)" % backup.name)
     return ("Rhakmu.exe 가 1.000d 가 아니어서 런처에 포함된 1.000d 로 바꿨습니다.\n"
-            "(다른 PC와 게임 버전이 달라 방 입장이 거절되는 문제 방지)\n기존 파일 백업: %s" % backup.name)
+            "(공식 패치 Patch1003.exe 와 같은 파일입니다. 패치를 따로 설치하지 않아도 됩니다.)\n"
+            "기존 파일 백업: %s" % backup.name)
+
+
+def ensure_registry(winreg=None) -> bool:
+    """레지스트리 GameVer 를 Patch1003 과 같이 1003 으로. 바꿨으면 True.
+    게임 설치 정보(키·값)가 없으면 만들지 않는다. 값 종류(숫자/문자열)는 설치본이 쓰던 그대로 둔다."""
+    if winreg is None:
+        try:
+            import winreg
+        except ImportError:
+            return False
+    access = winreg.KEY_READ | winreg.KEY_WRITE | getattr(winreg, "KEY_WOW64_32KEY", 0)   # 32비트 게임의 키
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, REGISTRY_KEY, 0, access) as key:
+            try:
+                value, kind = winreg.QueryValueEx(key, "GameVer")
+            except OSError:
+                return False
+            if kind == winreg.REG_DWORD:
+                want = OFFICIAL_VERSION
+            elif kind == winreg.REG_SZ:
+                want = str(OFFICIAL_VERSION)
+            else:
+                return False
+            if value == want:
+                return False
+            winreg.SetValueEx(key, "GameVer", 0, kind, want)
+            return True
+    except OSError:
+        return False
+
+
+def apply_official_patch(game_dir, winreg=None) -> str:
+    """Patch1003.exe 를 깔지 않은 설치본도 같은 상태로: Rhakmu.exe 1.000d + 레지스트리 GameVer.
+    Rhakmu.exe 를 바꿨으면 안내문, 아니면 ''. Rhakmu.exe 가 없으면 아무것도 하지 않는다."""
+    exe = Path(game_dir) / "Rhakmu.exe"
+    if not exe.is_file():
+        return ""
+    note = ensure(exe)
+    ensure_registry(winreg)
+    return note

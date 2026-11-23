@@ -93,6 +93,7 @@ table.grid input[type=number]{width:64px}
     <button id="bZoomOut" title="축소 (-)">－</button>
     <span id="zoomLbl" style="min-width:44px;text-align:center">50%</span>
     <button id="bZoomIn" title="확대 (+)">＋</button>
+    <button id="bFlat" class="on" title="정사각형 보기: 마름모 타일을 45° 돌려 정사각형 바둑판으로 봅니다. 끄면 게임 화면과 같은 마름모 보기">정사각형 보기</button>
     <button id="bGrid" title="타일 격자 (G)">격자</button>
     <button id="bCellGrid" title="셀(32px) 격자">셀 격자</button>
     <button id="bMarks" title="섹션7 표식 표시">기타 표식</button>
@@ -940,7 +941,7 @@ table.grid input[type=number]{width:64px}
   const S = {
     map: null, name: 'New Map', fileHandle: null, dirHandle: null, dirty: false,
     tool: 'brush', brush: 1, brushSize: 3, shape: 'circle', shapeDrag: null, tileSel: 10, tileSize: 1, pattern: null, stampOrigin: null, templates: [], startSel: 0, decoSel: 0, subSel: 0, res: 'gold',
-    cam: { x: 0, y: 0, z: 0.5 }, grid: false, cellGrid: false, marks: false,
+    cam: { x: 0, y: 0, z: 0.5 }, flat: true, grid: false, cellGrid: false, marks: false,
     hover: null, sel: null, drag: null, painting: false,
     gfx: { fdb: null, idx: null, tilesets: {} },   // tilesets[ts] = {img:[], avg:[]}
     undo: [], redo: [], act: null,
@@ -1241,8 +1242,28 @@ table.grid input[type=number]{width:64px}
 
   // -------------------------------------------------------------- geometry
   function worldSize() { const m = S.map; return { w: m.cw * 256, h: m.ch * 64 }; }
-  function s2w(sx, sy) { return { x: (sx - cv.width / 2) / S.cam.z + S.cam.x, y: (sy - cv.height / 2) / S.cam.z + S.cam.y }; }
-  function w2s(wx, wy) { return { x: (wx - S.cam.x) * S.cam.z + cv.width / 2, y: (wy - S.cam.y) * S.cam.z + cv.height / 2 }; }
+  // 보기 방식. 평면(정사각형) 보기: 타일 모서리 방향(p, q)을 화면 가로·세로로 돌려 마름모 타일이 정사각형으로 보인다.
+  //   x' = wx/2 + wy,  y' = wy - wx/2   (256×128 마름모 -> 128×128 정사각형, 넓이 그대로). 게임 보기: 그대로.
+  // 맵 자료·월드 좌표는 그대로이고 화면에 그릴 때와 마우스 위치를 읽을 때만 이 변환을 쓴다.
+  function vm() { return S.flat ? [0.5, -0.5, 1, 1] : [1, 0, 0, 1]; }      // canvas 행렬 (a, b, c, d)
+  function vApply(x, y) { const [a, b, c, d] = vm(); return [a * x + c * y, b * x + d * y]; }
+  function vInv(x, y) { const [a, b, c, d] = vm(), det = a * d - b * c; return [(d * x - c * y) / det, (a * y - b * x) / det]; }
+  function s2w(sx, sy) { const [x, y] = vInv((sx - cv.width / 2) / S.cam.z, (sy - cv.height / 2) / S.cam.z); return { x: x + S.cam.x, y: y + S.cam.y }; }
+  function w2s(wx, wy) { const [x, y] = vApply(wx - S.cam.x, wy - S.cam.y); return { x: x * S.cam.z + cv.width / 2, y: y * S.cam.z + cv.height / 2 }; }
+  // 화면 네 귀퉁이의 월드 좌표와 그것을 둘러싼 상자
+  function viewBounds() {
+    const pts = [s2w(0, 0), s2w(cv.width, 0), s2w(cv.width, cv.height), s2w(0, cv.height)];
+    return { pts, x0: Math.min(...pts.map(p => p.x)), y0: Math.min(...pts.map(p => p.y)), x1: Math.max(...pts.map(p => p.x)), y1: Math.max(...pts.map(p => p.y)) };
+  }
+  // 평면 보기에서 그림·글자를 눕히지 않고 (wx, wy) 를 축으로 똑바로 그린다 (게임 보기에서는 그대로 그림)
+  function upright(c, wx, wy, fn) {
+    if (!S.flat) { fn(); return; }
+    const t = c.getTransform(), k = Math.sqrt(Math.abs(t.a * t.d - t.b * t.c));
+    c.save(); c.setTransform(k, 0, 0, k, t.a * wx + t.c * wy + t.e - wx * k, t.b * wx + t.d * wy + t.f - wy * k); fn(); c.restore();
+  }
+  // 똑바로 그린 것(축 ax, ay)을 마우스(월드 wx, wy)로 고를 때: 그 그림의 좌표로 바꾼 마우스 위치
+  function uprightPoint(ax, ay, wx, wy) { if (!S.flat) return [wx, wy]; const [dx, dy] = vApply(wx - ax, wy - ay); return [ax + dx, ay + dy]; }
+  function stands(o) { return o.kind !== R.KIND.SUB; }       // 언덕 입구·다리는 지형이라 타일과 같이 눕혀 그린다
   function tileAt(wx, wy) {
     const m = S.map, y0 = Math.floor(wy / 64);
     let best = null, bd = 9;
@@ -1280,9 +1301,10 @@ table.grid input[type=number]{width:64px}
     const m = S.map; if (!m) return;
     const z = S.cam.z, set = S.gfx.tilesets[m.tileset];
     $('zoomLbl').textContent = Math.round(z * 100) + '%';
-    ctx.setTransform(z, 0, 0, z, cv.width / 2 - S.cam.x * z, cv.height / 2 - S.cam.y * z);
-    ctx.imageSmoothingEnabled = z < 1;
-    const tl = s2w(0, 0), br = s2w(cv.width, cv.height);
+    const [va, vb, vc, vd] = vm();
+    ctx.setTransform(z * va, z * vb, z * vc, z * vd, cv.width / 2 - z * (va * S.cam.x + vc * S.cam.y), cv.height / 2 - z * (vb * S.cam.x + vd * S.cam.y));
+    ctx.imageSmoothingEnabled = S.flat || z < 1;
+    const vb0 = viewBounds(), tl = { x: vb0.x0, y: vb0.y0 }, br = { x: vb0.x1, y: vb0.y1 };
     const y0 = Math.max(0, Math.floor(tl.y / 64) - 1), y1 = Math.min(m.ch - 1, Math.ceil(br.y / 64) + 1);
     const x0 = Math.max(0, Math.floor((tl.x - 128) / 256)), x1 = Math.min(m.cw - 1, Math.ceil((br.x + 128) / 256));
     const useSmall = z <= 0.26;
@@ -1313,7 +1335,7 @@ table.grid input[type=number]{width:64px}
     }
     if (S.marks) {
       ctx.lineWidth = 2 / z; ctx.font = (14 / Math.max(z, .3)) + 'px sans-serif';
-      for (const k of m.marks) { const px = k.x * 32, py = k.y * 32; ctx.strokeStyle = '#0ff'; ctx.beginPath(); ctx.moveTo(px - 10, py); ctx.lineTo(px + 10, py); ctx.moveTo(px, py - 10); ctx.lineTo(px, py + 10); ctx.stroke(); ctx.fillStyle = '#0ff'; ctx.fillText(String(k.t), px + 6, py - 6); }
+      for (const k of m.marks) { const px = k.x * 32, py = k.y * 32; upright(ctx, px, py, () => { ctx.strokeStyle = '#0ff'; ctx.beginPath(); ctx.moveTo(px - 10, py); ctx.lineTo(px + 10, py); ctx.moveTo(px, py - 10); ctx.lineTo(px, py + 10); ctx.stroke(); ctx.fillStyle = '#0ff'; ctx.fillText(String(k.t), px + 6, py - 6); }); }
     }
     if ($('lyObj').checked) {
       const subs = m.objects.filter(o => o.kind === R.KIND.SUB), rest = m.objects.filter(o => o.kind !== R.KIND.SUB).sort((a, b) => a.y - b.y);
@@ -1326,12 +1348,24 @@ table.grid input[type=number]{width:64px}
   function drawObject(c, o, z, sel) {
     const sp = spriteOf(o), [ox, oy] = objPos(o);
     if (sp) {
-      c.drawImage(sp.img, sp.e.x, sp.e.y, sp.e.w, sp.e.h, sp.x, sp.y, sp.e.w, sp.e.h);
-      if (o.kind === R.KIND.RES && z > 0.3) { c.fillStyle = '#fff'; c.strokeStyle = '#000'; c.lineWidth = 3; c.font = 'bold 15px sans-serif'; c.textAlign = 'center'; c.strokeText(String(o.val), ox + 16, oy + 44); c.fillText(String(o.val), ox + 16, oy + 44); c.textAlign = 'start'; }
-      if (sel) { c.strokeStyle = '#fff'; c.setLineDash([6 / z, 4 / z]); c.lineWidth = 2 / z; c.strokeRect(sp.x, sp.y, sp.e.w, sp.e.h); c.setLineDash([]); }
+      const body = () => {
+        c.drawImage(sp.img, sp.e.x, sp.e.y, sp.e.w, sp.e.h, sp.x, sp.y, sp.e.w, sp.e.h);
+        if (o.kind === R.KIND.RES && z > 0.3) { c.fillStyle = '#fff'; c.strokeStyle = '#000'; c.lineWidth = 3; c.font = 'bold 15px sans-serif'; c.textAlign = 'center'; c.strokeText(String(o.val), ox + 16, oy + 44); c.fillText(String(o.val), ox + 16, oy + 44); c.textAlign = 'start'; }
+        if (sel) { c.strokeStyle = '#fff'; c.setLineDash([6 / z, 4 / z]); c.lineWidth = 2 / z; c.strokeRect(sp.x, sp.y, sp.e.w, sp.e.h); c.setLineDash([]); }
+      };
+      if (stands(o)) upright(c, ox + 16, oy + 16, body); else body();
       return;
     }
     const px = ox + 16, py = oy + 16;
+    if (S.flat && o.kind === R.KIND.SUB) {       // 그림 없는 보조 지형: 마름모는 타일처럼 눕히고 이름만 똑바로
+      c.fillStyle = 'rgba(220,80,220,.75)'; c.strokeStyle = '#300030'; c.lineWidth = 3; drawDiamond(c, px, py, 64, 32); c.fill(); c.stroke();
+      upright(c, px, py, () => { c.fillStyle = '#fff'; c.font = 'bold 14px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(R.SUBTERRAIN[o.id] || ('보조' + o.id), px, py); c.textAlign = 'start'; c.textBaseline = 'alphabetic'; if (sel) { c.strokeStyle = '#fff'; c.setLineDash([6, 4]); c.lineWidth = 2 / z; c.strokeRect(px - 48, py - 40, 96, 80); c.setLineDash([]); } });
+      return;
+    }
+    if (S.flat) { upright(c, px, py, () => drawObjectMark(c, o, z, sel, px, py)); return; }
+    drawObjectMark(c, o, z, sel, px, py);
+  }
+  function drawObjectMark(c, o, z, sel, px, py) {
     c.save(); c.translate(px, py);
     if (o.kind === R.KIND.RES) {
       const ids = R.resourceIds(S.map.tileset), gold = o.id === ids.gold;
@@ -1358,8 +1392,11 @@ table.grid input[type=number]{width:64px}
     const bad = R.startProblems(S.map, p.x, p.y), r = R.START_R;
     c.save(); c.fillStyle = bad ? 'rgba(255,40,30,.35)' : 'rgba(80,255,80,.12)'; c.strokeStyle = bad ? '#ff4030' : 'rgba(120,255,120,.6)'; c.lineWidth = 2 / z;
     c.fillRect(R.cellX(p.x - r), R.cellY(p.y - r), (2 * r + 1) * 32, (2 * r + 1) * 32); c.strokeRect(R.cellX(p.x - r), R.cellY(p.y - r), (2 * r + 1) * 32, (2 * r + 1) * 32);
-    if (bad) { c.fillStyle = '#ff6050'; c.font = 'bold ' + (15 / Math.max(z, .35)) + 'px sans-serif'; c.textAlign = 'center'; c.fillText('본진 건설 불가 (물/절벽)', px, R.cellY(p.y - r) - 8 / Math.max(z, .35)); }
+    if (bad) { c.fillStyle = '#ff6050'; c.font = 'bold ' + (15 / Math.max(z, .35)) + 'px sans-serif'; c.textAlign = 'center'; upright(c, px, py, () => c.fillText('본진 건설 불가 (물/절벽)', px, py - (S.flat ? 70 : (r + .5) * 32) - 8 / Math.max(z, .35))); }
     c.restore();
+    upright(c, px, py, () => drawStartMark(c, p, i, z, sel, px, py, col));
+  }
+  function drawStartMark(c, p, i, z, sel, px, py, col) {
     c.save(); c.translate(px, py);
     c.lineWidth = 6; c.strokeStyle = '#000'; c.beginPath(); c.ellipse(0, 0, 70, 36, 0, 0, Math.PI * 2); c.stroke();
     c.lineWidth = 4; c.strokeStyle = col; c.stroke();
@@ -1394,7 +1431,7 @@ table.grid input[type=number]{width:64px}
       if (r.error || r.near) { ctx.fillStyle = 'rgba(255,60,40,.35)'; drawDiamond(ctx, h.x, h.y, 255, 128); ctx.fill(); }
       else { const sp = spriteOf({ kind: R.KIND.SUB, id: r.id, x: r.x, y: r.y }); if (sp) { ctx.globalAlpha = .75; ctx.drawImage(sp.img, sp.e.x, sp.e.y, sp.e.w, sp.e.h, sp.x, sp.y, sp.e.w, sp.e.h); ctx.globalAlpha = 1; } }
       ctx.fillStyle = (r.error || r.near) ? '#ff8070' : '#a0ff90'; ctx.font = 'bold ' + (16 / Math.max(z, .35)) + 'px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(r.error ? '언덕 가장자리가 아님' : r.near ? '다른 입구와 너무 가까움' : R.SUBTERRAIN[r.id], h.x, h.y - 140); ctx.textAlign = 'start';
+      upright(ctx, h.x, h.y, () => ctx.fillText(r.error ? '언덕 가장자리가 아님' : r.near ? '다른 입구와 너무 가까움' : R.SUBTERRAIN[r.id], h.x, h.y - 140)); ctx.textAlign = 'start';
     } else if (S.tool === 'tile' || S.tool === 'pick') {
       const t = tileAt(h.x, h.y); if (!t) return;
       const n = S.tileSize, set = S.gfx.tilesets[S.map.tileset], cells = S.tool === 'tile' ? brushCells() : null;
@@ -1417,12 +1454,15 @@ table.grid input[type=number]{width:64px}
       if (plan && plan.changes.length) { // terrain the click will reshape: blue = becomes water, yellow = becomes ground
         for (const [A, B, T] of plan.changes) { const [u, v] = R.fromAB(A, B); ctx.fillStyle = T === 0 ? 'rgba(60,140,255,.55)' : 'rgba(255,210,60,.55)'; drawDiamond(ctx, u * 128, v * 64, 64, 32); ctx.fill(); }
         const msg = plan.run[0] + plan.run[1] ? '양쪽 땅까지 ' + (plan.run[0] + plan.run[1]) + '줄 메움' : '물·땅 모양 맞춤';
-        ctx.fillStyle = '#ffe070'; ctx.font = 'bold ' + (16 / Math.max(z, .35)) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(msg, h.x, h.y - 190 - 8 / Math.max(z, .35)); ctx.textAlign = 'start';
+        ctx.fillStyle = '#ffe070'; ctx.font = 'bold ' + (16 / Math.max(z, .35)) + 'px sans-serif'; ctx.textAlign = 'center'; upright(ctx, h.x, h.y, () => ctx.fillText(msg, h.x, h.y - 190 - 8 / Math.max(z, .35))); ctx.textAlign = 'start';
       }
       if (bad) {
         ctx.fillStyle = 'rgba(255,50,40,.35)'; const [w2, h2] = R.SUB_SIZE[o.id]; drawDiamond(ctx, h.x, h.y, w2 / 2, h2 / 2); ctx.fill();
-        ctx.fillStyle = '#ff8070'; ctx.font = 'bold ' + (16 / Math.max(z, .35)) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(bad, h.x, h.y - h2 / 2 - 8 / Math.max(z, .35)); ctx.textAlign = 'start';
-      } else if (sp) { ctx.globalAlpha = .7; ctx.drawImage(sp.img, sp.e.x, sp.e.y, sp.e.w, sp.e.h, sp.x, sp.y, sp.e.w, sp.e.h); ctx.globalAlpha = 1; ctx.setLineDash([8 / z, 6 / z]); ctx.strokeStyle = '#ffe070'; ctx.strokeRect(sp.x, sp.y, sp.e.w, sp.e.h); ctx.setLineDash([]); }
+        ctx.fillStyle = '#ff8070'; ctx.font = 'bold ' + (16 / Math.max(z, .35)) + 'px sans-serif'; ctx.textAlign = 'center'; upright(ctx, h.x, h.y, () => ctx.fillText(bad, h.x, h.y - h2 / 2 - 8 / Math.max(z, .35))); ctx.textAlign = 'start';
+      } else if (sp) {
+        const ghost = () => { ctx.globalAlpha = .7; ctx.drawImage(sp.img, sp.e.x, sp.e.y, sp.e.w, sp.e.h, sp.x, sp.y, sp.e.w, sp.e.h); ctx.globalAlpha = 1; ctx.setLineDash([8 / z, 6 / z]); ctx.strokeStyle = '#ffe070'; ctx.strokeRect(sp.x, sp.y, sp.e.w, sp.e.h); ctx.setLineDash([]); };
+        if (stands(o)) { const [ox, oy] = objPos(o); upright(ctx, ox + 16, oy + 16, ghost); } else ghost();
+      }
       if (o.kind !== R.KIND.SUB) { ctx.strokeStyle = '#fff'; ctx.strokeRect(R.cellX(x), R.cellY(y), 32, 32); }
     } else if (['start'].includes(S.tool)) {
       const [x, y] = R.worldCell(h.x, h.y); ctx.strokeStyle = '#fff'; ctx.strokeRect(R.cellX(x), R.cellY(y), 32, 32);
@@ -1432,9 +1472,14 @@ table.grid input[type=number]{width:64px}
   // ---------------------------------------------------------------- minimap
   function mmGeom() {
     // the minimap shows the game map (cells 0..W, 0..H)
-    const m = S.map, ws = { w: m.W * 32, h: m.H * 32 }, s = Math.min(mm.width / ws.w, mm.height / ws.h);
-    return { s, ox: (mm.width - ws.w * s) / 2 - R.cellX(0) * s, oy: (mm.height - ws.h * s) / 2 - R.cellY(0) * s };
+    // 큰 화면과 같은 보기 방식: 맵 네 귀퉁이를 변환해 둘러싼 상자를 미니맵에 맞춘다. 화면 = (ox, oy) + s * vApply(월드)
+    const pts = mapCorners().map(([x, y]) => vApply(x, y)), xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    const x0 = Math.min(...xs), y0 = Math.min(...ys), w = Math.max(...xs) - x0, h = Math.max(...ys) - y0, s = Math.min(mm.width / w, mm.height / h);
+    return { s, ox: (mm.width - w * s) / 2 - x0 * s, oy: (mm.height - h * s) / 2 - y0 * s };
   }
+  function mapCorners() { const m = S.map, x = R.cellX(0), y = R.cellY(0), w = m.W * 32, h = m.H * 32; return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]; }
+  function mapExtent() { const pts = mapCorners().map(([x, y]) => vApply(x, y)), xs = pts.map(p => p[0]), ys = pts.map(p => p[1]); return [Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)]; }
+  function mmPoint(g, wx, wy) { const [x, y] = vApply(wx, wy); return [g.ox + x * g.s, g.oy + y * g.s]; }
   let mmCache = null, mmT = 0;
   function drawMinimap(full) {
     clearTimeout(mmT); mmT = setTimeout(() => { mmCache = null; paintMinimap(); }, full ? 0 : 120);
@@ -1444,7 +1489,8 @@ table.grid input[type=number]{width:64px}
     const g = mmGeom(), set = S.gfx.tilesets[m.tileset];
     if (!mmCache) {
       mmCache = document.createElement('canvas'); mmCache.width = mm.width; mmCache.height = mm.height; const c = mmCache.getContext('2d');
-      c.save(); c.translate(g.ox, g.oy); c.scale(g.s, g.s); c.beginPath(); c.rect(R.cellX(0), R.cellY(0), m.W * 32, m.H * 32); c.clip();
+      const [va, vb, vc, vd] = vm();
+      c.save(); c.setTransform(g.s * va, g.s * vb, g.s * vc, g.s * vd, g.ox, g.oy); c.beginPath(); c.rect(R.cellX(0), R.cellY(0), m.W * 32, m.H * 32); c.clip();
       for (let y = 0; y < m.ch; y++) for (let x = 0; x < m.cw; x++) {
         const i = y * m.cw + x, cx = x * 256 + (y & 1) * 128, cy = y * 64;
         c.fillStyle = set ? set.avg[m.tIdx[i]] : FALLBACK[m.tC[i]] || '#444';
@@ -1454,14 +1500,15 @@ table.grid input[type=number]{width:64px}
       c.restore();
     }
     mctx.drawImage(mmCache, 0, 0);
-    m.players.forEach((p, i) => { mctx.fillStyle = (R.COLORS[p.team] || R.COLORS[i % 8])[1]; mctx.strokeStyle = '#000'; const X = g.ox + (R.cellX(p.x) + 16) * g.s, Y = g.oy + (R.cellY(p.y) + 16) * g.s; mctx.fillRect(X - 3, Y - 3, 7, 7); mctx.strokeRect(X - 3, Y - 3, 7, 7); });
-    const tl = s2w(0, 0), br = s2w(cv.width, cv.height);
-    mctx.strokeStyle = '#fff'; mctx.lineWidth = 1; mctx.strokeRect(g.ox + tl.x * g.s, g.oy + tl.y * g.s, (br.x - tl.x) * g.s, (br.y - tl.y) * g.s);
+    m.players.forEach((p, i) => { mctx.fillStyle = (R.COLORS[p.team] || R.COLORS[i % 8])[1]; mctx.strokeStyle = '#000'; const [X, Y] = mmPoint(g, R.cellX(p.x) + 16, R.cellY(p.y) + 16); mctx.fillRect(X - 3, Y - 3, 7, 7); mctx.strokeRect(X - 3, Y - 3, 7, 7); });
+    mctx.strokeStyle = '#fff'; mctx.lineWidth = 1; mctx.beginPath();
+    viewBounds().pts.forEach((p, i) => { const [X, Y] = mmPoint(g, p.x, p.y); if (i) mctx.lineTo(X, Y); else mctx.moveTo(X, Y); });
+    mctx.closePath(); mctx.stroke();
   }
   function mmMove(ev) {
     if (!S.map) return; const r = mm.getBoundingClientRect(), g = mmGeom();
     const x = (ev.clientX - r.left) * mm.width / r.width, y = (ev.clientY - r.top) * mm.height / r.height;
-    S.cam.x = (x - g.ox) / g.s; S.cam.y = (y - g.oy) / g.s; draw(); paintMinimap();
+    [S.cam.x, S.cam.y] = vInv((x - g.ox) / g.s, (y - g.oy) / g.s); draw(); paintMinimap();
   }
   mm.addEventListener('mousedown', (e) => { mmMove(e); const mv = (ev) => mmMove(ev), up = () => { removeEventListener('mousemove', mv); removeEventListener('mouseup', up); }; addEventListener('mousemove', mv); addEventListener('mouseup', up); });
 
@@ -1561,10 +1608,25 @@ table.grid input[type=number]{width:64px}
     if (S.pattern && S.pattern.n !== n) S.pattern = null;   // 크기를 바꾸면 선택 타일로 채우는 붓으로
     $('tileSize').value = n; $('tileSizeLbl').textContent = n + '×' + n; renderTileBrush(); draw();
   }
-  // thumbnail of n*n cells (isometric, 64x32 per tile) scaled into canvas `cv2`
+  // 타일 한 장(작은 그림 64×32 마름모)을 한 변 side 인 정사각형으로 (cx, cy) 가운데에 그린다 — 평면 보기와 같은 방향
+  function drawFlatTile(g, img, cx, cy, side, fill) {
+    const k = side / 32; g.save(); g.setTransform(k * .5, k * -.5, k, k, cx, cy);
+    if (img) g.drawImage(img, -32, -16, 64, 32); else { g.fillStyle = fill; drawDiamond(g, 0, 0, 32, 16); g.fill(); }
+    g.restore();
+  }
+  // thumbnail of n*n cells scaled into canvas `cv2` (평면 보기: 정사각형 바둑판, 게임 보기: isometric 64x32 per tile)
   function drawCells(cv2, n, cells) {
-    const g = cv2.getContext('2d'); g.clearRect(0, 0, cv2.width, cv2.height);
+    const g = cv2.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cv2.width, cv2.height);
     const set = S.map && S.gfx.tilesets[S.map.tileset];
+    if (S.flat) {
+      const side = Math.min(cv2.width, cv2.height) / n, ox = (cv2.width - side * n) / 2, oy = (cv2.height - side * n) / 2;
+      g.imageSmoothingEnabled = true;
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+        const tp = cells[i * n + j]; if (!tp) continue;
+        drawFlatTile(g, set && set.small[tp[0]], ox + (i + .5) * side, oy + (j + .5) * side, side + .6, FALLBACK[tp[1] % FALLBACK.length] || '#555');
+      }
+      return;
+    }
     const W = n * 64, H = n * 32, sc = Math.min(cv2.width / W, cv2.height / H), ox = (cv2.width - W * sc) / 2, oy = (cv2.height - H * sc) / 2;
     for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
       const tp = cells[i * n + j]; if (!tp) continue;
@@ -1683,9 +1745,12 @@ table.grid input[type=number]{width:64px}
   }
   function hitObject(wx, wy) {
     const m = S.map; let best = null, bd = 1e9;
-    if ($('lyStart').checked) m.players.forEach((p) => { const d = Math.hypot(wx - (R.cellX(p.x) + 16), (wy - (R.cellY(p.y) + 16)) * 2); if (d < 80 && d < bd) { bd = d; best = p; } });
+    const wx0 = wx, wy0 = wy;
+    if ($('lyStart').checked) m.players.forEach((p) => { const ax = R.cellX(p.x) + 16, ay = R.cellY(p.y) + 16, [mx, my] = uprightPoint(ax, ay, wx0, wy0), d = Math.hypot(mx - ax, (my - ay) * 2); if (d < 80 && d < bd) { bd = d; best = p; } });
     if ($('lyObj').checked) for (const o of m.objects) {
       const sp = spriteOf(o), [ox, oy] = objPos(o); let d;
+      // 평면 보기에서 똑바로 세워 그린 것은 그 그림 좌표로 바꾼 마우스 위치로 고른다 (보조 지형의 이름표도 같음)
+      [wx, wy] = (stands(o) || !sp) ? uprightPoint(ox + 16, oy + 16, wx0, wy0) : [wx0, wy0];
       if (sp) {
         if (wx < sp.x || wy < sp.y || wx > sp.x + sp.e.w || wy > sp.y + sp.e.h) continue;
         d = Math.hypot(wx - (ox + 16), wy - (oy + 16)) * (o.kind === R.KIND.SUB ? 3 : 1); if (d < bd) { bd = d; best = o; }
@@ -1744,7 +1809,7 @@ table.grid input[type=number]{width:64px}
     }
   });
   addEventListener('mousemove', (e) => {
-    if (panDrag) { S.cam.x = panDrag.cx - (e.clientX - panDrag.sx) / S.cam.z * (S.dpr || 1); S.cam.y = panDrag.cy - (e.clientY - panDrag.sy) / S.cam.z * (S.dpr || 1); draw(); paintMinimap(); return; }
+    if (panDrag) { const [dx, dy] = vInv((e.clientX - panDrag.sx) / S.cam.z * (S.dpr || 1), (e.clientY - panDrag.sy) / S.cam.z * (S.dpr || 1)); S.cam.x = panDrag.cx - dx; S.cam.y = panDrag.cy - dy; draw(); paintMinimap(); return; }
     if (!S.map || e.target !== cv) { if (S.hover && e.target !== cv) { S.hover = null; draw(); } if (!S.drag && !S.painting) return; }
     const r = cv.getBoundingClientRect(), dpr = S.dpr || 1, w = s2w((e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr);
     S.hover = w; updateStatus(w);
@@ -1787,7 +1852,7 @@ table.grid input[type=number]{width:64px}
     else if (k === 'g') { S.grid = !S.grid; $('bGrid').classList.toggle('on', S.grid); draw(); }
     else if (k === ' ') { S.space = true; cv.style.cursor = 'grab'; e.preventDefault(); }
     else if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(k) && S.map) {
-      const d = 300 / S.cam.z; if (k === 'arrowleft') S.cam.x -= d; if (k === 'arrowright') S.cam.x += d; if (k === 'arrowup') S.cam.y -= d; if (k === 'arrowdown') S.cam.y += d; e.preventDefault(); draw(); paintMinimap();
+      const d = 300 / S.cam.z, [dx, dy] = vInv(k === 'arrowleft' ? -d : k === 'arrowright' ? d : 0, k === 'arrowup' ? -d : k === 'arrowdown' ? d : 0); S.cam.x += dx; S.cam.y += dy; e.preventDefault(); draw(); paintMinimap();   // 화면 방향으로 이동
     } else if (k >= '1' && k <= '9' && !e.ctrlKey) { setBrush(+k - 1); }
     else if ((k === '[' || k === ']') && (S.tool === 'tile' || S.tool === 'pick')) setTileSize(S.tileSize + (k === ']' ? 1 : -1));
     else if (k === 'escape') { S.sel = null; showSel(); draw(); }
@@ -1860,9 +1925,11 @@ table.grid input[type=number]{width:64px}
     renderTileBrush();
     for (let k = 0; k < 200; k++) {
       if (!(k in R.TILE_DEF)) continue;
-      const c = document.createElement('canvas'); c.width = 64; c.height = 32; c.title = '#' + k + ' ' + info(k);
+      const c = document.createElement('canvas'); c.width = S.flat ? 40 : 64; c.height = S.flat ? 40 : 32; c.title = '#' + k + ' ' + info(k);
       const g = c.getContext('2d');
-      if (set && set.small[k]) g.drawImage(set.small[k], 0, 0);
+      if (S.flat && set && set.small[k]) drawFlatTile(g, set.small[k], 20, 20, 40);
+      else if (S.flat) { const [a, b] = R.TILE_DEF[k], cr = R.cornersOf(a, b); [['W', 0, 0], ['N', 20, 0], ['S', 0, 20], ['E', 20, 20]].forEach(([n, x, y]) => { g.fillStyle = FALLBACK[cr[n]]; g.fillRect(x, y, 20, 20); }); g.fillStyle = '#fff'; g.font = '10px sans-serif'; g.fillText(k, 2, 10); }
+      else if (set && set.small[k]) g.drawImage(set.small[k], 0, 0);
       else { const [a, b] = R.TILE_DEF[k], cr = R.cornersOf(a, b); [['N', 32, 0], ['E', 64, 16], ['S', 32, 32], ['W', 0, 16]].forEach(([n, x, y]) => { g.fillStyle = FALLBACK[cr[n]]; g.beginPath(); g.moveTo(32, 16); g.lineTo(x, y); g.lineTo(n === 'N' ? 64 : n === 'E' ? 32 : n === 'S' ? 0 : 32, n === 'N' ? 16 : n === 'E' ? 32 : n === 'S' ? 16 : 0); g.fill(); }); g.fillStyle = '#fff'; g.font = '10px sans-serif'; g.fillText(k, 2, 10); }
       if (k === S.tileSel) c.className = 'sel';
       c.onclick = () => { S.tileSel = k; S.pattern = null; setTool('tile'); buildPalette(); };
@@ -1963,7 +2030,8 @@ table.grid input[type=number]{width:64px}
   }
   function centerView() {
     const m = S.map, r = $('view').getBoundingClientRect(), dpr = S.dpr || 1;
-    S.cam.z = Math.max(0.05, Math.min(0.5, Math.min(r.width * dpr / (m.W * 32), r.height * dpr / (m.H * 32)) * 0.95));
+    const [ex, ey] = mapExtent();
+    S.cam.z = Math.max(0.05, Math.min(0.5, Math.min(r.width * dpr / ex, r.height * dpr / ey) * 0.95));
     S.cam.x = R.cellX(m.W / 2); S.cam.y = R.cellY(m.H / 2); $('zoomLbl').textContent = Math.round(S.cam.z * 100) + '%';
   }
 
@@ -1980,6 +2048,17 @@ table.grid input[type=number]{width:64px}
   $('bPlayers').onclick = showPlayers; $('bTeams').onclick = showTeams; $('bProps').onclick = showProps;
   $('bZoomIn').onclick = () => zoom(1.25); $('bZoomOut').onclick = () => zoom(0.8);
   $('bGrid').onclick = () => { S.grid = !S.grid; $('bGrid').classList.toggle('on', S.grid); draw(); };
+  // 정사각형(평면) 보기 <-> 게임(마름모) 보기. 화면 가운데가 보던 곳은 그대로.
+  const FLAT_KEY = 'rkm-flat-view';
+  function setFlat(v) {
+    S.flat = !!v; $('bFlat').classList.toggle('on', S.flat);
+    try { localStorage.setItem(FLAT_KEY, S.flat ? '1' : '0'); } catch (e) { }
+    if (S.map) { buildPalette(); mmCache = null; paintMinimap(); }
+    draw();
+  }
+  try { S.flat = localStorage.getItem(FLAT_KEY) !== '0'; } catch (e) { }
+  $('bFlat').classList.toggle('on', S.flat);
+  $('bFlat').onclick = () => setFlat(!S.flat);
   $('bCellGrid').onclick = () => { S.cellGrid = !S.cellGrid; $('bCellGrid').classList.toggle('on', S.cellGrid); draw(); };
   $('bMarks').onclick = () => { S.marks = !S.marks; $('bMarks').classList.toggle('on', S.marks); draw(); };
   $('wFolder').onclick = pickFolder; $('wFiles').onclick = pickDataFiles; $('wReconnect').onclick = reconnect;

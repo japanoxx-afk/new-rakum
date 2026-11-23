@@ -211,6 +211,42 @@ class RecordAndModelTests(unittest.TestCase):
                 self.assertEqual(h["rules"], {"rally_gold": rally, "select_24": sel, "rally_spawn": spawn,
                                               "wide_checks": wide})
 
+    def test_damaged_replay_is_still_listed_and_not_fatal(self):
+        """압축 자료 중간이 깨진 파일(zlib.error)·끝이 잘린 파일도 목록용 머리는 읽힌다 — 예전에는 zlib.error 를
+        잡지 않아 깨진 파일 하나 때문에 런처의 리플레이 목록 전체가 비었다."""
+        import zlib
+        self.play_match()
+        self.rec._finish("끝")
+        good = next((self.base / "replays").glob("*.rkr"))
+        data = good.read_bytes()
+        whole, _ = M.load_header(good)
+        self.assertNotIn("_damaged", whole)
+        cut = self.base / "replays" / "cut.rkr"
+        cut.write_bytes(data[:len(data) * 2 // 3])
+        holed = self.base / "replays" / "holed.rkr"
+        mid = len(data) // 2
+        holed.write_bytes(data[:mid] + b"\0" * 40 + data[mid + 40:])
+        for path in (cut, holed):
+            try:
+                h, _ = M.load_header(path)
+            except ValueError:
+                continue                              # 머리 줄까지 깨진 경우: 목록에서 빠짐 (READ_ERRORS 에 포함)
+            self.assertEqual(h.get("players"), whole["players"])
+            self.assertTrue(h.get("_damaged"))
+        self.assertTrue(issubclass(zlib.error, M.READ_ERRORS) or zlib.error in M.READ_ERRORS)
+
+    def test_second_recorder_does_not_share_the_file(self):
+        """런처 두 개가 같은 경기를 같은 이름으로 기록해도 한 파일에 섞어 쓰지 않는다 (_2 를 붙임)."""
+        folder = self.base / "replays"
+        folder.mkdir(exist_ok=True)
+        a = rr.MatchWriter(folder / "same.rkr", {"format": 3})
+        b = rr.MatchWriter(folder / "same.rkr", {"format": 3})
+        self.assertEqual((a.path.name, b.path.name), ("same.rkr", "same_2.rkr"))
+        a.frames = b.frames = 10
+        a.close(); b.close()
+        self.assertEqual(M.load_header(folder / "same.rkr")[0], {"format": 3})
+        self.assertEqual(M.load_header(folder / "same_2.rkr")[0], {"format": 3})
+
     def test_record_load_and_stats(self):
         self.play_match()
         self.assertIsNotNone(self.rec.writer)

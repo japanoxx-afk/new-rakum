@@ -221,6 +221,24 @@ class TileBlockToolTests(unittest.TestCase):
         self.assertIn('const m = S.map, u = p - q, v = p + q;', page)
         self.assertIn('return [(u + v) / 2, (v - u) / 2];', page)
 
+    def test_page_has_square_view(self):
+        """정사각형(평면) 보기: 타일 모서리 방향 (p, q) 를 화면 가로·세로로 — x' = wx/2 + wy, y' = wy - wx/2.
+        그러면 256×128 마름모 타일이 128×128 정사각형이 되고, N×N 블록(p, q 칸)은 화면에 똑바로 놓인 정사각형이 된다."""
+        page = (HERE / 'map_editor_web' / 'editor' / mew.EDITOR_PAGE).read_text(encoding='utf-8')
+        self.assertIn('id="bFlat"', page)
+        self.assertIn("function vm() { return S.flat ? [0.5, -0.5, 1, 1] : [1, 0, 0, 1]; }", page)
+        self.assertIn("flat: true,", page)                                   # 기본이 정사각형 보기
+        a, b, c, d = 0.5, -0.5, 1, 1
+        view = lambda x, y: (a * x + c * y, b * x + d * y)
+        # 타일 (x, y) 가운데 = 월드 (x*256 + (y&1)*128, y*64) -> 화면 (128p, 128q)
+        for x, y in ((0, 0), (3, 4), (2, 5), (7, 1)):
+            u, v = 2 * x + (y & 1), y
+            p, q = (u + v) / 2, (v - u) / 2
+            self.assertEqual(view(x * 256 + (y & 1) * 128, y * 64), (128 * p, 128 * q))
+        # 마름모 타일의 네 꼭짓점 -> 정사각형의 네 꼭짓점
+        self.assertEqual([view(*pt) for pt in ((0, -64), (128, 0), (0, 64), (-128, 0))],
+                         [(-64, -64), (64, -64), (64, 64), (-64, 64)])
+
 
 class TileModTests(unittest.TestCase):
     def test_install_and_uninstall_restores_previous(self):

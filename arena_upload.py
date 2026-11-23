@@ -14,6 +14,7 @@ new-rakum 저장소의 launcher.py 옆에 이 파일을 그대로 복사해서 �
 from __future__ import annotations
 
 import gzip
+import zlib
 import hashlib
 import json
 import threading
@@ -49,7 +50,7 @@ def replay_kind(path: Path) -> tuple[str, str]:
             head = json.loads(g.readline().decode("utf-8"))
             while g.read(1 << 20):             # 끝까지 읽어 파일이 온전한지(기록이 끝났는지) 확인
                 pass
-    except (EOFError, gzip.BadGzipFile, OSError) as e:
+    except (EOFError, gzip.BadGzipFile, OSError, zlib.error) as e:
         return "wait", f"기록 중이거나 손상: {e}"
     except ValueError as e:
         return "skip", f"머리를 읽을 수 없음: {e}"

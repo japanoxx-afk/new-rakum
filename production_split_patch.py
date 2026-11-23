@@ -303,6 +303,15 @@ def assemble() -> dict:
     raise RuntimeError("조립 주소가 맞지 않음")
 
 
+# 집결지 깃발 그리기(0x4D34D0): 원래는 고른 것이 하나([0x80083C]==1)일 때만 그린다 (cmp eax,1; jne 끝).
+# 같은 건물 여러 개를 골라 집결지를 찍으면 지점은 건물마다 바뀌는데 깃발이 안 보였다 -> 하나 이상이면 그린다 (jne -> jl).
+# 뒤의 검사는 그대로: 보이는 유닛 [0xB412D0] 이 건물이고 내 것이며 집결지가 지금 보는 층에 있을 때만.
+# (유닛 여러 개를 고른 때는 [0xB412D0] 이 건물이 아니라 그리지 않는다.) 화면에만 그리는 코드라 대전 진행과 무관.
+FLAG_SITE = 0xD34E3
+FLAG_ORIGINAL = bytes.fromhex("0f8595020000")
+FLAG_PATCHED = bytes.fromhex("0f8c95020000")
+
+
 def _sites():
     send_jump = (b"\xe9" + struct.pack("<i", CHUNKS["entry"][0] - (SEND + 5))).ljust(len(SEND_ORIGINAL), b"\x90")
     rally_jump = (b"\xe9" + struct.pack("<i", CHUNKS["rentry"][0] - (RALLY + 5))).ljust(len(RALLY_ORIGINAL), b"\x90")
@@ -314,6 +323,7 @@ def _sites():
     sites += [
              (SEND_SITE, SEND_ORIGINAL, send_jump), (PANEL_SITE, PANEL_ORIGINAL, PANEL_PATCHED),
              (RALLY_SITE, RALLY_ORIGINAL, rally_jump)]
+    sites.append((FLAG_SITE, FLAG_ORIGINAL, FLAG_PATCHED))
     for k, (va, size) in CHUNKS.items():
         assert len(CODE[k]) <= size, (k, len(CODE[k]), size)
         sites.append((va - 0x400000, bytes(size), CODE[k].ljust(size, b"\x90")))
@@ -377,6 +387,29 @@ LEGACY_SITES = (
     (   # v0.9086
         (0x33603, bytes.fromhex("33c9668b883a5a770085c97405e9c8050000"), bytes.fromhex("8a88485a77003a0dcc12b4000f85c8050000")),
         (0x33ad8, bytes.fromhex("7518"), bytes.fromhex("9090")),
+        (0x47cf0, bytes.fromhex("558bec83ec40"), bytes.fromhex("e9d13c0a0090")),
+        (0x6049f, bytes.fromhex("0fbf05d012b40069c0380100000fbf883e5a770081e10010000085c9744b"), bytes.fromhex("803d3c088000017760a1d012b4009869c038010000f6803f5a770010744b")),
+        (0x47e60, bytes.fromhex("558bec83ec44"), bytes.fromhex("e9dc380a0090")),
+        (0xeb9c6, bytes(58), bytes.fromhex("817c240408400000751a608a54242c80fa05740a80fa06740580fa0a7505e9d2020000615589e583ec40e901c3f5ff9090909090909090909090")),
+        (0xebcbb, bytes(69), bytes.fromhex("0fbf05d012b40085c00f841ffdffff89c369e8380100000fbfad465a7700e870fcffff89c78b356e3643000fbf0d3c088000e973ffffff9090909090909090909090909090")),
+        (0xebc65, bytes(27), bytes.fromhex("490f888402000066ad9850e8d9fcffff39f87304978b1c2458ebe5")),
+        (0xebef0, bytes(16), bytes.fromhex("83ff40730566895c2428e9eafaffff90")),
+        (0xeb94e, bytes(50), bytes.fromhex("5669f03801000081c6385a77006a405866837e08007e158a66103a25cc12b400750a66396e0e0f846cfcffff5ec390909090")),
+        (0xeb5e6, bytes(26), bytes.fromhex("0fb74606f6c410740a80fa057507e97f01000031c05ec3909090")),
+        (0xeb778, bytes(24), bytes.fromhex("663d0510750b0fbe4652403c057202b0405ec39090909090")),
+        (0xeb741, bytes(31), bytes.fromhex("807c2404037509803d3c08800001777f5589e583ec44e90ac7f5ff90909090")),
+        (0xeb7d0, bytes(48), bytes.fromhex("600fbf1dd012b40069c3380100000fbfa8465a77008b356e3643000fbf3d3c088000b206e91b04000090909090909090")),
+        (0xebc14, bytes(44), bytes.fromhex("4f781b66ad9850e82efdffff5983f84072073d0010000072e7e99efcffff66891dd012b40061c39090909090")),
+        (0xeb8d0, bytes(48), bytes.fromhex("66890dd012b400ff742430ff742430ff742430ff742430e865feffff83c410b206e91e03000090909090909090909090")),
+    ),
+    (   # v0.9087 ~ v0.9093 (여러 건물 집결지 깃발 표시 전)
+        (0x33603, bytes.fromhex("33c9668b883a5a770085c97405e9c8050000"), bytes.fromhex("8a88485a77003a0dcc12b4000f85c8050000")),
+        (0x33ac0, bytes.fromhex("0fbf051269760069c03801000033c9668b883a5a770085c975180fbf151269760033c08a82e412b400258000000085c07405"), bytes.fromhex("0fbf0512697600f680e412b40080752269c0380100000fbf4d0c69c938010000668b903a5a7700663b913a5a77007502eb05")),
+        (0x33896, bytes.fromhex("0fbf151269760069d2380100000fbf82405a770085c07f05e9250300000fbf0d1269760033d28a91e412b40081e28000000085d27405e902030000"), bytes.fromhex("0fbf0512697600f680e412b40080752469c0380100006683b8405a7700007e140fbf4d0c69c9380100006683b93a5a7700007407e9a80000009090")),
+        (0xeba0f, bytes(17), bytes.fromhex("8b44240466837802007505e9e129fbffc3")),
+        (0x331f7, bytes.fromhex("e804b20600"), bytes.fromhex("e813880b00")),
+        (0x3333a, bytes.fromhex("e8c1b00600"), bytes.fromhex("e8d0860b00")),
+        (0x33360, bytes.fromhex("e89bb00600"), bytes.fromhex("e8aa860b00")),
         (0x47cf0, bytes.fromhex("558bec83ec40"), bytes.fromhex("e9d13c0a0090")),
         (0x6049f, bytes.fromhex("0fbf05d012b40069c0380100000fbf883e5a770081e10010000085c9744b"), bytes.fromhex("803d3c088000017760a1d012b4009869c038010000f6803f5a770010744b")),
         (0x47e60, bytes.fromhex("558bec83ec44"), bytes.fromhex("e9dc380a0090")),
