@@ -67,7 +67,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9093"
+APP_VERSION = "0.9094"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1920,15 +1920,18 @@ class App(tk.Tk):
         tree.delete(*tree.get_children())
         files = sorted(self._replay_dir().glob("*.rkr"), key=lambda p: p.stat().st_mtime, reverse=True)
         for path in files:
-            try:
+            try:                                # 파일 하나가 깨져도 나머지 목록은 보여 준다
                 h, dur = replay_model.load_header(path)
-            except (OSError, ValueError, EOFError):
+                if not isinstance(h, dict):
+                    continue
+            except Exception:
                 continue
-            players = ",  ".join(f"{p['name']} / {replay_model.RACES[p['race']] if 0 <= p['race'] < 3 else '?'}"
-                                 for p in h.get("players", []))
+            players = ",  ".join(f"{p.get('name', '')} / {replay_model.RACES[p['race']] if p.get('race') in (0, 1, 2) else '?'}"
+                                 for p in h.get("players", []) if isinstance(p, dict))
             mapname = pathlib.Path(h.get("map", "").replace("\\", "/")).stem
             tree.insert("", "end", iid=str(path), values=(h.get("date", "").replace("T", " "),
-                                                          replay_model.fmt_time(dur), mapname, players,
+                                                          replay_model.fmt_time(dur) + (" (손상)" if h.get("_damaged") else ""),
+                                                          mapname, players,
                                                           self.arena.file_status(path)))
 
     def _selected_replay(self):
@@ -1941,7 +1944,7 @@ class App(tk.Tk):
             return
         try:
             text = replay_model.summary_text(replay_model.load(path))
-        except (OSError, ValueError, EOFError) as e:
+        except replay_model.READ_ERRORS as e:
             text = f"리플레이를 읽을 수 없습니다: {e}"
         self.replay_summary.configure(state="normal")
         self.replay_summary.delete("1.0", "end")
@@ -1956,7 +1959,7 @@ class App(tk.Tk):
         try:
             import replay_viewer
             replay_viewer.ReplayViewer(self, path, get_resource_dir())
-        except (OSError, ValueError, EOFError, tk.TclError) as e:
+        except (*replay_model.READ_ERRORS, tk.TclError) as e:
             messagebox.showerror("리플레이", f"리플레이를 열 수 없습니다.\n{e}")
 
     def open_replay_file(self, path):
@@ -1985,7 +1988,7 @@ class App(tk.Tk):
         try:
             rp = replay_model.load(path)
             data = replay_model.ingame_data(rp)
-        except (OSError, ValueError, EOFError) as e:
+        except replay_model.READ_ERRORS as e:
             messagebox.showerror("리플레이", f"리플레이를 읽을 수 없습니다.\n{e}")
             return
         if isinstance(data, str):

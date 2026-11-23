@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import bisect
 import gzip
+import zlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -159,17 +160,24 @@ def load(path) -> Replay:
     return rp
 
 
+# 리플레이를 읽다 날 수 있는 오류. zlib.error 는 압축 자료가 깨진 파일 (OSError 가 아니라 따로 잡아야 한다).
+READ_ERRORS = (OSError, ValueError, EOFError, zlib.error)
+
+
 def load_header(path) -> tuple[dict, float]:
     """목록용: 머리와 길이(마지막 장면 시간)만 빠르게."""
     with gzip.open(path, "rt", encoding="utf-8") as f:
         header = json.loads(f.readline())
         last = 0.0
-        for line in f:
-            if '"t":' in line[:20]:
-                try:
-                    last = float(line[5:line.index(",")])
-                except ValueError:
-                    pass
+        try:
+            for line in f:
+                if '"t":' in line[:20]:
+                    try:
+                        last = float(line[5:line.index(",")])
+                    except ValueError:
+                        pass
+        except READ_ERRORS:                    # 중간이 깨졌거나 끝이 잘린 파일: 읽은 데까지만 (목록에는 보여 준다)
+            header["_damaged"] = True
     return header, last
 
 
