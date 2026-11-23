@@ -70,7 +70,7 @@ def valid_templates(data) -> bool:
         if not isinstance(t, dict):
             return False
         n, cells = t.get('n'), t.get('cells')
-        if not isinstance(n, int) or not 1 <= n <= 8 or not isinstance(cells, list) or len(cells) != n * n:
+        if not isinstance(n, int) or not 1 <= n <= 15 or not isinstance(cells, list) or len(cells) != n * n:
             return False
         for c in cells:
             if c is not None and not (isinstance(c, list) and len(c) == 4

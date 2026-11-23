@@ -8,7 +8,7 @@
   const S = {
     map: null, name: 'New Map', fileHandle: null, dirHandle: null, dirty: false,
     tool: 'brush', brush: 1, brushSize: 3, shape: 'circle', shapeDrag: null, tileSel: 10, tileSize: 1, pattern: null, stampOrigin: null, templates: [], startSel: 0, decoSel: 0, subSel: 0, res: 'gold',
-    cam: { x: 0, y: 0, z: 0.5 }, flat: true, grid: false, cellGrid: false, marks: false,
+    cam: { x: 0, y: 0, z: 0.5 }, flat: false, grid: false, cellGrid: false, marks: false,
     hover: null, sel: null, drag: null, painting: false,
     gfx: { fdb: null, idx: null, tilesets: {} },   // tilesets[ts] = {img:[], avg:[]}
     undo: [], redo: [], act: null,
@@ -501,11 +501,12 @@
       upright(ctx, h.x, h.y, () => ctx.fillText(r.error ? '언덕 가장자리가 아님' : r.near ? '다른 입구와 너무 가까움' : R.SUBTERRAIN[r.id], h.x, h.y - 140)); ctx.textAlign = 'start';
     } else if (S.tool === 'tile' || S.tool === 'pick') {
       const t = tileAt(h.x, h.y); if (!t) return;
-      const n = S.tileSize, set = S.gfx.tilesets[S.map.tileset], cells = S.tool === 'tile' ? brushCells() : null;
+      const n = blockN(), cell = cellMode(), set = S.gfx.tilesets[S.map.tileset], cells = S.tool === 'tile' ? brushCells() : null;
       let p0, q0;
       if (S.tool === 'tile') [p0, q0] = blockOrigin(t); else { const c = (n - 1) >> 1, pq = tilePQ(t); p0 = pq[0] - c; q0 = pq[1] - c; }
       ctx.strokeStyle = S.tool === 'pick' ? '#60d0ff' : '#ffd040';
       for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+        if (!inBlock(n, i, j, cell)) continue;
         const tt = pqTile(p0 + i, q0 + j); if (!tt) continue;
         const cx = tt[0] * 256 + (tt[1] & 1) * 128, cy = tt[1] * 64, tp = cells && cells[i * n + j];
         if (tp && set && set.img[tp[0]]) { ctx.globalAlpha = .6; ctx.drawImage(set.img[tp[0]], cx - 128, cy - 64, 256, 128); ctx.globalAlpha = 1; }
@@ -611,7 +612,16 @@
   }
   // ---- 타일 직접 배치: 1×1 ~ 8×8 블록 찍기 / 스포이드, 즐겨찾기 템플릿
   // 블록은 타일 모서리를 따라 놓인 마름모 N×N: 칸 (p+i, q+j), 타일 (x,y) <-> u=2x+(y&1), v=y, p=(u+v)/2, q=(v-u)/2
-  const TILE_MAX = 8;
+  // 블록 모양은 보기를 따른다 (찍기 기준 = 화면의 가로·세로):
+  //   게임 보기(기본, 셀 격자가 똑바로 보임): 셀 격자 방향의 사각형 — 가로 n 타일 × 세로 n 타일 안에 온전히 들어가는
+  //     타일들 (줄마다 n, n-1, n, … 개, 모두 n² + (n-1)² 장). 안에서는 (p, q) 칸 (2n-1)×(2n-1) 에서 그 사각형 밖을 비운 것.
+  //   정사각형 보기: 타일 모서리 방향 n×n (그 화면에서 똑바른 정사각형).
+  const TILE_MAX = 8, BLOCK_MAX = 2 * TILE_MAX - 1;
+  function cellMode() { return !S.flat; }
+  function blockN() { return cellMode() ? 2 * S.tileSize - 1 : S.tileSize; }
+  function inBlock(n, i, j, cell) { if (!cell) return true; const h = (n - 1) / 2; return Math.abs(i - j) <= h && Math.abs(i + j - 2 * h) <= h; }
+  function patternFits() { return !!S.pattern && S.pattern.n === blockN() && !!S.pattern.cell === cellMode(); }
+  function sizeLbl(t) { const k = t.cell ? (t.n + 1) / 2 : t.n; return k + '×' + k; }
   function tilePQ(t) { const u = 2 * t[0] + (t[1] & 1), v = t[1]; return [(u + v) / 2, (v - u) / 2]; }
   function pqTile(p, q) {
     const m = S.map, u = p - q, v = p + q; if (v < 0 || v >= m.ch) return null;
@@ -624,15 +634,15 @@
   }
   // current brush as n*n cells (tuple [tile, a, b, c] or null = leave as is)
   function brushCells() {
-    const n = S.tileSize;
-    if (S.pattern && S.pattern.n === n) return S.pattern.cells;
-    const tp = tupleOf(S.tileSel); return tp ? Array(n * n).fill(tp) : null;
+    const n = blockN(), cell = cellMode();
+    if (patternFits()) return S.pattern.cells;
+    const tp = tupleOf(S.tileSel); return tp ? Array.from({ length: n * n }, (_, k) => inBlock(n, (k / n) | 0, k % n, cell) ? tp : null) : null;
   }
   function blockOrigin(t) {
-    const n = S.tileSize, c = (n - 1) >> 1; let [p, q] = tilePQ(t); p -= c; q -= c;
+    const n = blockN(), c = (n - 1) >> 1; let [p, q] = tilePQ(t); p -= c; q -= c;
     // while dragging a pattern, snap to the first stamp's lattice so copies line up without overlapping
     const o = S.stampOrigin;
-    if (o && n > 1 && S.pattern) { p = o[0] + Math.round((p - o[0]) / n) * n; q = o[1] + Math.round((q - o[1]) / n) * n; }
+    if (o && n > 1 && S.pattern && !cellMode()) { p = o[0] + Math.round((p - o[0]) / n) * n; q = o[1] + Math.round((q - o[1]) / n) * n; }
     return [p, q];
   }
   function writeTile(x, y, tp) {
@@ -648,7 +658,7 @@
   function stampTile(wx, wy) {
     const m = S.map, t = tileAt(wx, wy); if (!t) return;
     const cells = brushCells(); if (!cells) { toast('이 타일은 지형표에 없는 타일입니다'); return; }
-    const n = S.tileSize, [p0, q0] = blockOrigin(t), key = p0 + ',' + q0;
+    const n = blockN(), [p0, q0] = blockOrigin(t), key = p0 + ',' + q0;
     if (S.painting && S.lastStamp === key) return;
     S.lastStamp = key; if (!S.stampOrigin) S.stampOrigin = [p0, q0];
     for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
@@ -658,21 +668,21 @@
   }
   function pickTile(wx, wy) {
     const m = S.map, t = tileAt(wx, wy); if (!t) return;
-    const n = S.tileSize, c = (n - 1) >> 1, [p, q] = tilePQ(t), cells = [];
+    const n = blockN(), cell = cellMode(), c = (n - 1) >> 1, [p, q] = tilePQ(t), cells = [];
     for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
-      const tt = pqTile(p - c + i, q - c + j), k = tt && tt[1] * m.cw + tt[0];
+      const tt = inBlock(n, i, j, cell) ? pqTile(p - c + i, q - c + j) : null, k = tt && tt[1] * m.cw + tt[0];
       cells.push(tt ? [m.tIdx[k], m.tA[k], m.tB[k], m.tC[k]] : null);
     }
     const mid = cells[c * n + c];
     S.tileSel = mid ? mid[0] : S.tileSel;
     // 1×1 of a normal tile = plain palette selection; anything else keeps the exact tiles
-    S.pattern = (n === 1 && mid && R.TILE_DEF[mid[0]]) ? null : { n, cells };
+    S.pattern = (n === 1 && mid && R.TILE_DEF[mid[0]]) ? null : { n, cells, cell };
     setTool('tile'); buildPalette();
-    toast(n === 1 ? '타일 #' + S.tileSel + ' 선택' : n + '×' + n + ' 블록을 복사했습니다', 1800);
+    toast(n === 1 ? '타일 #' + S.tileSel + ' 선택' : S.tileSize + '×' + S.tileSize + ' 블록을 복사했습니다', 1800);
   }
   function setTileSize(n) {
     n = Math.max(1, Math.min(TILE_MAX, n | 0)); S.tileSize = n;
-    if (S.pattern && S.pattern.n !== n) S.pattern = null;   // 크기를 바꾸면 선택 타일로 채우는 붓으로
+    if (S.pattern && !patternFits()) S.pattern = null;   // 크기를 바꾸면 선택 타일로 채우는 붓으로
     $('tileSize').value = n; $('tileSizeLbl').textContent = n + '×' + n; renderTileBrush(); draw();
   }
   // 타일 한 장(작은 그림 64×32 마름모)을 한 변 side 인 정사각형으로 (cx, cy) 가운데에 그린다 — 평면 보기와 같은 방향
@@ -704,9 +714,9 @@
   }
   const TPL_KEY = 'rkm-tile-templates';
   function tplKey(n, cells) { return n + ':' + cells.map(c => c ? c.join('.') : '-').join(','); }
-  function currentTpl() { const cells = brushCells(); return cells ? { n: S.tileSize, cells } : null; }
+  function currentTpl() { const cells = brushCells(); return cells ? { n: blockN(), cells, cell: cellMode() } : null; }
   function favIndex(t) { if (!t) return -1; const k = tplKey(t.n, t.cells); return S.templates.findIndex(x => tplKey(x.n, x.cells) === k); }
-  function validTpl(t) { return t && Number.isInteger(t.n) && t.n >= 1 && t.n <= TILE_MAX && Array.isArray(t.cells) && t.cells.length === t.n * t.n && t.cells.every(c => c === null || (Array.isArray(c) && c.length === 4 && c.every(Number.isInteger))); }
+  function validTpl(t) { return t && Number.isInteger(t.n) && t.n >= 1 && t.n <= BLOCK_MAX && Array.isArray(t.cells) && t.cells.length === t.n * t.n && t.cells.every(c => c === null || (Array.isArray(c) && c.length === 4 && c.every(Number.isInteger))); }
   async function loadTemplates() {
     let list = null;
     if (SRV.on) { try { const r = await fetch('/api/templates', { cache: 'no-store' }); if (r.ok) list = await r.json(); } catch (e) { list = null; } }
@@ -725,14 +735,15 @@
     const t = currentTpl(); if (!t) { toast('먼저 타일을 고르거나 스포이드로 블록을 복사하세요'); return; }
     const i = favIndex(t);
     if (i >= 0) { S.templates.splice(i, 1); toast('즐겨찾기에서 뺐습니다', 1500); }
-    else { S.templates.unshift({ n: t.n, cells: t.cells.map(c => c && c.slice()), ts: S.map ? S.map.tileset : 0, t: Date.now() }); toast(t.n + '×' + t.n + ' 템플릿을 즐겨찾기에 저장했습니다', 1800); }
+    else { S.templates.unshift({ n: t.n, cells: t.cells.map(c => c && c.slice()), cell: !!t.cell, ts: S.map ? S.map.tileset : 0, t: Date.now() }); toast(sizeLbl(t) + ' 템플릿을 즐겨찾기에 저장했습니다', 1800); }
     saveTemplates(); renderTileBrush();
   }
   function useTemplate(t) {
-    S.tileSize = t.n; $('tileSize').value = t.n; $('tileSizeLbl').textContent = t.n + '×' + t.n;
+    if (!!t.cell !== cellMode()) setFlat(!t.cell);          // 템플릿을 만든 보기로 (블록 모양이 보기를 따른다)
+    S.tileSize = Math.min(TILE_MAX, t.cell ? (t.n + 1) / 2 : t.n); $('tileSize').value = S.tileSize; $('tileSizeLbl').textContent = sizeLbl(t);
     const mid = t.cells[((t.n - 1) >> 1) * t.n + ((t.n - 1) >> 1)];
     if (mid) S.tileSel = mid[0];
-    S.pattern = { n: t.n, cells: t.cells.map(c => c && c.slice()) };
+    S.pattern = { n: t.n, cells: t.cells.map(c => c && c.slice()), cell: !!t.cell };
     setTool('tile'); buildPalette();
   }
   function renderTileBrush() {
@@ -741,17 +752,17 @@
     if (t) drawCells(cur, t.n, t.cells); else cur.getContext('2d').clearRect(0, 0, cur.width, cur.height);
     const fav = favIndex(t) >= 0, b = $('tileFav');
     b.textContent = fav ? '★' : '☆'; b.classList.toggle('on', fav); b.title = fav ? '즐겨찾기 취소' : '즐겨찾기에 템플릿으로 저장';
-    $('tileCurLbl').textContent = !t ? '-' : (S.pattern ? '복사한 ' : '#' + S.tileSel + ' 채우기 ') + t.n + '×' + t.n;
+    $('tileCurLbl').textContent = !t ? '-' : (patternFits() ? '복사한 ' : '#' + S.tileSel + ' 채우기 ') + sizeLbl(t);
     const box = $('tileFavs'); box.innerHTML = '';
     if (!S.templates.length) { box.innerHTML = '<div class="hint">☆ 를 누르면 지금 붓이 여기에 저장됩니다.</div>'; return; }
     const curKey = t ? tplKey(t.n, t.cells) : '';
     S.templates.forEach((tp, idx) => {
       const d = document.createElement('div'); d.className = 'fav' + (tplKey(tp.n, tp.cells) === curKey ? ' cur' : '');
       const c = document.createElement('canvas'); c.width = 84; c.height = 42; drawCells(c, tp.n, tp.cells);
-      c.title = tp.n + '×' + tp.n + ' 템플릿 — 클릭하면 이 블록으로 찍기'; c.onclick = () => useTemplate(tp);
+      c.title = sizeLbl(tp) + ' 템플릿 — 클릭하면 이 블록으로 찍기'; c.onclick = () => useTemplate(tp);
       const st = document.createElement('button'); st.className = 'star on'; st.textContent = '★'; st.title = '즐겨찾기 취소';
       st.onclick = (e) => { e.stopPropagation(); S.templates.splice(idx, 1); saveTemplates(); renderTileBrush(); toast('즐겨찾기에서 뺐습니다', 1500); };
-      const lb = document.createElement('span'); lb.textContent = tp.n + '×' + tp.n;
+      const lb = document.createElement('span'); lb.textContent = sizeLbl(tp);
       d.append(c, st, lb); box.appendChild(d);
     });
   }
@@ -1116,14 +1127,15 @@
   $('bZoomIn').onclick = () => zoom(1.25); $('bZoomOut').onclick = () => zoom(0.8);
   $('bGrid').onclick = () => { S.grid = !S.grid; $('bGrid').classList.toggle('on', S.grid); draw(); };
   // 정사각형(평면) 보기 <-> 게임(마름모) 보기. 화면 가운데가 보던 곳은 그대로.
-  const FLAT_KEY = 'rkm-flat-view';
+  const FLAT_KEY = 'rkm-view';             // 'flat' = 정사각형 보기, 그 밖 = 게임 보기(기본)
   function setFlat(v) {
     S.flat = !!v; $('bFlat').classList.toggle('on', S.flat);
-    try { localStorage.setItem(FLAT_KEY, S.flat ? '1' : '0'); } catch (e) { }
-    if (S.map) { buildPalette(); mmCache = null; paintMinimap(); }
+    try { localStorage.setItem(FLAT_KEY, S.flat ? 'flat' : 'game'); } catch (e) { }
+    if (S.pattern && !patternFits()) S.pattern = null;     // 블록 모양이 보기를 따르므로 복사한 블록은 버린다
+    if (S.map) { buildPalette(); mmCache = null; paintMinimap(); } else renderTileBrush();
     draw();
   }
-  try { S.flat = localStorage.getItem(FLAT_KEY) !== '0'; } catch (e) { }
+  try { S.flat = localStorage.getItem(FLAT_KEY) === 'flat'; } catch (e) { }
   $('bFlat').classList.toggle('on', S.flat);
   $('bFlat').onclick = () => setFlat(!S.flat);
   $('bCellGrid').onclick = () => { S.cellGrid = !S.cellGrid; $('bCellGrid').classList.toggle('on', S.cellGrid); draw(); };

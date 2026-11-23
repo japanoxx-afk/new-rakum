@@ -221,13 +221,35 @@ class TileBlockToolTests(unittest.TestCase):
         self.assertIn('const m = S.map, u = p - q, v = p + q;', page)
         self.assertIn('return [(u + v) / 2, (v - u) / 2];', page)
 
+    def test_cell_grid_block_is_a_screen_aligned_square_of_whole_tiles(self):
+        """게임 보기의 찍기 블록: 셀 격자(화면 가로·세로) 방향 사각형 — 가로 n 타일 × 세로 n 타일 안에 온전히 들어가는 타일.
+        (p, q) 칸 (2n-1)×(2n-1) 에서 |i-j| <= n-1, |i+j-2(n-1)| <= n-1 인 칸. 타일 가운데 = (128u, 64v), u = p-q, v = p+q."""
+        page = (HERE / 'map_editor_web' / 'editor' / mew.EDITOR_PAGE).read_text(encoding='utf-8')
+        self.assertIn("function inBlock(n, i, j, cell) { if (!cell) return true; const h = (n - 1) / 2; "
+                      "return Math.abs(i - j) <= h && Math.abs(i + j - 2 * h) <= h; }", page)
+        self.assertIn("function blockN() { return cellMode() ? 2 * S.tileSize - 1 : S.tileSize; }", page)
+        for size in range(1, 9):
+            n, h = 2 * size - 1, size - 1
+            cells = [(i, j) for i in range(n) for j in range(n) if abs(i - j) <= h and abs(i + j - 2 * h) <= h]
+            self.assertEqual(len(cells), size * size + (size - 1) * (size - 1))
+            centers = sorted(((i - j) * 128, (i + j) * 64) for i, j in cells)      # 블록 왼쪽 위 칸 기준 화면 위치
+            xs, ys = [c[0] for c in centers], [c[1] for c in centers]
+            # 화면에서 가로·세로 모두 (size-1) 타일 폭의 똑바른 사각형 안: 가운데가 그 안의 엇갈린 격자점 전부
+            self.assertEqual((max(xs) - min(xs), max(ys) - min(ys)), ((size - 1) * 256, (size - 1) * 128))
+            x0, y0 = min(xs), min(ys)
+            want = sorted((x0 + a * 128, y0 + b * 64) for a in range(2 * size - 1) for b in range(2 * size - 1)
+                          if (a + b) % 2 == 0)
+            self.assertEqual(centers, want)
+        self.assertTrue(mew.valid_templates([{'n': 15, 'cells': [None] * 225, 'cell': True}]))
+        self.assertFalse(mew.valid_templates([{'n': 16, 'cells': [None] * 256}]))
+
     def test_page_has_square_view(self):
         """정사각형(평면) 보기: 타일 모서리 방향 (p, q) 를 화면 가로·세로로 — x' = wx/2 + wy, y' = wy - wx/2.
         그러면 256×128 마름모 타일이 128×128 정사각형이 되고, N×N 블록(p, q 칸)은 화면에 똑바로 놓인 정사각형이 된다."""
         page = (HERE / 'map_editor_web' / 'editor' / mew.EDITOR_PAGE).read_text(encoding='utf-8')
         self.assertIn('id="bFlat"', page)
         self.assertIn("function vm() { return S.flat ? [0.5, -0.5, 1, 1] : [1, 0, 0, 1]; }", page)
-        self.assertIn("flat: true,", page)                                   # 기본이 정사각형 보기
+        self.assertIn("flat: false,", page)                                  # 기본은 게임 보기 (맵·셀 격자가 똑바로)
         a, b, c, d = 0.5, -0.5, 1, 1
         view = lambda x, y: (a * x + c * y, b * x + d * y)
         # 타일 (x, y) 가운데 = 월드 (x*256 + (y&1)*128, y*64) -> 화면 (128p, 128q)
