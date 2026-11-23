@@ -14,7 +14,8 @@ def ensure_closed(path):
     if result.returncode or result.stdout.strip():raise RuntimeError('해당 설치 폴더의 게임을 완전히 종료한 뒤 적용하세요.')
 
 def underlying(data):
-    import hotkey_patch,selection_patch,replay_record_patch
+    import hotkey_patch,selection_patch,replay_record_patch,smart_cast_patch
+    data=smart_cast_patch.strip(data)   # 맨 뒤 섹션(.scast, 마법 순차 시전)부터 걷어냄
     data=hotkey_patch.strip(data)   # 단축키 섹션은 미니맵 꼬리 뒤에 붙으므로 먼저 걷어냄
     data=replay_record_patch.strip(data)   # 그 아래 리플레이 명령 기록 섹션
     data=selection_patch.strip(data)   # 그 아래 선택 한도 24 섹션과 코드 수정도 걷어냄
@@ -108,4 +109,6 @@ def build(original,highres,rally_gold=True,hotkeys=True,select24=False,record=Fa
     data=production_split_patch.transform(data,True)   # 같은 건물 여러 개: 생산·연구를 나눠 맡김 (항상, 보내는 쪽만)
     data=selection_patch.apply(data,select24)      # 미니맵 섹션 뒤 .sel24 (선택 한도 24)
     data=replay_record_patch.apply(data,record or play,start_save,play,wide_checks or not play)    # 그 뒤 .rkrec (리플레이 기록/재생; 넓은 검사값은 기록 항상, 재생은 그 리플레이에 맞춤)
-    return hotkey_patch.apply(data,hotkeys)        # 맨 뒤에 단축키 섹션 (.sel24 가 있으면 24칸 판)
+    data=hotkey_patch.apply(data,hotkeys)        # 그 뒤에 단축키 섹션 (.sel24 가 있으면 24칸 판)
+    import smart_cast_patch
+    return smart_cast_patch.apply(data,True)       # 맨 뒤 .scast: 마법 순차 시전 (항상, 보내는 쪽만)

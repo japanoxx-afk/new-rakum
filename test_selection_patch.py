@@ -5,6 +5,13 @@ from pathlib import Path
 
 import hotkey_patch
 import minimap_patch
+import smart_cast_patch
+
+
+def build(*args, **kwargs):
+    """실행용 파일에서 맨 뒤 섹션(.scast, 마법 순차 시전)을 걷어낸 것 — 이 시험이 보는 섹션이 맨 뒤에 오게."""
+    return smart_cast_patch.strip(minimap_patch.build(*args, **kwargs))
+
 import selection_patch as sp
 
 HERE = Path(__file__).resolve().parent
@@ -29,8 +36,8 @@ class SelectionPatchTests(unittest.TestCase):
         if not EXE.is_file():
             raise unittest.SkipTest('game_backup/Rhakmu.exe 없음')
         cls.original = EXE.read_bytes()
-        cls.base = minimap_patch.build(cls.original, False, True, hotkeys=True)
-        cls.wide = minimap_patch.build(cls.original, False, True, hotkeys=True, select24=True)
+        cls.base = build(cls.original, False, True, hotkeys=True)
+        cls.wide = build(cls.original, False, True, hotkeys=True, select24=True)
 
     # ── 파일 ────────────────────────────────────────────────
     def test_roundtrip_and_validation(self):
@@ -40,8 +47,8 @@ class SelectionPatchTests(unittest.TestCase):
         self.assertEqual(sp.strip(under), hotkey_patch.strip(self.base))
         self.assertEqual(sp.apply(under), under)
         self.assertEqual(minimap_patch.underlying(self.wide), minimap_patch.underlying(self.base))
-        self.assertEqual(minimap_patch.build(self.wide, False, True, True, False), self.base)
-        self.assertEqual(minimap_patch.build(self.base, False, True, True, True), self.wide)
+        self.assertEqual(build(self.wide, False, True, True, False), self.base)
+        self.assertEqual(build(self.base, False, True, True, True), self.wide)
         self.assertTrue(hotkey_patch.state(self.wide))
         self.assertEqual(hotkey_patch._code_for(self.wide), hotkey_patch.CODE24)
         self.assertEqual(hotkey_patch._code_for(self.base), hotkey_patch.CODE)
