@@ -85,6 +85,12 @@ git clone https://github.com/japanoxx-afk/rtsarena.git
 특히 `20261122_052001_[4](N4)_Fighting_Spirit.rkr`(넓은 검사값, v0.9082 로 끝까지 같음), `20261122_022438_[4](N4)_Fighting_Spirit1.1.rkr`, `20261121_205441_[4](N4)_Fighting_Spirit.rkr`.
 
 ## 4. 기타 진행 중·참고
+- **종족 이름 한글 (v0.9092)**: 위국군(무휼, 번호 0) / 아스트리아(아렌, 1) / 바르바로이(마르두크, 2) — 사용자 지정.
+  게임 방 화면의 이름은 그림이다: `Data\Data002.FDB` 안 `DATA\MENUDATA\MENUCOMMON.S16` 31~36번. `race_name_patch.py` 가 게임 실행
+  때 한글 그림으로 바꾼다 (원본은 `Data\MENUCOMMON.S16.orig`, 여섯 장 자리 말고는 한 바이트도 안 바뀜; S16 구조는 그 파일 머리말).
+  그림은 `tools/make_race_name_sprites.py` (Noto Sans CJK KR Bold 13px — 14px 은 원본 자리를 넘는다). 런처·맵 에디터의
+  이름은 `replay_model.py`·`replay_memory.py`·`map_editor_web/src/core.js`, 전적 사이트는 rtsarena `arena/games/rakmu.py`.
+  DB(rtsarena SQLite)·리플레이·matches.json 에는 종족이 번호로만 들어 있어 바꿀 값이 없다.
 - **NAS 서버 (Docker/Portainer)**: `nas-server/` (README, HANDOFF.txt), 브랜치 `launcher-v0.9061-nas-online`, 메모 `docs/notes/nas-server-deploy.md`.
   HANDOFF.txt 에 "main 을 머지하고 0.9063+ 로 올려야 함" 이 적혀 있다.
 - 홀펀칭: `docs/notes/holepunch-analysis.md`, `rkp2p/` (C, CI 빌드). v0.9072 부터 인터넷 서버만 홀펀칭.

@@ -8,6 +8,7 @@ on:
       - 'launcher.py'
       - 'replay_record_patch.py'
       - 'replay_assoc.py'
+      - 'race_name_patch.py'
       - 'production_split_patch.py'
       - 'server.py'
       - 'peer_address_patch.py'
@@ -50,7 +51,7 @@ jobs:
       - name: Build rkp2p (hole punching TG_Net.dll proxy)
         run: python rkp2p/build.py
       - name: Tests
-        run: python -m unittest test_map_editor_web test_map_preview test_rally_gold_patch test_highres_ready test_game_address_patch test_hotkey_patch test_selection_patch test_server_address test_server_ingame test_server_version test_game_version test_menu_free_guard test_replay test_arena_upload test_server_match_log test_server_lobby_cleanup test_cursor_guard test_holepunch test_rkp2p test_server_robust test_launch_pipeline test_production_split_patch test_replay_assoc -v
+        run: python -m unittest test_map_editor_web test_map_preview test_rally_gold_patch test_highres_ready test_game_address_patch test_hotkey_patch test_selection_patch test_server_address test_server_ingame test_server_version test_game_version test_menu_free_guard test_replay test_arena_upload test_server_match_log test_server_lobby_cleanup test_cursor_guard test_holepunch test_rkp2p test_server_robust test_launch_pipeline test_production_split_patch test_replay_assoc test_race_name_patch -v
       - name: Arena upload token
         shell: pwsh
         env:

@@ -28,7 +28,7 @@ FRAME, SEED, GAME_OPTIONS = 0xB412B4, 0x6E1A78, 0x6DFF88   # 프레임 번호, �
 UNIT_NAMES, NAME_SIZE, TYPE_COUNT = 0x5038EC, 0x80, 0xD2
 TYPE_INFO, TYPE_INFO_STRIDE = 0x4FCD88, 0x1C
 TYPE_STATS, TYPE_STATS_STRIDE = 0x4FE474, 0x14
-RACES = ("무휼", "아렌", "마르두크")
+RACES = ("위국군", "아스트리아", "바르바로이")   # 종족 번호 0 무휼(Mu hŭl), 1 아렌(Aren), 2 마르두크(Marduke)
 RESOURCE_NAMES = ("금", "물", "카르마", "글로리")   # 상단 표시 순서 (다섯째 칸은 인구)
 # 카르마: 유닛이 죽을 때 쌓임, 글로리: 건물 건설·유닛 생산 때 쌓임
 

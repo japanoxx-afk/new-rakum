@@ -260,7 +260,7 @@ class RecordAndModelTests(unittest.TestCase):
         self.assertEqual(st[0]["lost_units"], 1)
         self.assertEqual(st[0]["final_resources"][0], 390)
         self.assertEqual(st[1]["peak_army"], 1)
-        self.assertIn("big (마르두크)", M.summary_text(rp))
+        self.assertIn("big (바르바로이)", M.summary_text(rp))
         # 보간: 이동 중인 일꾼 위치는 두 장면 사이 값
         i = rp.index_at(3.0)
         a = rp.units_at_index(i)[2][3]
