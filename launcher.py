@@ -24,6 +24,7 @@ import peer_address_patch
 import panel_guard_patch
 import viewport_patch
 import minimap_patch
+import race_name_patch
 import command_cadence_trial
 import command_cadence_installer
 from release_notes import NOTES
@@ -66,7 +67,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9091"
+APP_VERSION = "0.9092"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1690,6 +1691,10 @@ class App(tk.Tk):
         note = game_version.ensure(exe)
         if note:
             messagebox.showinfo('게임 버전 맞춤', note)
+        try:                                    # 방 화면 종족 이름을 한글 그림으로 (못 바꿔도 게임은 실행)
+            race_name_patch.apply(path / 'Data')
+        except Exception:
+            pass
         highres, why = self._highres_ready(path) if self.cfg.get('viewport_1280', True) else (False, '')
         # Build and validate the complete result in memory; one atomic replacement.
         hotkeys = bool(self.cfg.get('hotkeys', True))

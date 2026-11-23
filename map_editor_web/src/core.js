@@ -65,7 +65,7 @@
     '왼쪽 2층 언덕 입구 (상하대칭)', '오른쪽 2층 언덕 입구 (상하대칭)', '왼쪽 3층 언덕 입구 (상하대칭)', '오른쪽 3층 언덕 입구 (상하대칭)'];
   // ids 8-11 are added by the flip mod (Data\\tile\\*.jtl / *_Bridge.brg next to the game); the original game has only 0-7
   const SUB_MOD_FROM = 8;
-  const RACES = ['무휼', '아렌', '마르두크'];
+  const RACES = ['위국군', '아스트리아', '바르바로이'];   // 0 무휼(Mu hŭl), 1 아렌(Aren), 2 마르두크(Marduke)
   const COLORS = [['빨강', '#e02020'], ['파랑', '#2060ff'], ['주황', '#ff9020'], ['검정', '#303030'], ['하양', '#f0f0f0'], ['노랑', '#f0e020'], ['보라', '#a040e0'], ['초록', '#20c040']];
   const KIND = { SUB: 3, DECO: 5, RES: 7 };
   const SEC6_DEFAULT_B64 = '__SEC6__';
