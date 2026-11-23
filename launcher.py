@@ -67,7 +67,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9092"
+APP_VERSION = "0.9093"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -974,6 +974,7 @@ class App(tk.Tk):
                         command=self._on_tile_mod_auto_toggle).pack(anchor="w", pady=(8, 0))
         self._refresh_tile_mod_status()
         self.after(400, self._auto_tile_mod)
+        self.after(700, self._check_official_patch)
 
     def _on_tile_mod_auto_toggle(self):
         self.cfg["tile_mod_auto"] = bool(self.tile_mod_auto_var.get())
@@ -1688,7 +1689,7 @@ class App(tk.Tk):
         exe = path / PATCH_EXE
         minimap_patch.ensure_closed(exe)
         # 모든 PC가 같은 게임판(1.000d)이어야 방 입장이 된다: 아니면 런처에 든 1.000d 로 교체
-        note = game_version.ensure(exe)
+        note = game_version.apply_official_patch(path)      # 공식 패치(Patch1003)를 안 깐 설치본도 여기서 맞춘다
         if note:
             messagebox.showinfo('게임 버전 맞춤', note)
         try:                                    # 방 화면 종족 이름을 한글 그림으로 (못 바꿔도 게임은 실행)
@@ -2425,6 +2426,21 @@ class App(tk.Tk):
         self.ver_badge.set(gv if str(gv).startswith("게임") else f"게임 {gv}")
         self.lat_badge.set(f"반응 {latstr}")
 
+    def _check_official_patch(self, quiet=False):
+        """공식 패치(Patch1003.exe = 1.000d)를 깔지 않은 설치본이면 런처가 같은 상태로 맞춘다 (런처를 켤 때·폴더를 바꿀 때).
+        게임 실행 때도 다시 확인하므로, 여기서 못 해도(게임 실행 중·권한 없음) 조용히 넘어간다."""
+        try:
+            path = pathlib.Path(self.cfg.get("game_dir", DEFAULT_GAME_DIR))
+            if replay_memory.find_game_pid():
+                return
+            note = game_version.apply_official_patch(path)
+        except (OSError, ValueError):
+            return
+        if note:
+            self._refresh_patch_status()
+            if not quiet:
+                messagebox.showinfo('게임 버전 맞춤', note)
+
     def _on_browse_game(self):
         from tkinter import filedialog
         d = filedialog.askdirectory(title="라크무 설치 폴더 선택", initialdir=self.gamedir_var.get())
@@ -2434,6 +2450,7 @@ class App(tk.Tk):
             self.latency = LatencyPatch(d)
             self.cfg["game_dir"] = d
             save_config(self.base_dir, self.cfg)
+            self._check_official_patch()
             self._refresh_patch_status()
 
     def _on_rally_gold_toggle(self):

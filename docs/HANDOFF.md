@@ -85,6 +85,9 @@ git clone https://github.com/japanoxx-afk/rtsarena.git
 특히 `20261122_052001_[4](N4)_Fighting_Spirit.rkr`(넓은 검사값, v0.9082 로 끝까지 같음), `20261122_022438_[4](N4)_Fighting_Spirit1.1.rkr`, `20261121_205441_[4](N4)_Fighting_Spirit.rkr`.
 
 ## 4. 기타 진행 중·참고
+- **공식 패치 내장 (v0.9093)**: 새 설치본에 따로 깔아야 했던 `Patch1003.exe` 가 하는 일은 Rhakmu.exe 1.000d 교체 +
+  레지스트리 GameVer=1003 (+ 디버그 정보 Rhakmu.000, 안내문) 뿐이다 (설치 파일을 풀어 확인 — `game_version.py` 머리말).
+  런처가 켤 때·게임 폴더를 바꿀 때·게임 실행 때 `game_version.apply_official_patch` 로 맞춘다. Rhakmu.000 은 넣지 않는다.
 - **종족 이름 한글 (v0.9092)**: 위국군(무휼, 번호 0) / 아스트리아(아렌, 1) / 바르바로이(마르두크, 2) — 사용자 지정.
   게임 방 화면의 이름은 그림이다: `Data\Data002.FDB` 안 `DATA\MENUDATA\MENUCOMMON.S16` 31~36번. `race_name_patch.py` 가 게임 실행
   때 한글 그림으로 바꾼다 (원본은 `Data\MENUCOMMON.S16.orig`, 여섯 장 자리 말고는 한 바이트도 안 바뀜; S16 구조는 그 파일 머리말).
