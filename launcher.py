@@ -25,6 +25,7 @@ import panel_guard_patch
 import viewport_patch
 import minimap_patch
 import race_name_patch
+import smart_cast_patch
 import command_cadence_trial
 import command_cadence_installer
 from release_notes import NOTES
@@ -67,7 +68,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9095"
+APP_VERSION = "0.9096"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1157,6 +1158,7 @@ class App(tk.Tk):
                            "lobby_ip": HostsManager.read_current_ip([GAME_HOST])}, f, ensure_ascii=False, indent=2)
             try:
                 raw_game = pathlib.Path(self.cfg.get('game_dir', DEFAULT_GAME_DIR), PATCH_EXE).read_bytes()
+                raw_game = smart_cast_patch.strip(raw_game)          # 맨 뒤 섹션(.scast)을 걷어낸 뒤에 본다
                 hotkeys_state = hotkey_patch.state(raw_game)
                 select24_state = selection_patch.state(replay_record_patch.strip(hotkey_patch.strip(raw_game)))
                 game_data = minimap_patch.underlying(raw_game)
@@ -1710,6 +1712,9 @@ class App(tk.Tk):
                               rally_spawn, wide_checks)
         self.cfg['command_cadence_99ms'] = False
         installed = exe.read_bytes()
+        if not smart_cast_patch.state(installed):
+            raise RuntimeError('마법 순차 시전 패치 검증 실패. 게임을 실행하지 않았습니다.')
+        installed = smart_cast_patch.strip(installed)           # 맨 뒤 섹션(.scast) 아래를 차례로 확인
         if hotkey_patch.state(installed) != hotkeys:
             raise RuntimeError('단축키 확장 패치 검증 실패. 게임을 실행하지 않았습니다.')
         if (replay_record_patch.state(hotkey_patch.strip(installed)) != (record or play)

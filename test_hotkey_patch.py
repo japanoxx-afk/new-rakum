@@ -5,6 +5,13 @@ from pathlib import Path
 
 import hotkey_patch as h
 import minimap_patch
+import smart_cast_patch
+
+
+def build(*args, **kwargs):
+    """실행용 파일에서 맨 뒤 섹션(.scast, 마법 순차 시전)을 걷어낸 것 — 이 시험이 보는 섹션이 맨 뒤에 오게."""
+    return smart_cast_patch.strip(minimap_patch.build(*args, **kwargs))
+
 
 HERE = Path(__file__).resolve().parent
 EXE = HERE / 'game_backup' / 'Rhakmu.exe'
@@ -26,8 +33,8 @@ class HotkeyPatchTests(unittest.TestCase):
         if not EXE.is_file():
             raise unittest.SkipTest('game_backup/Rhakmu.exe 없음')
         original = EXE.read_bytes()
-        cls.base = minimap_patch.build(original, False, True, hotkeys=False)
-        cls.patched = minimap_patch.build(original, False, True, hotkeys=True)
+        cls.base = build(original, False, True, hotkeys=False)
+        cls.patched = build(original, False, True, hotkeys=True)
 
     def test_roundtrip_and_validation(self):
         self.assertFalse(h.state(self.base))
@@ -45,12 +52,12 @@ class HotkeyPatchTests(unittest.TestCase):
         self.assertEqual(self.patched, h.apply(self.base))
         self.assertEqual(minimap_patch.underlying(self.patched), minimap_patch.underlying(self.base))
         # 이미 패치된 파일에서 다시 만들어도 같은 결과 (설정 끄기/켜기 왕복)
-        self.assertEqual(minimap_patch.build(self.patched, False, True, hotkeys=False), self.base)
-        self.assertEqual(minimap_patch.build(self.base, False, True, hotkeys=True), self.patched)
+        self.assertEqual(build(self.patched, False, True, hotkeys=False), self.base)
+        self.assertEqual(build(self.base, False, True, hotkeys=True), self.patched)
         for high in (False, True):
-            p = minimap_patch.build(self.patched, high, True, hotkeys=True)
+            p = build(self.patched, high, True, hotkeys=True)
             self.assertTrue(h.state(p))
-            self.assertEqual(h.strip(p), minimap_patch.build(self.base, high, True, hotkeys=False))
+            self.assertEqual(h.strip(p), build(self.base, high, True, hotkeys=False))
         # 런처의 명령 지연 패치 시그니처(66 C7 40 48 ?? 00 E8)가 새 코드에 생기면 안 됨
         def sites(d):
             return [i for i in range(len(d) - 7) if d[i] == 0x66 and d[i + 1] == 0xC7 and d[i + 2] == 0x40

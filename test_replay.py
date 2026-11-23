@@ -423,10 +423,11 @@ class RecordPatchTests(unittest.TestCase):
             for hot in (False, True):
                 off = mm.build(o, False, True, hot, wide, False)
                 on = mm.build(o, False, True, hot, wide, True)
-                under = hk.strip(on)
+                import smart_cast_patch as scp           # 맨 뒤 섹션(.scast)부터 차례로 걷어낸다
+                under = hk.strip(scp.strip(on))
                 self.assertTrue(rrp.state(under))
-                self.assertFalse(rrp.state(hk.strip(off)))
-                self.assertEqual(rrp.strip(under), hk.strip(off))
+                self.assertFalse(rrp.state(hk.strip(scp.strip(off))))
+                self.assertEqual(rrp.strip(under), hk.strip(scp.strip(off)))
                 self.assertEqual(mm.build(on, False, True, hot, wide, False), off)
                 self.assertEqual(mm.build(off, False, True, hot, wide, True), on)
                 self.assertEqual(sp.state(rrp.strip(under)), wide)
