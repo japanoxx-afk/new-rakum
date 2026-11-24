@@ -11,6 +11,8 @@ on:
       - 'race_name_patch.py'
       - 'smart_cast_patch.py'
       - 'scenario_mode.py'
+      - 'package_mode_patch.py'
+      - 'minimap_patch.py'
       - 'production_split_patch.py'
       - 'server.py'
       - 'peer_address_patch.py'

@@ -73,5 +73,33 @@ class MapTests(unittest.TestCase):
             self.assertFalse(sm.scenario_dir(game).exists())
 
 
+class CdKeyTests(unittest.TestCase):
+    """패키지 모드의 CD 키 확인 건너뛰기: 싱글 메뉴 실험 실행 때만 들어가고, 보통 실행으로 빌드하면 빠진다."""
+
+    def test_patch_only_for_the_experimental_launch(self):
+        import minimap_patch
+        import package_mode_patch as pm
+        exe = Path(__file__).resolve().parent / "game_backup" / "Rhakmu.exe"
+        if not exe.is_file():
+            self.skipTest("game_backup/Rhakmu.exe 없음")
+        original = exe.read_bytes()
+        self.assertEqual(original[pm.SITE:pm.SITE + 6], pm.ORIGINAL)
+        self.assertEqual(original[pm.SITE - 12:pm.SITE - 7], bytes.fromhex("e834c7f4ff"))      # call 0x425E90 (CD 키 확인)
+        self.assertEqual(pm.SITE + 0x400000 + 6 + 0xB5, 0x4D981E)                               # 두 점프 모두 같은 곳으로
+        normal = minimap_patch.build(original, False)
+        single = minimap_patch.build(original, False, package=True)
+        self.assertFalse(pm.state(minimap_patch.underlying(normal)))
+        self.assertTrue(pm.state(minimap_patch.underlying(single)))
+        self.assertEqual([i for i in range(len(normal)) if normal[i] != single[i]], [pm.SITE, pm.SITE + 1])
+        self.assertEqual(minimap_patch.build(single, False), normal)                            # 다음 보통 실행에서 되돌아감
+        self.assertEqual(minimap_patch.build(normal, False, package=True), single)
+        self.assertEqual(minimap_patch.build(original, True, package=True),
+                         minimap_patch.build(minimap_patch.build(original, True), True, package=True))
+        bad = bytearray(original)
+        bad[pm.SITE] ^= 1
+        with self.assertRaises(ValueError):
+            pm.state(bad)
+
+
 if __name__ == "__main__":
     unittest.main()
