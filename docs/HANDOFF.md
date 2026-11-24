@@ -85,6 +85,10 @@ git clone https://github.com/japanoxx-afk/rtsarena.git
 특히 `20261122_052001_[4](N4)_Fighting_Spirit.rkr`(넓은 검사값, v0.9082 로 끝까지 같음), `20261122_022438_[4](N4)_Fighting_Spirit1.1.rkr`, `20261121_205441_[4](N4)_Fighting_Spirit.rkr`.
 
 ## 4. 기타 진행 중·참고
+- **v0.9098 싱글 메뉴·시나리오 (실험)**: `scenario_mode.py` (머리말에 분석). 게임은 레지스트리 HKLM `SOFTWARE\TriggerSoft\RhakMu` 의
+  `Pack` 이 0 이면 TNet 로그인만, 0 이 아니면 오프라인 메인 메뉴로 시작한다 (0x4DD130/0x4DD1F0). 런처 설정 탭 버튼이 Pack=1 로 바꿔 실행하고
+  다음 보통 실행 때 되돌린다 (`cfg['package_mode_saved']`). 시나리오 맵은 `DATA\Scenario\Scenario-단계-진영.rkm` (0x419B60) — 설치본에 없어 대전 맵을 복사.
+  게임 방식 [0x6E167E]: 0 커스텀, 1 시나리오, 2 랜, 3 TNet. 메뉴 객체 0x6E0CE0, 쪽 바꾸기 0x424160. 실제 화면은 사용자 확인 대기.
 - **v0.9097 마법 순차 시전** (`smart_cast_patch.py`, 머리말에 분석): 0x447D60(대상 있는 명령 0x4009)·0x447E10(누르자마자 쓰는 마법 0x400D)
   머리를 맨 뒤 새 섹션 `.scast` 로. 유닛 마법(0x2021..0x2060)·2기 이상 선택이면 선택 명령 0x4002[한 기] → 마법 → 0x4002[전부].
   누르자마자 쓰는 것은 마나가 드는 마법만 (마나 0 인 변신류는 모두에게). v0.9096 시험판 상태는 `LEGACY` 로 인식.
