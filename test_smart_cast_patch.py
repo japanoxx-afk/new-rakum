@@ -31,8 +31,10 @@ class Base(unittest.TestCase):
 class PatchTests(Base):
     def test_code_matches_source(self):
         try:
-            self.assertEqual(sc.assemble(), (sc.CODE, sc.CODE2))
+            self.assertEqual(sc.assemble(), (sc.CODE, sc.CODE2, sc.CODE3))
             self.assertLessEqual(len(sc.CODE), sc.CODE2_OFFSET)
+            self.assertLessEqual(sc.CODE2_OFFSET + len(sc.CODE2), sc.CODE3_OFFSET)
+            self.assertLessEqual(sc.CODE3_OFFSET + len(sc.CODE3), sc.SECTION_SIZE)
         except ImportError as e:
             self.skipTest(str(e))
 
@@ -44,27 +46,27 @@ class PatchTests(Base):
             under = sc.strip(built)
             self.assertTrue(sc.current(built))
             self.assertFalse(sc.state(under))
-            for site in (sc.SITE, sc.SITE2):
-                self.assertEqual(under[site:site + 6], sc.SITE_ORIGINAL)
-                self.assertEqual(self.original[site:site + 6], sc.SITE_ORIGINAL)
+            for site, original, _ in sc.SITES:
+                self.assertEqual(under[site:site + len(original)], original)
+                self.assertEqual(self.original[site:site + len(original)], original)
             self.assertEqual(hotkey_patch.state(under), keys)                 # 그 아래 섹션들은 그대로
             self.assertEqual(sc.apply(under, True), built)
             self.assertEqual(sc.apply(built, False), under)
             self.assertEqual(minimap_patch.build(built, *args), built)
             self.assertEqual(minimap_patch.underlying(built), minimap_patch.underlying(under))
 
-    def test_upgrades_from_the_v0_9096_test_build(self):
-        """v0.9096 시험판이 설치해 둔 상태(자리 하나, 예전 코드)를 알아보고 지금 판으로 바꾼다."""
+    def test_upgrades_from_older_builds(self):
+        """v0.9096 시험판(자리 하나, 예전 코드)·v0.9097~v0.9099(미니맵 시야 없음)가 설치해 둔 상태를 알아보고 지금 판으로 바꾼다."""
         import struct as st
         built = minimap_patch.build(self.original, False)
         under = sc.strip(built)
-        self.assertEqual(len(sc.LEGACY), 1)
+        self.assertEqual(len(sc.LEGACY), 2)
         for code, used in sc.LEGACY:
             old = bytearray(built)
             va = st.unpack_from('<I', built, sc._layout(built)[6][-1][5] + 12)[0]
             old[-sc.SECTION_SIZE:] = code.ljust(sc.SECTION_SIZE, bytes(1))
             for k, (site, original, offset) in enumerate(sc.SITES):
-                old[site:site + 6] = sc._jump(site, va, offset) if k in used else original
+                old[site:site + len(original)] = sc._jump(site, va, offset) if k in used else original
             self.assertTrue(sc.state(old))
             self.assertFalse(sc.current(old))
             self.assertEqual(sc.strip(old), under)
@@ -256,6 +258,81 @@ class CastTests(Base):
             self.unit(mu, n)
         self.select(mu, [40, 41])
         self.assertEqual(self.cast(mu), [self.order_packet()])
+
+
+
+class MinimapVisionTests(Base):
+    """미니맵 시야 표시: 시야 계산 끝(0x49BE70)에서 지형 반 밝기 + 내가 보는 칸만 원래 밝기, 그 뒤 원래 함수 0x469030."""
+    OBJ = SCRATCH + 0x100000
+    DEVICE = SCRATCH + 0x80000
+    MASK = 0xF7DE
+
+    def _run(self, visible, width=128, height=128, table=None, all_view=False, me=1, bits=0x02):
+        built = minimap_patch.build(self.original, False)
+        self.assertEqual(built[sc.SITE3], 0xE8)
+        mu = _emulator(built)
+        from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_EBX, UC_X86_REG_EBP
+        from unicorn import UC_HOOK_CODE
+        terrain = b"".join(struct.pack("<H", 0x8000 | (i * 7 & 0x7FFF)) for i in range(0x4000))
+        mu.mem_write(self.OBJ + 0x2C, terrain)
+        mu.mem_write(self.OBJ + 0x1002C, b"\xAA" * 0x8000)
+        table = table or (lambda v: v * 128 // max(width, height))
+        for k in range(520):
+            mu.mem_write(self.OBJ + 0x20254 + k * 2, struct.pack("<H", min(table(k), 0x7FFF)))
+            mu.mem_write(self.OBJ + 0x20664 + k * 2, struct.pack("<H", min(table(k), 0x7FFF)))
+        mu.mem_write(0x4EC438, struct.pack("<I", self.DEVICE))
+        mu.mem_write(self.DEVICE + 0x38, struct.pack("<I", self.MASK))
+        mu.mem_write(sc.MAP_W, struct.pack("<HH", width, height))
+        mu.mem_write(sc.LOCAL_PLAYER, bytes([me]))
+        mu.mem_write(sc.PLAYER_BITS + me * 2, struct.pack("<H", bits))
+        mu.mem_write(0xB412C8, struct.pack("<H", 1 if all_view else 0))
+        mu.mem_write(sc.VISIBLE, bytes(0x42040))
+        for (x, y), value in visible.items():
+            mu.mem_write(sc.VISIBLE + y * 0x208 + x, bytes([value]))
+        seen = {}
+
+        def hook(uc, address, size, user):               # 원래 함수에 닿으면 거기서 멈춘다
+            if address == sc.DRAW_DOTS:
+                seen["ecx"] = uc.reg_read(UC_X86_REG_ECX)
+                seen["ret"] = struct.unpack("<I", uc.mem_read(uc.reg_read(UC_X86_REG_ESP), 4))[0]
+                seen["regs"] = (uc.reg_read(UC_X86_REG_EBX), uc.reg_read(UC_X86_REG_EBP))
+                uc.emu_stop()
+        mu.hook_add(UC_HOOK_CODE, hook, begin=sc.DRAW_DOTS, end=sc.DRAW_DOTS)
+        esp = SCRATCH + 0x8000
+        mu.reg_write(UC_X86_REG_ESP, esp)
+        mu.reg_write(UC_X86_REG_ECX, self.OBJ)
+        mu.reg_write(UC_X86_REG_EBX, 0x11111111)
+        mu.reg_write(UC_X86_REG_EBP, 0x22222222)
+        mu.emu_start(0x400000 + sc.SITE3, 0, count=20000000)
+        self.assertEqual(seen, {"ecx": self.OBJ, "ret": 0x400000 + sc.SITE3 + 5, "regs": (0x11111111, 0x22222222)})
+        self.assertEqual(mu.reg_read(UC_X86_REG_ESP), esp - 4)
+        frame = struct.unpack("<16384H", mu.mem_read(self.OBJ + 0x1002C, 0x8000))
+        return struct.unpack("<16384H", terrain), frame
+
+    def test_only_my_vision_is_bright(self):
+        terrain, frame = self._run({(10, 20): 0x02, (11, 20): 0x06, (50, 60): 0x04, (127, 127): 0xFF})
+        bright = {20 * 128 + 10, 20 * 128 + 11, 127 * 128 + 127}       # (50, 60) 은 다른 플레이어만 봄
+        for k in range(0x4000):
+            self.assertEqual(frame[k], terrain[k] if k in bright else (terrain[k] & self.MASK) >> 1, k)
+
+    def test_small_map_fills_the_whole_cell(self):
+        terrain, frame = self._run({(3, 5): 0x02, (63, 63): 0x02}, width=64, height=64)
+        bright = {y * 128 + x for x in (6, 7) for y in (10, 11)} | {y * 128 + x for x in (126, 127) for y in (126, 127)}
+        for k in range(0x4000):
+            self.assertEqual(frame[k], terrain[k] if k in bright else (terrain[k] & self.MASK) >> 1, k)
+
+    def test_large_map_and_bad_table_stay_inside_the_picture(self):
+        terrain, frame = self._run({(x, y): 0x02 for x in range(0, 300, 7) for y in range(0, 300, 11)}, 300, 300)
+        bright = {(y * 128 // 300) * 128 + x * 128 // 300 for x in range(0, 300, 7) for y in range(0, 300, 11)}
+        self.assertEqual({k for k in range(0x4000) if frame[k] == terrain[k] and terrain[k] != (terrain[k] & self.MASK) >> 1}, bright)
+        terrain, frame = self._run({(x, y): 0x02 for x in range(40) for y in range(40)}, 40, 40, table=lambda v: v * 9)
+        for k in range(0x4000):                          # 표가 이상해도(칸마다 9점) 그림 밖으로 쓰지 않고, 칸마다 1점만
+            x, y = k % 128, k // 128
+            self.assertEqual(frame[k] == terrain[k], x % 9 == 0 and y % 9 == 0, k)
+
+    def test_reveal_all_mode_is_left_alone(self):
+        terrain, frame = self._run({(1, 1): 0x02}, all_view=True)
+        self.assertEqual(set(frame), {0xAAAA})
 
 
 if __name__ == '__main__':

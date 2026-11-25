@@ -290,5 +290,68 @@ class ChannelAndLobbyTests(TmpMatches):
         self.assertEqual(pk[1][1], server.build_user_entry('seo', '26.0.0.1', 1))
 
 
+class TierTests(unittest.TestCase):
+    """계급(점수제): 내공 구간 -> 게임에 보내는 등급값. 게임(0x42CA20)이 그 값으로 고르는 계급이 의도한 계급이어야 한다."""
+    NAMES = ["신", "초인", "패왕", "지존", "영웅", "명장", "달인", "대가", "고수", "투사", "중수", "용사", "평민", "하수", "초보"]   # MENUMSG 121..135
+
+    @staticmethod
+    def game_index(grade):
+        """Rhakmu.exe 0x42CA20 과 같은 구간 판정 (돌려주는 값 + 121 = MENUMSG 줄)."""
+        if grade > 10000:
+            return 14
+        if grade <= 0:
+            return 0
+        for k, top in enumerate((10, 50, 190, 450, 900, 1600, 2500, 3500, 4700, 5900, 7200, 8200), 1):
+            if grade <= top:
+                return k
+        return 13
+
+    def test_game_code_has_these_thresholds(self):
+        import pathlib
+        exe = pathlib.Path(__file__).resolve().parent / 'game_backup' / 'Rhakmu.exe'
+        if not exe.is_file():
+            self.skipTest('game_backup/Rhakmu.exe 없음')
+        try:
+            from test_production_split_patch import _emulator, SCRATCH
+            from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_EAX
+        except ImportError as e:
+            self.skipTest(str(e))
+        mu = _emulator(exe.read_bytes())
+        for grade in (-5, 0, 1, 10, 11, 50, 51, 190, 191, 450, 451, 900, 901, 1600, 1601, 2500, 2501, 3500, 3501, 4700,
+                      4701, 5900, 5901, 7200, 7201, 8200, 8201, 10000, 10001, 32767):
+            esp = SCRATCH + 0x8000
+            mu.mem_write(esp, struct.pack('<II', SCRATCH + 0x100, grade & 0xFFFF))
+            mu.reg_write(UC_X86_REG_ESP, esp)
+            mu.emu_start(0x42CA20, SCRATCH + 0x100, count=500)
+            self.assertEqual(mu.reg_read(UC_X86_REG_EAX) & 0xFFFF, self.game_index(grade), grade)
+
+    def test_points_map_to_the_intended_tier_in_the_game(self):
+        self.assertEqual([t[0] for t in server.TIERS], self.NAMES[1:])                 # 초인 … 초보 (신은 안 씀)
+        needs = [t[1] for t in server.TIERS]
+        self.assertEqual(needs, sorted(needs, reverse=True))
+        for name, need, grade in server.TIERS:
+            self.assertEqual(self.NAMES[self.game_index(grade)], name)
+            self.assertTrue(0 < grade <= 32767)
+            self.assertEqual(server.tier_for_points(need)[0], name)
+            if need:
+                self.assertNotEqual(server.tier_for_points(need - 1)[0], name)
+        # 게임은 내공 1010 미만(목록)·1000 미만(사용자 정보)을 무조건 초보로 그린다 -> 초보가 아닌 계급은 모두 1010 이상
+        self.assertTrue(all(need >= 1010 for name, need, _ in server.TIERS if name != "초보"))
+        self.assertEqual(server.tier_for_points(1000), ("초보", 10001))
+        self.assertEqual(server.tier_for_points(0), ("초보", 10001))
+        self.assertEqual(server.tier_for_points(1010)[0], "하수")
+        self.assertEqual(server.tier_for_points(999999)[0], "초인")
+
+    def test_packets_carry_the_tier_grade(self):
+        rows = [{"rank": 1, "name": "aa", "points": 1100, "win": 12, "lose": 2, "draw": 0, "last": ""},
+                {"rank": 2, "name": "bb", "points": 1000, "win": 5, "lose": 5, "draw": 0, "last": ""}]
+        grades = [struct.unpack_from('<h', server.build_rank_record(r), 20)[0] for r in rows]
+        self.assertEqual([self.NAMES[self.game_index(g)] for g in grades], ["중수", "초보"])
+        info = server.build_account_info("aa", rows)
+        self.assertEqual(struct.unpack_from('<iiiih', info, 1), (1100, 12, 2, 0, grades[0]))
+        new = server.build_account_info("nobody", rows)                              # 전적 없는 계정: 내공 1000 -> 초보
+        self.assertEqual(self.NAMES[self.game_index(struct.unpack_from('<h', new, 17)[0])], "초보")
+
+
 if __name__ == '__main__':
     unittest.main()

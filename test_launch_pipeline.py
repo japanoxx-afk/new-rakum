@@ -45,7 +45,36 @@ class PipelineTests(unittest.TestCase):
         app.server.stop.assert_not_called()
         app.after.assert_not_called()
 
-    def test_singleplayer_still_prepares_local_server(self):
+    def test_single_play_button_runs_offline_menu_without_server(self):
+        """싱글플레이 버튼: 서버·hosts 를 건드리지 않고 패키지(오프라인 메뉴) 실행. 실행 중에는 다시 띄우지 않는다."""
+        seen=[]
+        app=self.app();app.cfg={'game_dir':r'C:\game','skip_version_warning':False}
+        app._prepare_game_launch=Mock(side_effect=lambda:seen.append(app._scenario_launch))
+        app._start_single_game=lambda d:launcher.App._start_single_game(app,d)
+        proc=Mock(poll=Mock(return_value=None))
+        with patch.object(launcher.replay_memory,'find_game_pid',return_value=None), \
+             patch.object(launcher.scenario_mode,'remove_maps',return_value=[]), \
+             patch.object(launcher.subprocess,'Popen',side_effect=[proc,Mock(poll=Mock(return_value=None))]) as popen, \
+             patch.object(launcher.HostsManager,'set_game_host') as hosts, \
+             patch.object(launcher.threading,'Thread'):
+            launcher.App._on_single_play(app)
+            self.assertEqual(seen,[True]);self.assertFalse(app._scenario_launch)
+            self.assertEqual(popen.call_count,1);self.assertIs(app._single_proc,proc)
+            launcher.App._on_single_play(app)                      # 실행 중에는 다시 띄우지 않음
+            self.assertEqual(popen.call_count,1)
+            app.after.call_args.args[1]()                          # 아직 실행 중
+            self.assertIs(app._single_proc,proc)
+            proc.poll.return_value=0
+            app.after.call_args.args[1]()                          # 게임이 꺼짐
+            self.assertIsNone(app._single_proc);self.assertEqual(popen.call_count,1)
+            launcher.App._on_single_play(app)                      # 이제 다시 실행할 수 있음
+            self.assertEqual(popen.call_count,2)
+            hosts.assert_not_called()
+        for call in (app.server.restart,app.server.start,app.server.stop,app._launch_prepared_game):
+            call.assert_not_called()
+        self.showerror.assert_not_called()
+
+    def test_local_server_launch_path_still_prepares_server(self):
         app=self.app();app.server.restart.return_value=(True,'ok')
         launcher.App._set_host_and_launch(app,'127.0.0.1',False)
         app.server.restart.assert_called_once()

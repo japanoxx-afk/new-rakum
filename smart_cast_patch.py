@@ -27,6 +27,12 @@
   세 명령 모두 게임이 원래 쓰는 명령이라 상대 PC 가 이 패치를 쓰지 않아도 대전 진행은 같다 (리플레이에도 그대로 남는다).
   화면의 선택(0x80083C…)은 바뀌지 않는다.
 
+(3) 미니맵 시야 표시 (v0.9100~, 0x49BE70 의 call 0x469030 을 가로챔). 미니맵 미리보기 패치(minimap_patch)는
+    미니맵 그림(+0x1002C)을 지형 전체(+0x2C)로 채워 어디가 보이는 곳인지 구분이 없었다.
+    시야 계산 함수 0x49B6A0 (틱마다 0x4D586D 에서 부름: 시야 지도 0x999DD0 을 지우고 유닛마다 다시 채움) 의 끝,
+    유닛 점을 찍는 0x469030 직전에: 그림 = 지형 반 밝기, 내가(동맹 포함, 표 0x4F02A0[내 번호]) 지금 보는 칸만 원래 밝기.
+    전체 보기([0xB412C8] & 1) 일 때는 그대로. 화면 전용 — 진행(시야 지도)은 읽기만 한다. 싱글·멀티 모두 같다.
+
 섹션은 맨 뒤(.hotkey 뒤)에 붙인다. 코드는 자기 위치와 무관하게 짰다 (게임 주소는 절대값, 안에서는 상대 점프).
 다른 패치의 검증 전에 strip() 으로 먼저 걷어낸다.
 """
@@ -250,7 +256,122 @@ original2:
     ret
 """
 
-# SOURCE·SOURCE2 를 조립한 것 (test_smart_cast_patch 가 keystone 으로 다시 조립해 같은지 본다)
+SITE3 = 0x9BE70                                           # 시야 계산 끝의 call 0x469030 (미니맵 유닛 점 찍기)
+SITE3_ORIGINAL = bytes.fromhex("e8bbd1fcff")
+VISIBLE, PLAYER_BITS, LOCAL_PLAYER, MAP_W, MAP_H, DRAW_DOTS = 0x999DD0, 0x4F02A0, 0xB412CC, 0xB412D4, 0xB412D6, 0x469030
+
+SOURCE3 = f"""
+entry:                                       /* ecx = 미니맵 객체 (0x469030 의 this) */
+    test byte ptr [0xb412c8], 1              /* 전체 보기 */
+    jne dots
+    test ecx, ecx
+    je dots
+    pushfd
+    pushal
+    mov ebx, ecx
+    mov eax, dword ptr [0x4ec438]
+    mov edx, dword ptr [eax+0x38]            /* 반 밝기 마스크 (게임이 쓰는 값) */
+    lea esi, [ebx+0x2c]
+    lea edi, [ebx+0x1002c]
+    mov ecx, 0x4000
+    cld
+half:
+    lodsw
+    and eax, edx
+    shr eax, 1
+    stosw
+    dec ecx
+    jne half
+    movsx eax, byte ptr [{LOCAL_PLAYER}]
+    movzx ebp, byte ptr [eax*2+{PLAYER_BITS}]
+    xor edx, edx
+row:
+    movsx eax, word ptr [{MAP_H}]
+    cmp edx, eax
+    jge done
+    cmp edx, 519
+    jge done
+    movzx edi, word ptr [ebx+edx*2+0x20664]  /* 이 줄의 미니맵 y */
+    cmp edi, 128
+    jae nextrow
+    imul esi, edx, 0x208
+    add esi, {VISIBLE}
+    xor ecx, ecx
+cell:
+    movsx eax, word ptr [{MAP_W}]
+    cmp ecx, eax
+    jge nextrow
+    cmp ecx, 519
+    jge nextrow
+    movzx eax, byte ptr [esi+ecx]
+    test eax, ebp
+    je nextcell
+    push ecx
+    push edx
+    push esi
+    push edi
+    movzx eax, word ptr [ebx+ecx*2+0x20254]  /* 미니맵 x */
+    cmp eax, 128
+    jae skip
+    movzx esi, word ptr [ebx+ecx*2+0x20256]  /* 다음 칸의 x 까지 채운다 (작은 맵은 한 칸이 여러 점): 너비 1..4 */
+    sub esi, eax
+    dec esi
+    cmp esi, 3
+    jbe wok
+    xor esi, esi
+wok:
+    inc esi
+    movzx ecx, word ptr [ebx+edx*2+0x20666]  /* 높이 1..4 */
+    sub ecx, edi
+    dec ecx
+    cmp ecx, 3
+    jbe vloop
+    xor ecx, ecx
+vloop:
+    cmp edi, 128
+    jae skip
+    mov edx, edi
+    shl edx, 8
+    lea edx, [edx+eax*2]
+    push esi
+    push eax
+hloop:
+    cmp eax, 128
+    jae hend
+    push ecx
+    mov cx, word ptr [ebx+edx+0x2c]
+    mov word ptr [ebx+edx+0x1002c], cx
+    pop ecx
+    inc eax
+    add edx, 2
+    dec esi
+    jne hloop
+hend:
+    pop eax
+    pop esi
+    inc edi
+    dec ecx
+    jns vloop
+skip:
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+nextcell:
+    inc ecx
+    jmp cell
+nextrow:
+    inc edx
+    jmp row
+done:
+    popal
+    popfd
+dots:
+    push {DRAW_DOTS}
+    ret
+"""
+
+# SOURCE·SOURCE2·SOURCE3 을 조립한 것 (test_smart_cast_patch 가 keystone 으로 다시 조립해 같은지 본다)
 CODE = bytes.fromhex(
     "600fb74424248d90dfdfffff83fa3f0f87410100000fbf0d3c08800083f9020f8c310100002d202000006bc0"
     "148b982802500085db0f841b0100000fbf7b420fbf6b080fbf05d012b40085c00f8e0401000069c038010000"
@@ -271,36 +392,49 @@ CODE2 = bytes.fromhex(
     "504466c702024066c742020700c642040166895a0589c1b8c0944400ffd0ff742428ff742428e80d00000083"
     "c408b8d07b4400ffd061c3615589e583ec4068167e4400c3"
 )
+CODE3 = bytes.fromhex(
+    "f605c812b400010f851a01000085c90f84120100009c6089cba138c44e008b50388d732c8dbb2c000100b900"
+    "400000fc66ad21d0d1e866ab4975f50fbe05cc12b4000fb62c45a0024f0031d20fbf05d612b40039c20f8dca"
+    "00000081fa070200000f8dbe0000000fb7bc536406020081ff800000000f83a400000069f20802000081c6d0"
+    "9d990031c90fbf05d412b40039c10f8d8700000081f9070200007d7f0fb6040e85e87471515256570fb7844b"
+    "540202003d80000000735a0fb7b44b5602020029c64e83fe03760231f6460fb78c536606020029f94983f903"
+    "760231c981ff80000000732d89fac1e2088d144256503d80000000731651668b4c132c66898c132c00010059"
+    "4083c2024e75e3585e474979cb5f5e5a5941e96affffff42e927ffffff619d6830904600c3"
+)
 CODE2_OFFSET = 0x200                                      # 섹션 안에서 CODE2 가 놓이는 자리
+CODE3_OFFSET = 0x400                                      # CODE3 (미니맵 시야)
 
 # 이전 판이 설치한 상태 — 걷어낼 때 인식: (섹션 내용, 그때 바꾼 자리 목록)
 LEGACY = (
     (bytes.fromhex("600fb74424248d90dfdfffff83fa3f0f87540100000fb6d06bd21483baccf84f00000f84410100000fbf0d3c08800083f9020f8c310100002d202000006bc0148b982802500085db0f841b0100000fbf7b420fbf6b080fbf05d012b40085c00f8e0401000069c0380100006683b83a5a7700000f85f0000000668b90465a77008b356e3643006a0068ffffff7f490f888a00000066ad0fb7c085c074f089c369c03801000005385a770066837808007edc6639500e75d6668378020075cf530fbf9cb8fe00000039eb5b7cc151520fbf4818c1e1050fbf54244029d10fafc90fbf501ac1e205510fbf4c244629ca590fafd201d10fb7500681ea2120000083fa50770681c1000000403b4c24087308894c2408895c240c5a59e96fffffff585b85db7445a1a411b4008b504466c702024066c742020700c642040166895a0589c1b8c0944400ffd0ff742430ff742430ff742430ff742430e80d00000083c410b8d07b4400ffd061c3615589e583ec4068667d4400c3"), (0,)),              # v0.9096 시험판: 0x447D60 만, 대상 고르기 함수가 있는 마법만
+    ((CODE.ljust(CODE2_OFFSET, bytes(1)) + CODE2), (0, 1)),          # v0.9097~v0.9099: 미니맵 시야 없음
 )
 
 
-def assemble() -> tuple[bytes, bytes]:
+def assemble() -> tuple[bytes, bytes, bytes]:
     import re
     from keystone import Ks, KS_ARCH_X86, KS_MODE_32
     ks = Ks(KS_ARCH_X86, KS_MODE_32)
-    return tuple(bytes(ks.asm(re.sub(r"/\*.*?\*/", "", text), addr=0x10000000)[0]) for text in (SOURCE, SOURCE2))
+    return tuple(bytes(ks.asm(re.sub(r"/\*.*?\*/", "", text), addr=0x10000000)[0]) for text in (SOURCE, SOURCE2, SOURCE3))
 
 
 def _body() -> bytes:
-    return (CODE.ljust(CODE2_OFFSET, bytes(1)) + CODE2).ljust(SECTION_SIZE, bytes(1))
+    body = CODE.ljust(CODE2_OFFSET, bytes(1)) + CODE2
+    return (body.ljust(CODE3_OFFSET, bytes(1)) + CODE3).ljust(SECTION_SIZE, bytes(1))
 
 
-# (파일 오프셋, 원래 머리, 섹션 안 들어갈 자리)
-SITES = ((SITE, SITE_ORIGINAL, 0), (SITE2, SITE_ORIGINAL, CODE2_OFFSET))
+# (파일 오프셋, 원래 바이트, 섹션 안 들어갈 자리) — 원래가 call(5바이트)이면 call 로, 함수 머리(6바이트)면 jmp + nop 로 바꾼다
+SITES = ((SITE, SITE_ORIGINAL, 0), (SITE2, SITE_ORIGINAL, CODE2_OFFSET), (SITE3, SITE3_ORIGINAL, CODE3_OFFSET))
 
 
 def _jump(site, section_va, offset):
-    return b"\xe9" + struct.pack("<i", (0x400000 + section_va + offset) - (0x400000 + site + 5)) + b"\x90"
+    rel = struct.pack("<i", (0x400000 + section_va + offset) - (0x400000 + site + 5))
+    return b"\xe8" + rel if site == SITE3 else b"\xe9" + rel + b"\x90"
 
 
 def _installed(data, va, body):
     """섹션 내용과 바꾼 자리가 지금 판 또는 이전 판과 맞으면 True."""
-    heads = [bytes(data[site:site + 6]) for site, _, _ in SITES]
+    heads = [bytes(data[site:site + len(original)]) for site, original, _ in SITES]
     if body == _body():
         return heads == [_jump(site, va, offset) for site, _, offset in SITES]
     for code, used in LEGACY:
@@ -319,7 +453,7 @@ def state(data) -> bool:
                 and _u32(data, soi) == va + SECTION_SIZE and _installed(data, va, bytes(data[rptr:rptr + rsize]))):
             return True
         raise ValueError("마법 순차 시전 패치가 불완전하거나 알 수 없는 변경이 있습니다.")
-    if all(bytes(data[site:site + 6]) == original for site, original, _ in SITES):
+    if all(bytes(data[site:site + len(original)]) == original for site, original, _ in SITES):
         return False
     raise ValueError("마법 순차 시전 패치: 지원하지 않는 게임 파일입니다.")
 
