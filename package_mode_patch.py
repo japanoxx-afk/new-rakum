@@ -9,15 +9,20 @@
     0x465298 의 jne 를 jmp 로 (늘 그림), 0x465344..0x4653AC (분·초 계산) 를 다시 짬:
     멀티플레이이거나 카운트다운이 없으면([ebp-8] == 100) 경기 시간 [0xB4074C] (싱글에서도 0x4D5ADD 가 올린다), 아니면 카운트다운.
     멀티플레이에서의 표시는 원래와 같다.
-(3) 경기 뒤 점수 화면에서 나갈 때 게임을 끝낸다 (끝냄 코드 EXIT_CODE). 경기가 끝나면 0x423850 이 메뉴를 다시 만들고
-    점수 화면(쪽 2)을 연다. 거기서 [확인] 을 누르면 커스텀 게임은 0x411EC0 에서 메인 메뉴(쪽 8, 0x424160)로 가는데,
-    이 판에서는 그 메인 메뉴의 대화 상자(로그인 등)가 모두 겹쳐 나오고 눌리지 않는다 (원인 미확인 — docs/HANDOFF.md).
-    0x411EC0..0x411ED1 (push 8; call 0x424160; jmp) 을 push EXIT_CODE; call [ExitProcess] 로.
-    런처가 이 끝냄 코드를 보면 싱글 메뉴로 다시 실행한다. (v0.9100 시험판은 점수 화면 전, 0x4D5813 에서 끝냈다.)
+(3) 메인 메뉴의 겹친 창 없애기. 경기 뒤 점수 화면에서 메인 메뉴(쪽 8)로 돌아오면 (게임을 다시 실행해도) 빈 대화 상자
+    (로그인·비밀번호 바꾸기 등)가 모두 겹쳐 나오고 눌리지 않았다.
+    메인 메뉴 폼은 대화 상자 6개(MainMenu.stb dialogbox 0..5)를 쓰고, 열 때(Init 0x413800)와 그릴 때(Draw 0x414360, 상태
+    [0x6E0BC0] == 0 이면 매 프레임) GameCtrl 의 dlg_Active(번호, 0) 으로 숨긴다. dlg_Active/GetDlg 는 폼의 대화 상자 목록
+    (폼 +0x30, 이중 연결)에서 '앞에서 몇 번째' 로 찾으므로 0..5 번째만 숨는다. 매 프레임 숨기는데도 3번(비밀번호 바꾸기) 모양이
+    보인다는 것은 목록에 같은 대화 상자가 더 들어 있다는 뜻 (6번째 뒤 — 폼 파일이 두 번 읽힘; 어디서인지는 미확인).
+    그래서 두 곳의 '0..5 번 숨기기' 를 '목록의 모든 대화 상자 숨기기' 로 바꾼다 (대화 상자 +4 = 0, +0x60 = 0 — dlg_Active(…, 0) 과 같음).
+    필요한 대화 상자는 게임이 원래대로 번호로 켠다 (앞의 것). 0x413820..0x413886, 0x41437A..0x4143CF.
+    (v0.9100 시험판은 경기 끝 0x4D5813, v0.9101 시험판은 점수 화면 [확인] 0x411EC0 에서 ExitProcess(EXIT_CODE) 로 끝내고
+     런처가 다시 실행했다 — 다시 실행해도 같은 화면이라 걷어냄.)
 
-온라인(Pack == 0) 실행에서는 켜지 않는다. 이전 시험판(v0.9099: (1) 만, v0.9100: 경기 끝 종료)은 state() 가 알아보고 transform() 이 맞춘다.
+온라인(Pack == 0) 실행에서는 켜지 않는다. 이전 시험판(v0.9099: (1) 만, v0.9100·v0.9101: 종료 방식)은 state() 가 알아보고 transform() 이 맞춘다.
 """
-EXIT_CODE = 0x52A1                                 # 경기 끝 -> 런처가 싱글 메뉴로 다시 실행
+EXIT_CODE = 0x52A1                                 # 예전 시험판(v0.9100·v0.9101)의 끝냄 코드 — 지금은 쓰지 않음
 
 SITE = 0xD9763
 ORIGINAL = bytes.fromhex("0f85b5000000")           # jne 0x4D981E
@@ -46,14 +51,48 @@ cd:
     mov dword ptr [ebp-0x18], edx
     jmp 0x4653ac
 """
-_EXIT = b"\x68" + EXIT_CODE.to_bytes(4, "little") + bytes.fromhex("ff156cc24e00")   # push EXIT_CODE; call [ExitProcess]
-SCORE_EXIT = (0x11EC0, bytes.fromhex("6a08b9e00c6e00e894220100e988000000"), _EXIT.ljust(17, b"\x90"))
+_HIDE_ALL = "8b4dfc8b51308b0239d074138b480885c9740883610400c64160008b00ebe9"     # 아래 MENU_SOURCE (끝의 jmp 만 자리마다 다름)
+MENU_SOURCE = """
+    mov ecx, dword ptr [ebp-4]
+    mov edx, dword ptr [ecx+0x30]
+    mov eax, dword ptr [edx]
+L:
+    cmp eax, edx
+    je D
+    mov ecx, dword ptr [eax+8]
+    test ecx, ecx
+    je N
+    and dword ptr [ecx+4], 0
+    mov byte ptr [ecx+0x60], 0
+N:
+    mov eax, dword ptr [eax]
+    jmp L
+D:
+    jmp {end}
+"""
+_HIDE_CALLS = "6a006a{n:02x}6a088b0de00c6e00e8{rel}"                             # push 0; push n; push 8; mov ecx,[menu]; call 0x428890
+
+
+def _hide_calls(site, count):
+    out = b""
+    for n in range(count):
+        at = 0x400000 + site + len(out) + 12
+        out += bytes.fromhex(_HIDE_CALLS.format(n=n, rel=(0x428890 - (at + 5) & 0xFFFFFFFF).to_bytes(4, "little").hex()))
+    return out
+
+
+MENU_INIT = (0x13820, _hide_calls(0x13820, 6), (bytes.fromhex(_HIDE_ALL) + b"\xeb\x45").ljust(0x66, b"\x90"))
+MENU_DRAW = (0x1437A, _hide_calls(0x1437A, 5), (bytes.fromhex(_HIDE_ALL) + b"\xeb\x34").ljust(0x55, b"\x90"))
+MENU_ENDS = (0x413886, 0x4143CF)
+
+_EXIT = b"\x68" + EXIT_CODE.to_bytes(4, "little") + bytes.fromhex("ff156cc24e00")   # push EXIT_CODE; call [ExitProcess] (예전 판)
+SCORE_EXIT = (0x11EC0, bytes.fromhex("6a08b9e00c6e00e894220100e988000000"), _EXIT.ljust(17, b"\x90"))    # v0.9101 시험판만
 GAME_END = (0xD5813, bytes.fromhex("8b0d30ae060151b9e00c6e00e82ce0f4ff"), _EXIT.ljust(17, b"\x90"))    # v0.9100 시험판만
 
 # (파일 오프셋, 원래, 바꾼 것)
-SITES = ((SITE, ORIGINAL, PATCHED), TIMER_SHOW, TIMER_VALUE, SCORE_EXIT)
-RETIRED = (GAME_END,)                              # 예전 판만 바꾸던 자리 — 늘 원래대로 돌린다
-LEGACY = ((0,), (0, 1, 2, 4))                      # 예전 판이 바꿔 둔 자리 묶음 (SITES + RETIRED 번호): v0.9099, v0.9100
+SITES = ((SITE, ORIGINAL, PATCHED), TIMER_SHOW, TIMER_VALUE, MENU_INIT, MENU_DRAW)
+RETIRED = (SCORE_EXIT, GAME_END)                   # 예전 판만 바꾸던 자리 — 늘 원래대로 돌린다
+LEGACY = ((0,), (0, 1, 2, 6), (0, 1, 2, 5))        # 예전 판이 바꿔 둔 자리 묶음 (SITES + RETIRED 번호): v0.9099, v0.9100, v0.9101
 
 
 def _marks(data):

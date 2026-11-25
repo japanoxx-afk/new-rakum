@@ -114,11 +114,11 @@ class SingleModePatchTests(unittest.TestCase):
             pm.state(mixed)
 
     def test_upgrades_from_earlier_test_builds(self):
-        """v0.9099 시험판(CD 키만)·v0.9100 시험판(경기 끝에서 바로 종료)을 알아보고 지금 판으로 맞추거나 걷어낸다."""
+        """v0.9099 시험판(CD 키만)·v0.9100·v0.9101 시험판(게임을 끝내고 다시 실행)을 알아보고 지금 판으로 맞추거나 걷어낸다."""
         import minimap_patch
         import package_mode_patch as pm
         every = pm.SITES + pm.RETIRED
-        self.assertEqual(len(pm.LEGACY), 2)
+        self.assertEqual(len(pm.LEGACY), 3)
         for used in pm.LEGACY:
             old = bytearray(minimap_patch.build(self.original, False))
             for k in used:
@@ -170,29 +170,58 @@ class SingleModePatchTests(unittest.TestCase):
         self.assertEqual(self._clock(single, 75, 0, 754), (1, 15))         # 트리거 카운트다운이 돌면 그 값
         self.assertEqual(self._clock(single, 0, 0, 754), (0, 0))
 
-    def test_leaving_the_score_screen_exits_with_the_relaunch_code(self):
-        """경기 끝의 메뉴 다시 만들기(점수 화면)는 그대로, 점수 화면에서 메인 메뉴로 갈 때 ExitProcess(EXIT_CODE)."""
+    def test_menu_code_matches_source(self):
+        import package_mode_patch as pm
+        try:
+            from keystone import Ks, KS_ARCH_X86, KS_MODE_32
+        except ImportError as e:
+            self.skipTest(str(e))
+        for (site, before, after), end in zip((pm.MENU_INIT, pm.MENU_DRAW), pm.MENU_ENDS):
+            code = bytes(Ks(KS_ARCH_X86, KS_MODE_32).asm(pm.MENU_SOURCE.format(end=hex(end)), addr=0x400000 + site)[0])
+            self.assertEqual(code.ljust(len(before), b"\x90"), after)
+            self.assertEqual(0x400000 + site + len(before), end)
+
+    def _dialogs(self, mu, form, count):
+        """폼 +0x30 의 대화 상자 목록(이중 연결: 다음, 이전, 값)을 만들고 대화 상자 주소들을 돌려준다. 모두 켜진 상태."""
+        head = form + 0x1000
+        nodes = [head + 0x10 * (k + 1) for k in range(count)]
+        dialogs = [form + 0x2000 + 0x100 * k for k in range(count)]
+        ring = [head] + nodes
+        for k, node in enumerate(ring):
+            value = dialogs[k - 1] if k else 0xDEAD0000                     # 머리 칸의 값은 쓰레기
+            mu.mem_write(node, struct.pack("<III", ring[(k + 1) % len(ring)], ring[k - 1], value))
+        for dlg in dialogs:
+            mu.mem_write(dlg + 4, struct.pack("<I", 0x111))
+            mu.mem_write(dlg + 0x60, b"\x01")
+        mu.mem_write(form + 0x30, struct.pack("<II", head, count))
+        return dialogs
+
+    def test_main_menu_hides_every_dialog_even_duplicates(self):
+        """메인 메뉴를 열 때(Init)·그릴 때(Draw, 상태 0): 목록의 대화 상자를 몇 개든 모두 숨긴다.
+        원래는 앞의 6개(그릴 때는 5개)만 숨겨, 폼 파일이 두 번 읽혀 12개가 되면 뒤의 것들이 겹쳐 보였다."""
         import minimap_patch
         import package_mode_patch as pm
         from test_production_split_patch import _emulator, SCRATCH
-        from unicorn import UC_HOOK_CODE
-        from unicorn.x86_const import UC_X86_REG_ESP
+        from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_EBP
         single = minimap_patch.build(self.original, False, package=True)
-        self.assertEqual(single[0xD5813:0xD5824], self.original[0xD5813:0xD5824])     # 경기 끝 -> 0x423850 (점수 화면) 그대로
-        self.assertEqual(self.original[0x11EAD:0x11EAF], bytes.fromhex("7411"))       # 커스텀([0x6E167E] == 0)이면 0x411EC0 으로
-        mu = _emulator(single)
-        stub = SCRATCH + 0x4000
-        mu.mem_write(0x4EC26C, struct.pack("<I", stub))                               # ExitProcess 수입 자리
-        seen = []
+        self.assertEqual(self.original[0x14378:0x1437A], bytes.fromhex("7555"))      # 상태가 0 이 아니면 그릴 때는 건너뜀 (그대로)
+        self.assertEqual(self.original[0x1381A:0x13820], bytes.fromhex("0f850c020000"))   # 만들 때(인자 != 0)는 다른 갈래
+        form = SCRATCH + 0x10000
+        for (site, before, after), end in zip((pm.MENU_INIT, pm.MENU_DRAW), pm.MENU_ENDS):
+            for count in (0, 6, 12):
+                mu = _emulator(single)
+                dialogs = self._dialogs(mu, form, count)
+                mu.reg_write(UC_X86_REG_ESP, SCRATCH + 0x8000)
+                mu.reg_write(UC_X86_REG_EBP, SCRATCH + 0x9000)
+                mu.mem_write(SCRATCH + 0x9000 - 4, struct.pack("<I", form))
+                mu.emu_start(0x400000 + site, end, count=2000)
+                self.assertEqual(mu.reg_read(UC_X86_REG_ESP), SCRATCH + 0x8000)
+                for dlg in dialogs:
+                    self.assertEqual(struct.unpack("<I", mu.mem_read(dlg + 4, 4))[0], 0)
+                    self.assertEqual(bytes(mu.mem_read(dlg + 0x60, 1)), b"\0")
 
-        def hook(uc, address, size, user):
-            esp = uc.reg_read(UC_X86_REG_ESP)
-            seen.append(struct.unpack("<II", uc.mem_read(esp, 8)))
-            uc.emu_stop()
-        mu.hook_add(UC_HOOK_CODE, hook, begin=stub, end=stub)
-        from unicorn.x86_const import UC_X86_REG_EBP
-        mu.reg_write(UC_X86_REG_ESP, SCRATCH + 0x8000)
-        mu.reg_write(UC_X86_REG_EBP, SCRATCH + 0x9000)
-        mu.mem_write(0x6E167E, bytes([0]))
-        mu.emu_start(0x411EA1, 0x411F59, count=100)
-        self.assertEqual(seen, [(0x411EC0 + 11, pm.EXIT_CODE)])
+    def test_score_screen_and_game_end_are_left_alone(self):
+        import minimap_patch
+        single = minimap_patch.build(self.original, False, package=True)
+        for at, n in ((0xD5813, 17), (0x11EC0, 17)):                                  # 경기 끝 -> 점수 화면 -> 메인 메뉴: 원래 흐름
+            self.assertEqual(single[at:at + n], self.original[at:at + n])

@@ -85,14 +85,16 @@ git clone https://github.com/japanoxx-afk/rtsarena.git
 특히 `20261122_052001_[4](N4)_Fighting_Spirit.rkr`(넓은 검사값, v0.9082 로 끝까지 같음), `20261122_022438_[4](N4)_Fighting_Spirit1.1.rkr`, `20261121_205441_[4](N4)_Fighting_Spirit.rkr`.
 
 ## 4. 기타 진행 중·참고
-- **v0.9100~v0.9101 싱글플레이 = 오프라인 메인 메뉴** (PR #23, 배포 전): `scenario_mode.py` (머리말에 분석). 게임은 레지스트리 HKLM `SOFTWARE\TriggerSoft\RhakMu` 의
+- **v0.9100~v0.9102 싱글플레이 = 오프라인 메인 메뉴** (PR #23, 배포 전): `scenario_mode.py` (머리말에 분석). 게임은 레지스트리 HKLM `SOFTWARE\TriggerSoft\RhakMu` 의
   `Pack` 이 0 이면 TNet 로그인만, 0 이 아니면 오프라인 메인 메뉴로 시작한다 (0x4DD130/0x4DD1F0). [싱글플레이] 버튼(`_on_single_play`)이 Pack=1 로 바꿔
   서버·hosts 없이 실행하고 다음 보통 실행 때 되돌린다 (`cfg['package_mode_saved']`). `package_mode_patch.py` 는 이 실행에서만 켠다
   (`minimap_patch.build(..., package=True)`): ① CD 키 확인(0x4D9763) 건너뜀 ② 시계 0x465240 을 싱글에서도 (0x465298, 0x465344..)
-  ③ 점수 화면에서 메인 메뉴로 갈 때(0x411EC0) `ExitProcess(0x52A1)` — 런처 `_start_single_game` 이 그 코드를 보면 다시 실행
-  (v0.9100 시험판은 점수 화면 전 0x4D5813 에서 끝냈다 → 사용자 요청으로 점수 화면 뒤로 옮김).
-  ③ 은 우회책: 점수 화면(쪽 2)에서 메인 메뉴(쪽 8)로 가면 메인 메뉴 대화 상자(dlg 0..5)가 모두 겹쳐 보이고 눌리지 않는다.
-  원인 미확인 — MainMenu Init 0x413800 은 dlg_Active(i,0) 으로 다 숨기고, 0x423370 은 [+0x310] 이 서 있으면 쪽 8 만 연다. GameCtrl.dll 의 dlg_Active/GetDlg 는 목록 순번으로 찾으므로, 대화 상자가 두 번 추가돼 있으면(12개) 뒤 6개가 안 숨는다 — 가장 유력하나 어디서 두 번 만드는지 못 찾음.
+  ③ 메인 메뉴(쪽 8) Init 0x413820·Draw 0x41437A 의 '대화 상자 0..5 숨기기' 를 '목록(폼 +0x30)의 모든 대화 상자 숨기기' 로 (v0.9102).
+  경기 뒤 메인 메뉴로 돌아오면 빈 대화 상자 6개가 겹쳐 보이고 눌리지 않던 문제. GameCtrl 의 dlg_Active/GetDlg 는 목록 순번으로 찾는데
+  Draw 가 상태 0 에서 매 프레임 0..4 를 숨기는데도 보였으므로 목록에 같은 대화 상자가 더 들어 있다고 판단 (어디서 두 번 읽는지는 미확인:
+  0x423370 → 0x426F40 → 0x4275F0 이 유일한 읽기 경로). **사용자 확인 대기** — 안 되면 런처가 게임 메모리에서 폼 8 의 목록 길이를 읽어 확인할 것.
+  v0.9100(경기 끝 0x4D5813)·v0.9101(점수 화면 0x411EC0)의 ExitProcess + 런처 재실행 우회는 재실행 뒤에도 같은 화면이라 걷어냄 (`RETIRED`).
+  치트(`replay_record_patch` cheatx): 사람 수를 +6 & 0x20 (컴퓨터 0x10) 로 셈 — 싱글 커스텀의 컴퓨터는 이름이 있어 예전 기준(이름)으로는 늘 막혔다.
   시나리오 맵은 `DATA\Scenario\Scenario-단계-진영.rkm` (0x419B60) — 설치본에 없음 (대전 맵을 넣어 본 v0.9098 실험은 목표·유닛이 없어 진행 불가, 버튼 제거).
   게임 방식 [0x6E167E]: 0 커스텀, 1 시나리오, 2 랜, 3 TNet. 메뉴 객체 0x6E0CE0, 쪽 바꾸기 0x424160.
 - **v0.9101 멀티 턴 길이 (명령 전송 간격)**: `turn_length_patch.py` (머리말에 분석·근거). Game_Multi 의 턴 = 5프레임(0x4D7B97) → 기본 3프레임(99ms),

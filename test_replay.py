@@ -1146,6 +1146,25 @@ class InGameHookTests(unittest.TestCase):
         mu.mem_write(pl + 6, b"\x20")
         mu.mem_write(pl + 8, name.encode() + b"\0")
 
+    def test_cheats_work_in_single_custom_game_with_named_computers(self):
+        """싱글 커스텀 게임: 컴퓨터 플레이어에도 이름이 있다(종류 +6 = 0x10). 사람(0x20)은 나 하나뿐이므로 치트가 된다.
+        (v0.9101 까지는 이름만 세어 '컴퓨터와 할 때만 됩니다' 로 늘 막혔다.)"""
+        mu = self.cheat_machine(0)
+        self.human(mu, 1, "seo")
+        for slot, name in ((0, "Computer 1"), (2, "Computer 2"), (3, "Computer 3")):
+            pl = 0x7F7908 + slot * 0x11E0
+            mu.mem_write(pl + 6, b"\x10")
+            mu.mem_write(pl + 8, name.encode() + b"\0")
+        pl = 0x7F7908 + 1 * 0x11E0
+        mu.mem_write(0x2010000, b"money\0")
+        self.call_thiscall(mu, "cheatmatch", 0x2010000, 0x404D4F)
+        self.assertEqual(self.cheat_calls, [("msg", "치트: 자원 +50000, 인구 제한 해제")])
+        self.assertEqual(struct.unpack("<i", mu.mem_read(pl + 0x864, 4))[0], 50000)
+        self.human(mu, 2, "nyai")                                       # 사람이 하나 더 있으면 막힘
+        self.cheat_calls.clear()
+        self.call_thiscall(mu, "cheatmatch", 0x2010000, 0x404D4F)
+        self.assertEqual(self.cheat_calls, [("msg", "치트: 컴퓨터와 할 때만 됩니다")])
+
     def test_cheat_map_toggles_reveal_like_the_game(self):
         """map: 게임 자체 지도 공개(0x404990 번호 0)처럼 켤 때 0x4991E0(ecx=0x915698) 후 비트 1, 끌 때 비트만 지움."""
         from unicorn import UC_HOOK_CODE

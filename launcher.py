@@ -71,7 +71,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9101"
+APP_VERSION = "0.9102"
 TURN_FRAME_LABELS = {3: '99ms · 3프레임 (기본)', 5: '165ms · 5프레임 (원래 게임)', 2: '66ms · 2프레임 (실험)'}
 DEFAULT_TURN_FRAMES = 3      # 멀티 턴 길이 기본값 (프레임): 99ms. 원래 게임은 5 (165ms) — turn_length_patch
 
@@ -1732,7 +1732,7 @@ class App(tk.Tk):
         start_save = record and not play and bool(self.cfg.get("replay_start_save", True))
         rally_spawn = bool(self._rally_spawn_setting())
         wide_checks = bool(getattr(self, "_replay_wide_checks", False)) if play else True   # 재생: 리플레이의 검사 방식
-        package = bool(getattr(self, "_scenario_launch", False))   # 싱글플레이 실행: package_mode_patch (CD 키·시계·경기 끝)
+        package = bool(getattr(self, "_scenario_launch", False))   # 싱글플레이 실행: package_mode_patch (CD 키·시계·메인 메뉴 창)
         turn_frames = self._turn_frames_setting()               # 멀티 턴 길이 (재생: 그 리플레이를 기록한 경기의 값)
         minimap_patch.prepare(exe, highres, self._rally_setting(), hotkeys, select24, record, start_save, play,
                               rally_spawn, wide_checks, package, turn_frames)
@@ -1854,9 +1854,8 @@ class App(tk.Tk):
             self._scenario_launch = False
         self._start_single_game(game_dir)
 
-    def _start_single_game(self, game_dir, again=False):
-        """싱글 메뉴로 게임을 띄우고 끝나기를 지켜본다. 경기가 끝나면 게임이 스스로 꺼지므로
-        (package_mode_patch (3): 그대로 두면 메뉴가 겹쳐 눌리지 않음) 그 끝냄 코드를 보면 싱글 메뉴로 다시 띄운다."""
+    def _start_single_game(self, game_dir):
+        """싱글 메뉴로 게임을 띄우고, 끝날 때까지 다시 띄우지 못하게 지켜본다."""
         try:
             proc = subprocess.Popen([os.path.join(game_dir, GAME_EXE)], cwd=game_dir)
         except OSError as e:
@@ -1867,17 +1866,13 @@ class App(tk.Tk):
         if self.cfg.get('skip_version_warning', True):
             threading.Thread(target=dismiss_version_warning, args=(proc,), daemon=True).start()
         threading.Thread(target=cursor_guard.lock_game_cursor, daemon=True).start()
-        self.info_var.set("싱글플레이 — 경기가 끝나 메인 메뉴로 다시 실행했습니다" if again
-                          else "싱글플레이 — 오프라인 메인 메뉴로 실행 (서버 사용 안 함)")
+        self.info_var.set("싱글플레이 — 오프라인 메인 메뉴로 실행 (서버 사용 안 함)")
 
         def watch():
-            code = proc.poll()
-            if code is None:
+            if proc.poll() is None:
                 self.after(500, watch)
-                return
-            self._single_proc = None
-            if code == package_mode_patch.EXIT_CODE:
-                self._start_single_game(game_dir, True)
+            else:
+                self._single_proc = None
         self.after(500, watch)
 
     def _on_multi_play(self):
