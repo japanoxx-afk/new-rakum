@@ -1,5 +1,6 @@
 """패키지 모드 실행 준비 (scenario_mode): 레지스트리 Pack 값과 시나리오 맵 자리."""
 import tempfile
+import struct
 import unittest
 from pathlib import Path
 
@@ -73,24 +74,32 @@ class MapTests(unittest.TestCase):
             self.assertFalse(sm.scenario_dir(game).exists())
 
 
-class CdKeyTests(unittest.TestCase):
-    """패키지 모드의 CD 키 확인 건너뛰기: 싱글 메뉴 실험 실행 때만 들어가고, 보통 실행으로 빌드하면 빠진다."""
+class SingleModePatchTests(unittest.TestCase):
+    """싱글(패키지) 실행용 수정: CD 키 확인 건너뛰기·경기 시간 표시·경기 끝에 종료. 싱글 실행 때만 들어가고 보통 실행에서는 빠진다."""
 
-    def test_patch_only_for_the_experimental_launch(self):
-        import minimap_patch
-        import package_mode_patch as pm
+    @classmethod
+    def setUpClass(cls):
         exe = Path(__file__).resolve().parent / "game_backup" / "Rhakmu.exe"
         if not exe.is_file():
-            self.skipTest("game_backup/Rhakmu.exe 없음")
-        original = exe.read_bytes()
-        self.assertEqual(original[pm.SITE:pm.SITE + 6], pm.ORIGINAL)
+            raise unittest.SkipTest("game_backup/Rhakmu.exe 없음")
+        cls.original = exe.read_bytes()
+
+    def test_patch_only_for_the_single_launch(self):
+        import minimap_patch
+        import package_mode_patch as pm
+        original = self.original
+        for site, before, after in pm.SITES:
+            self.assertEqual(original[site:site + len(before)], before)
+            self.assertEqual(len(before), len(after))
         self.assertEqual(original[pm.SITE - 12:pm.SITE - 7], bytes.fromhex("e834c7f4ff"))      # call 0x425E90 (CD 키 확인)
         self.assertEqual(pm.SITE + 0x400000 + 6 + 0xB5, 0x4D981E)                               # 두 점프 모두 같은 곳으로
         normal = minimap_patch.build(original, False)
         single = minimap_patch.build(original, False, package=True)
         self.assertFalse(pm.state(minimap_patch.underlying(normal)))
-        self.assertTrue(pm.state(minimap_patch.underlying(single)))
-        self.assertEqual([i for i in range(len(normal)) if normal[i] != single[i]], [pm.SITE, pm.SITE + 1])
+        self.assertTrue(pm.current(minimap_patch.underlying(single)))
+        changed = {i for i in range(len(normal)) if normal[i] != single[i]}
+        allowed = {i for site, before, _ in pm.SITES for i in range(site, site + len(before))}
+        self.assertTrue(changed and changed <= allowed)
         self.assertEqual(minimap_patch.build(single, False), normal)                            # 다음 보통 실행에서 되돌아감
         self.assertEqual(minimap_patch.build(normal, False, package=True), single)
         self.assertEqual(minimap_patch.build(original, True, package=True),
@@ -99,6 +108,85 @@ class CdKeyTests(unittest.TestCase):
         bad[pm.SITE] ^= 1
         with self.assertRaises(ValueError):
             pm.state(bad)
+        mixed = bytearray(original)                                                             # 알 수 없는 묶음
+        mixed[pm.TIMER_SHOW[0]] = pm.TIMER_SHOW[2][0]
+        with self.assertRaises(ValueError):
+            pm.state(mixed)
+
+    def test_upgrades_from_the_v0_9099_test_build(self):
+        """v0.9099 시험판은 CD 키 자리만 바꿨다 — 알아보고 지금 판으로 맞추거나 걷어낸다."""
+        import minimap_patch
+        import package_mode_patch as pm
+        old = bytearray(minimap_patch.build(self.original, False))
+        old[pm.SITE:pm.SITE + 6] = pm.PATCHED
+        self.assertTrue(pm.state(minimap_patch.underlying(bytes(old))))
+        self.assertFalse(pm.current(minimap_patch.underlying(bytes(old))))
+        self.assertEqual(minimap_patch.build(bytes(old), False), minimap_patch.build(self.original, False))
+        self.assertEqual(minimap_patch.build(bytes(old), False, package=True),
+                         minimap_patch.build(self.original, False, package=True))
+
+    def test_timer_code_matches_source(self):
+        import package_mode_patch as pm
+        try:
+            from keystone import Ks, KS_ARCH_X86, KS_MODE_32
+        except ImportError as e:
+            self.skipTest(str(e))
+        site, before, after = pm.TIMER_VALUE
+        code = bytes(Ks(KS_ARCH_X86, KS_MODE_32).asm(pm.TIMER_SOURCE, addr=0x400000 + site)[0])
+        self.assertEqual(code.ljust(len(before), b"\x90"), after)
+        self.assertEqual(0x400000 + site + len(before), 0x4653AC)
+
+    def _clock(self, image, countdown, multiplayer, seconds):
+        """시계의 분·초 계산 구간(0x465344..0x4653AC)을 실행해 (분, 초) 를 돌려준다."""
+        from test_production_split_patch import _emulator, SCRATCH
+        from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_EBP
+        mu = _emulator(image)
+        ebp = SCRATCH + 0x8000
+        mu.reg_write(UC_X86_REG_EBP, ebp)
+        mu.reg_write(UC_X86_REG_ESP, ebp - 0x100)
+        mu.mem_write(ebp - 8, struct.pack("<i", countdown))
+        mu.mem_write(0xB412CB, bytes([multiplayer]))
+        mu.mem_write(0xB4074C, struct.pack("<I", seconds))
+        mu.emu_start(0x465344, 0x4653AC, count=1000)
+        return struct.unpack("<ii", mu.mem_read(ebp - 0x18, 8))[::-1]
+
+    def test_clock_shows_game_time_in_single_games(self):
+        import minimap_patch
+        import package_mode_patch as pm
+        normal = minimap_patch.build(self.original, False)
+        single = minimap_patch.build(self.original, False, package=True)
+        self.assertEqual(single[pm.TIMER_SHOW[0]], 0xEB)                  # 멀티가 아니어도 시계를 그림
+        for image in (normal, single):                                     # 멀티플레이: 원래와 같음 (늘 경기 시간)
+            self.assertEqual(self._clock(image, 100, 1, 754), (12, 34))
+            self.assertEqual(self._clock(image, 45, 1, 754), (12, 34))
+        self.assertEqual(self._clock(normal, 100, 0, 754), (1, 40))        # 원래: 싱글에서는 카운트다운 값(없으면 100)
+        self.assertEqual(self._clock(single, 100, 0, 754), (12, 34))       # 싱글: 카운트다운이 없으면 경기 시간
+        self.assertEqual(self._clock(single, 100, 0, 3600 * 3 + 5), (180, 5))
+        self.assertEqual(self._clock(single, 75, 0, 754), (1, 15))         # 트리거 카운트다운이 돌면 그 값
+        self.assertEqual(self._clock(single, 0, 0, 754), (0, 0))
+
+    def test_game_end_exits_with_the_relaunch_code(self):
+        """경기 끝: 메뉴 다시 만들기(0x423850) 대신 ExitProcess(EXIT_CODE)."""
+        import minimap_patch
+        import package_mode_patch as pm
+        from test_production_split_patch import _emulator, SCRATCH
+        from unicorn import UC_HOOK_CODE
+        from unicorn.x86_const import UC_X86_REG_ESP
+        self.assertEqual(self.original[0xD5811:0xD5813], bytes.fromhex("7411"))      # 종료 중이면 0x4D5824 로 건너뜀 (그대로)
+        mu = _emulator(minimap_patch.build(self.original, False, package=True))
+        stub = SCRATCH + 0x4000
+        mu.mem_write(0x4EC26C, struct.pack("<I", stub))                               # ExitProcess 수입 자리
+        seen = []
+
+        def hook(uc, address, size, user):
+            esp = uc.reg_read(UC_X86_REG_ESP)
+            seen.append(struct.unpack("<II", uc.mem_read(esp, 8)))
+            uc.emu_stop()
+        mu.hook_add(UC_HOOK_CODE, hook, begin=stub, end=stub)
+        mu.reg_write(UC_X86_REG_ESP, SCRATCH + 0x8000)
+        mu.mem_write(0x106AE5E, struct.pack("<H", 1))
+        mu.emu_start(0x4D5804, 0x4D5824, count=100)
+        self.assertEqual(seen, [(0x4D5813 + 11, pm.EXIT_CODE)])
 
 
 if __name__ == "__main__":

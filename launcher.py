@@ -70,7 +70,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9099"
+APP_VERSION = "0.9100"
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1444,7 +1444,7 @@ class App(tk.Tk):
         ttk.Button(btns, text="새로고침", command=self._refresh_hosts_view, width=10).pack(side="left", padx=(0, 4))
         ttk.Button(btns, text="hosts 폴더 열기", command=self._on_open_hosts).pack(side="left")
         ttk.Label(frame,
-                  text="※ 접속 주소는 아래 '싱글/멀티플레이' 버튼이 자동 설정합니다.\n"
+                  text="※ 접속 주소는 아래 '멀티플레이' 버튼이 자동 설정합니다 (싱글플레이는 서버 없이 실행).\n"
                        "   rhakmugame.hangame.naver.com 줄만 바뀌고 나머지는 보존됩니다.",
                   style="Muted.TLabel").pack(anchor="w", pady=(8, 0))
 
@@ -1711,7 +1711,7 @@ class App(tk.Tk):
         start_save = record and not play and bool(self.cfg.get("replay_start_save", True))
         rally_spawn = bool(self._rally_spawn_setting())
         wide_checks = bool(getattr(self, "_replay_wide_checks", False)) if play else True   # 재생: 리플레이의 검사 방식
-        package = bool(getattr(self, "_scenario_launch", False))   # 싱글 메뉴 실험 실행: CD 키 확인 건너뜀
+        package = bool(getattr(self, "_scenario_launch", False))   # 싱글플레이 실행: package_mode_patch (CD 키·시계·경기 끝)
         minimap_patch.prepare(exe, highres, self._rally_setting(), hotkeys, select24, record, start_save, play,
                               rally_spawn, wide_checks, package)
         self.cfg['command_cadence_99ms'] = False
@@ -1728,8 +1728,8 @@ class App(tk.Tk):
         if selection_patch.state(replay_record_patch.strip(hotkey_patch.strip(installed))) != select24:
             raise RuntimeError('선택 한도 24 패치 검증 실패. 게임을 실행하지 않았습니다.')
         verified = minimap_patch.underlying(installed)
-        if package_mode_patch.state(verified) != package:
-            raise RuntimeError('패키지 모드 패치 검증 실패. 게임을 실행하지 않았습니다.')
+        if (package_mode_patch.current(verified) if package else package_mode_patch.state(verified)) != package:
+            raise RuntimeError('싱글 모드 패치 검증 실패. 게임을 실행하지 않았습니다.')
         if rally_gold_patch.state(verified) != bool(self._rally_setting()):
             raise RuntimeError('집결지 금광 인식 패치 검증 실패. 게임을 실행하지 않았습니다.')
         if rally_spawn_patch.state(verified) != rally_spawn or not rally_construct_patch.state(verified):
@@ -1805,7 +1805,53 @@ class App(tk.Tk):
         messagebox.showinfo('전송 간격 원복', '기존 전송 간격으로 복원했습니다. 양쪽 모두 v0.9032로 게임을 실행하세요.')
 
     def _on_single_play(self):
-        self._set_host_and_launch("127.0.0.1")
+        """싱글플레이: 로컬 서버·hosts 를 건드리지 않고 게임을 오프라인 메인 메뉴(커스텀 게임)로 실행한다."""
+        if getattr(self, '_single_proc', None) is not None or replay_memory.find_game_pid():
+            messagebox.showinfo("싱글플레이", "게임이 이미 실행 중입니다. 게임을 끈 뒤 다시 실행하세요.")
+            return
+        self._rally_override = None
+        self._select24_override = None
+        self._rally_spawn_override = None
+        self._scenario_launch = True
+        try:
+            self._prepare_game_launch()
+            game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
+            try:                                # v0.9098~v0.9099 시험판이 넣어 둔 가짜 시나리오 맵은 치운다
+                scenario_mode.remove_maps(game_dir)
+            except OSError:
+                pass
+        except Exception as e:
+            messagebox.showerror("게임 실행 중단", str(e))
+            return
+        finally:
+            self._scenario_launch = False
+        self._start_single_game(game_dir)
+
+    def _start_single_game(self, game_dir, again=False):
+        """싱글 메뉴로 게임을 띄우고 끝나기를 지켜본다. 경기가 끝나면 게임이 스스로 꺼지므로
+        (package_mode_patch (3): 그대로 두면 메뉴가 겹쳐 눌리지 않음) 그 끝냄 코드를 보면 싱글 메뉴로 다시 띄운다."""
+        try:
+            proc = subprocess.Popen([os.path.join(game_dir, GAME_EXE)], cwd=game_dir)
+        except OSError as e:
+            self._single_proc = None
+            messagebox.showerror("실행 오류", str(e))
+            return
+        self._single_proc = proc
+        if self.cfg.get('skip_version_warning', True):
+            threading.Thread(target=dismiss_version_warning, args=(proc,), daemon=True).start()
+        threading.Thread(target=cursor_guard.lock_game_cursor, daemon=True).start()
+        self.info_var.set("싱글플레이 — 경기가 끝나 메인 메뉴로 다시 실행했습니다" if again
+                          else "싱글플레이 — 오프라인 메인 메뉴로 실행 (서버 사용 안 함)")
+
+        def watch():
+            code = proc.poll()
+            if code is None:
+                self.after(500, watch)
+                return
+            self._single_proc = None
+            if code == package_mode_patch.EXIT_CODE:
+                self._start_single_game(game_dir, True)
+        self.after(500, watch)
 
     def _on_multi_play(self):
         # Client only: use saved VPN destination, no server or adapter changes.
@@ -2033,7 +2079,7 @@ class App(tk.Tk):
         self.recorder.pause_for_playback()
         self._launch_replay(rp.header.get("rules"))
 
-    # ── 패키지(오프라인) 모드: 메인 메뉴·싱글 시나리오 화면 (실험) ──
+    # ── 패키지(오프라인) 모드: 싱글플레이 (오프라인 메인 메뉴) ──
     def _sync_package_mode(self, wanted):
         """게임을 띄우기 직전: 시나리오 실행이면 레지스트리 Pack 을 1 로, 아니면 런처가 바꿔 둔 값을 되돌린다.
         (게임은 시작할 때 이 값이 0 이면 온라인 로그인 화면, 아니면 오프라인 메인 메뉴로 간다 — scenario_mode 머리말)"""
@@ -2050,49 +2096,6 @@ class App(tk.Tk):
                 return                                      # 못 되돌렸으면 다음에 다시
             self.cfg.pop("package_mode_saved", None)
             save_config(self.base_dir, self.cfg)
-
-    def _launch_scenario(self):
-        """오프라인 메인 메뉴로 게임 실행. 시나리오 맵 자리에는 고른 대전 맵을 넣어 둔다."""
-        from tkinter import filedialog
-        if replay_memory.find_game_pid():
-            messagebox.showinfo("싱글 메뉴", "게임이 이미 실행 중입니다. 게임을 끈 뒤 다시 실행하세요.")
-            return
-        game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
-        if not messagebox.askokcancel("싱글 메뉴 · 시나리오 (실험)",
-                "게임을 온라인 로그인 화면 대신 오프라인 메인 메뉴로 실행합니다.\n\n"
-                "• 원래 게임에 들어 있지만 20년 넘게 쓰이지 않은 화면이라 깨지거나 꺼질 수 있습니다.\n"
-                "• 시나리오(미션) 맵이 설치본에 없어서, 다음에 고르는 대전 맵을 시나리오 맵 자리에 넣습니다.\n"
-                "• 다음에 평소처럼 게임을 실행하면 온라인 화면으로 되돌아갑니다.\n\n계속할까요?"):
-            return
-        source = filedialog.askopenfilename(title="시나리오 맵 자리에 넣을 대전 맵 선택",
-                                            initialdir=os.path.join(game_dir, "Data", "Maps"),
-                                            filetypes=[("라크무 맵", "*.rkm")])
-        if not source:
-            return
-        self._scenario_launch = True
-        try:
-            self._prepare_game_launch()
-            game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
-            written = scenario_mode.install_maps(game_dir, source)
-        except Exception as e:
-            messagebox.showerror("게임 실행 중단", str(e))
-            return
-        finally:
-            self._scenario_launch = False
-        try:
-            proc = subprocess.Popen([os.path.join(game_dir, GAME_EXE)], cwd=game_dir)
-        except OSError as e:
-            messagebox.showerror("실행 오류", str(e))
-            return
-        if self.cfg.get('skip_version_warning', True):
-            threading.Thread(target=dismiss_version_warning, args=(proc,), daemon=True).start()
-        threading.Thread(target=cursor_guard.lock_game_cursor, daemon=True).start()
-        self.info_var.set(f"싱글 메뉴로 실행 — 시나리오 맵 {len(written)}개를 Data\\Scenario 에 넣음")
-
-    def _remove_scenario_maps(self):
-        removed = scenario_mode.remove_maps(self.cfg.get("game_dir", DEFAULT_GAME_DIR))
-        messagebox.showinfo("싱글 메뉴", f"런처가 넣은 시나리오 맵 {len(removed)}개를 지웠습니다." if removed
-                            else "런처가 넣은 시나리오 맵이 없습니다.")
 
     def _launch_replay(self, rules):
         """게임 화면 재생 실행. 재생 패치는 로그인·로비 없이 시작 저장을 불러와 바로 경기를 보여 주므로
@@ -2386,17 +2389,6 @@ class App(tk.Tk):
         ttk.Label(lat_frame, text='게임 실행 전 자동 원복합니다. 양쪽 모두 최신 런처를 사용하세요.',
                   style='Muted.TLabel').pack(anchor='w')
         radmin_ip = has_radmin_adapter()
-        single_frame = ttk.LabelFrame(frame, text="싱글 메뉴 · 시나리오 (실험)", padding=12)
-        single_frame.pack(fill="x", pady=(0, 10))
-        ttk.Label(single_frame, text="게임을 온라인 로그인 화면 대신 오프라인 메인 메뉴로 실행합니다. 게임에 남아 있는 싱글 시나리오 화면을 "
-                                     "열어 보는 실험용입니다. 미션 맵이 설치본에 없어서, 고른 대전 맵을 시나리오 맵 자리(Data\\Scenario)에 넣습니다. "
-                                     "다음에 평소처럼 게임을 실행하면 온라인 화면으로 되돌아갑니다.",
-                  style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(0, 6))
-        single_row = ttk.Frame(single_frame)
-        single_row.pack(anchor="w")
-        ttk.Button(single_row, text="싱글 메뉴로 게임 실행", command=self._launch_scenario).pack(side="left")
-        ttk.Button(single_row, text="넣은 시나리오 맵 지우기", command=self._remove_scenario_maps).pack(side="left", padx=6)
-
         rad_frame = ttk.LabelFrame(frame, text="라드민 멀티 최적화 (동기화 실패 해결)", padding=12)
         rad_frame.pack(fill="x", pady=(0, 10))
         if radmin_ip:
