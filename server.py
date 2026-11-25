@@ -61,7 +61,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9020"
+SERVER_VERSION = "0.9021"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -245,12 +245,35 @@ def ranking_rows() -> list:
         r["rank"] = i
     return rows
 
+# ── 계급 (점수제) ──
+# 게임(Rhakmu.exe 0x42CA20)은 서버가 보낸 '등급값'(원래는 래더 순위)의 구간으로 계급 이름·아이콘을 고른다:
+#   0 이하 신 / 1~10 초인 / ~50 패왕 / ~190 지존 / ~450 영웅 / ~900 명장 / ~1600 달인 / ~2500 대가 / ~3500 고수 /
+#   ~4700 투사 / ~5900 중수 / ~7200 용사 / ~8200 평민 / ~10000 하수 / 그 위 초보.
+# 또 내공이 1000 미만(사용자 정보 0x4226E1) 또는 1010 미만(목록 0x42CCC0)이면 등급값과 상관없이 초보로 그린다.
+# 접속자가 적은 서버에서 순위를 그대로 보내면 거의 모두 '초인'(10위 안)이 되므로, 내공(점수) 구간으로 계급을 정하고
+# 그 계급 구간의 등급값을 보낸다. 내공 = 1000 + 10 x 승 - 10 x 패 이므로 아래 기준은 '승 - 패' 로 1, 3, 6, 10, 15 … 120 이다
+# (위로 갈수록 간격이 넓어짐). '신'(등급값 0 이하)은 쓰지 않는다.
+# (계급 이름, 필요한 내공, 게임에 보낼 등급값) — 높은 계급부터
+TIERS = (("초인", 2200, 1), ("패왕", 1900, 11), ("지존", 1700, 51), ("영웅", 1550, 191), ("명장", 1450, 451),
+         ("달인", 1360, 901), ("대가", 1280, 1601), ("고수", 1210, 2501), ("투사", 1150, 3501), ("중수", 1100, 4701),
+         ("용사", 1060, 5901), ("평민", 1030, 7201), ("하수", 1010, 8201), ("초보", 0, 10001))
+
+def tier_for_points(points: int) -> tuple:
+    """내공 -> (계급 이름, 게임에 보낼 등급값)."""
+    for name, need, grade in TIERS:
+        if points >= need:
+            return name, grade
+    return TIERS[-1][0], TIERS[-1][2]
+
+def grade_value(row: dict) -> int:
+    return tier_for_points(int(row.get("points", BASE_POINTS)))[1]
+
 def _i32(v: int) -> int:
     return max(-2**31, min(2**31 - 1, int(v)))
 
 def build_rank_record(row: dict) -> bytes:
     """0x15FF 한 줄: 22바이트 {순위, 내공, 승, 패, 무 (int32), 등급점수 int16} + 마지막칸 문자열 + 이름."""
-    grade = max(0, min(32767, row["win"]))      # 등급 아이콘(0x42CA20)은 이 값의 구간으로 정해짐
+    grade = grade_value(row)                    # 계급(0x42CA20)은 이 값의 구간으로 정해짐 — 내공 기준 (TIERS)
     rec = struct.pack("<iiiiih", _i32(row["rank"]), _i32(row["points"]), _i32(row["win"]),
                       _i32(row["lose"]), _i32(row["draw"]), grade)
     return rec + nul(row["last"][:10]) + nul(row["name"])
@@ -269,7 +292,7 @@ def build_account_info(account: str, rows: Optional[list] = None) -> bytes:
     rows = ranking_rows() if rows is None else rows
     row = next((r for r in rows if r["name"] == account), None) or \
         {"rank": 0, "points": BASE_POINTS, "win": 0, "lose": 0, "draw": 0, "last": ""}
-    grade = max(0, min(32767, row["win"]))
+    grade = grade_value(row)
     return (bytes([3]) + struct.pack("<iiiih", _i32(row["points"]), _i32(row["win"]), _i32(row["lose"]),
                                      _i32(row["draw"]), grade)
             + nul(account) + nul(f"#{row['rank']}" if row["rank"] else "") + nul(row["last"]))
