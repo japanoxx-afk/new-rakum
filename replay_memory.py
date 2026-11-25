@@ -215,7 +215,12 @@ class GameReader:
         names = {bytes(head[table + 40 * i:table + 40 * i + 8]) for i in range(nsec)}
         import replay_record_patch
         sec = replay_record_patch.find_section(self.mem.read)
-        return {"rally_gold": site == rally_gold_patch.SITE_PATCHED,
+        import turn_length_patch
+        # 턴 길이(프레임): 멀티는 Game_Multi 의 값, 싱글(커스텀·시나리오, 방식 [0x6E167E] <= 1)은 매 프레임 턴을 돌린다.
+        single = self.mem.read(0x6E167E, 1)[0] <= 1 and self.mem.read(0xB412CB, 1)[0] == 0
+        turn = 1 if single else self.mem.read(0x400000 + turn_length_patch.FRAMES_SITE, 1)[0]
+        return {"turn_frames": turn if turn in replay_record_patch.TURN_CHOICES else 5,
+                "rally_gold": site == rally_gold_patch.SITE_PATCHED,
                 "select_24": selection_patch.SECTION_NAME in names,
                 "rally_spawn": spawn == rally_spawn_patch.PATCHED,
                 # 검사값이 전 칸·인구·자원까지 보는지 (v0.9077~ 기록). 재생 패치도 같은 검사값을 써야 한다.

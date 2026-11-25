@@ -20,13 +20,14 @@ class AutoLaunchTests(unittest.TestCase):
             app.cfg = {'command_cadence_99ms': True}
             app.base_dir = root
             app.radmin_only.get.return_value = False
+            app._turn_frames_setting.return_value = 3
             # This operates on a temporary copy, independent of a user's live game.
             with patch.object(launcher, '_run_ps', return_value=(0, '')), patch.object(launcher.viewport_patch,'ensure_closed'), patch.object(launcher, 'save_config') as save:
                 launcher.App._prepare_game_launch(app)
                 save.assert_called_once()
             self.assertEqual(app.cfg['game_dir'], str(folder))
             self.assertFalse(app.cfg['command_cadence_99ms'])
-            self.assertEqual(game.read_bytes()[0xd7b97],5)
+            self.assertEqual(game.read_bytes()[0xd7b97],3)   # 턴 길이 (turn_length_patch)
             self.assertTrue(peer_address_patch.state(game.read_bytes()))
             self.assertEqual(game.read_bytes()[0xeb420:0xeb420+len(peer_address_patch.CODE)], peer_address_patch.CODE)
 

@@ -88,7 +88,7 @@ class SingleModePatchTests(unittest.TestCase):
         import minimap_patch
         import package_mode_patch as pm
         original = self.original
-        for site, before, after in pm.SITES:
+        for site, before, after in pm.SITES + pm.RETIRED:
             self.assertEqual(original[site:site + len(before)], before)
             self.assertEqual(len(before), len(after))
         self.assertEqual(original[pm.SITE - 12:pm.SITE - 7], bytes.fromhex("e834c7f4ff"))      # call 0x425E90 (CD 키 확인)
@@ -113,17 +113,22 @@ class SingleModePatchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pm.state(mixed)
 
-    def test_upgrades_from_the_v0_9099_test_build(self):
-        """v0.9099 시험판은 CD 키 자리만 바꿨다 — 알아보고 지금 판으로 맞추거나 걷어낸다."""
+    def test_upgrades_from_earlier_test_builds(self):
+        """v0.9099 시험판(CD 키만)·v0.9100 시험판(경기 끝에서 바로 종료)을 알아보고 지금 판으로 맞추거나 걷어낸다."""
         import minimap_patch
         import package_mode_patch as pm
-        old = bytearray(minimap_patch.build(self.original, False))
-        old[pm.SITE:pm.SITE + 6] = pm.PATCHED
-        self.assertTrue(pm.state(minimap_patch.underlying(bytes(old))))
-        self.assertFalse(pm.current(minimap_patch.underlying(bytes(old))))
-        self.assertEqual(minimap_patch.build(bytes(old), False), minimap_patch.build(self.original, False))
-        self.assertEqual(minimap_patch.build(bytes(old), False, package=True),
-                         minimap_patch.build(self.original, False, package=True))
+        every = pm.SITES + pm.RETIRED
+        self.assertEqual(len(pm.LEGACY), 2)
+        for used in pm.LEGACY:
+            old = bytearray(minimap_patch.build(self.original, False))
+            for k in used:
+                site, before, after = every[k]
+                old[site:site + len(after)] = after
+            self.assertTrue(pm.state(minimap_patch.underlying(bytes(old))))
+            self.assertFalse(pm.current(minimap_patch.underlying(bytes(old))))
+            self.assertEqual(minimap_patch.build(bytes(old), False), minimap_patch.build(self.original, False))
+            self.assertEqual(minimap_patch.build(bytes(old), False, package=True),
+                             minimap_patch.build(self.original, False, package=True))
 
     def test_timer_code_matches_source(self):
         import package_mode_patch as pm
@@ -165,15 +170,17 @@ class SingleModePatchTests(unittest.TestCase):
         self.assertEqual(self._clock(single, 75, 0, 754), (1, 15))         # 트리거 카운트다운이 돌면 그 값
         self.assertEqual(self._clock(single, 0, 0, 754), (0, 0))
 
-    def test_game_end_exits_with_the_relaunch_code(self):
-        """경기 끝: 메뉴 다시 만들기(0x423850) 대신 ExitProcess(EXIT_CODE)."""
+    def test_leaving_the_score_screen_exits_with_the_relaunch_code(self):
+        """경기 끝의 메뉴 다시 만들기(점수 화면)는 그대로, 점수 화면에서 메인 메뉴로 갈 때 ExitProcess(EXIT_CODE)."""
         import minimap_patch
         import package_mode_patch as pm
         from test_production_split_patch import _emulator, SCRATCH
         from unicorn import UC_HOOK_CODE
         from unicorn.x86_const import UC_X86_REG_ESP
-        self.assertEqual(self.original[0xD5811:0xD5813], bytes.fromhex("7411"))      # 종료 중이면 0x4D5824 로 건너뜀 (그대로)
-        mu = _emulator(minimap_patch.build(self.original, False, package=True))
+        single = minimap_patch.build(self.original, False, package=True)
+        self.assertEqual(single[0xD5813:0xD5824], self.original[0xD5813:0xD5824])     # 경기 끝 -> 0x423850 (점수 화면) 그대로
+        self.assertEqual(self.original[0x11EAD:0x11EAF], bytes.fromhex("7411"))       # 커스텀([0x6E167E] == 0)이면 0x411EC0 으로
+        mu = _emulator(single)
         stub = SCRATCH + 0x4000
         mu.mem_write(0x4EC26C, struct.pack("<I", stub))                               # ExitProcess 수입 자리
         seen = []
@@ -183,11 +190,9 @@ class SingleModePatchTests(unittest.TestCase):
             seen.append(struct.unpack("<II", uc.mem_read(esp, 8)))
             uc.emu_stop()
         mu.hook_add(UC_HOOK_CODE, hook, begin=stub, end=stub)
+        from unicorn.x86_const import UC_X86_REG_EBP
         mu.reg_write(UC_X86_REG_ESP, SCRATCH + 0x8000)
-        mu.mem_write(0x106AE5E, struct.pack("<H", 1))
-        mu.emu_start(0x4D5804, 0x4D5824, count=100)
-        self.assertEqual(seen, [(0x4D5813 + 11, pm.EXIT_CODE)])
-
-
-if __name__ == "__main__":
-    unittest.main()
+        mu.reg_write(UC_X86_REG_EBP, SCRATCH + 0x9000)
+        mu.mem_write(0x6E167E, bytes([0]))
+        mu.emu_start(0x411EA1, 0x411F59, count=100)
+        self.assertEqual(seen, [(0x411EC0 + 11, pm.EXIT_CODE)])

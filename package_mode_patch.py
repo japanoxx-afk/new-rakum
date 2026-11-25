@@ -9,11 +9,13 @@
     0x465298 의 jne 를 jmp 로 (늘 그림), 0x465344..0x4653AC (분·초 계산) 를 다시 짬:
     멀티플레이이거나 카운트다운이 없으면([ebp-8] == 100) 경기 시간 [0xB4074C] (싱글에서도 0x4D5ADD 가 올린다), 아니면 카운트다운.
     멀티플레이에서의 표시는 원래와 같다.
-(3) 경기가 끝나면 게임을 끝낸다 (끝냄 코드 EXIT_CODE). 원래는 0x4D581F 에서 0x423850 (메뉴 다시 만들기) 을 부르는데,
-    이 판에서는 그 뒤 메인 메뉴의 대화 상자(로그인 등)가 모두 겹쳐 나오고 눌리지 않는다 (원인 미확인).
-    0x4D5813..0x4D5824 를 push EXIT_CODE; call [ExitProcess] 로. 런처가 이 끝냄 코드를 보면 싱글 메뉴로 다시 실행한다.
+(3) 경기 뒤 점수 화면에서 나갈 때 게임을 끝낸다 (끝냄 코드 EXIT_CODE). 경기가 끝나면 0x423850 이 메뉴를 다시 만들고
+    점수 화면(쪽 2)을 연다. 거기서 [확인] 을 누르면 커스텀 게임은 0x411EC0 에서 메인 메뉴(쪽 8, 0x424160)로 가는데,
+    이 판에서는 그 메인 메뉴의 대화 상자(로그인 등)가 모두 겹쳐 나오고 눌리지 않는다 (원인 미확인 — docs/HANDOFF.md).
+    0x411EC0..0x411ED1 (push 8; call 0x424160; jmp) 을 push EXIT_CODE; call [ExitProcess] 로.
+    런처가 이 끝냄 코드를 보면 싱글 메뉴로 다시 실행한다. (v0.9100 시험판은 점수 화면 전, 0x4D5813 에서 끝냈다.)
 
-온라인(Pack == 0) 실행에서는 켜지 않는다. v0.9099 시험판은 (1) 만 넣었다 — state() 가 알아보고 transform() 이 맞춘다.
+온라인(Pack == 0) 실행에서는 켜지 않는다. 이전 시험판(v0.9099: (1) 만, v0.9100: 경기 끝 종료)은 state() 가 알아보고 transform() 이 맞춘다.
 """
 EXIT_CODE = 0x52A1                                 # 경기 끝 -> 런처가 싱글 메뉴로 다시 실행
 
@@ -44,17 +46,19 @@ cd:
     mov dword ptr [ebp-0x18], edx
     jmp 0x4653ac
 """
-GAME_END = (0xD5813, bytes.fromhex("8b0d30ae060151b9e00c6e00e82ce0f4ff"),
-            (b"\x68" + EXIT_CODE.to_bytes(4, "little") + bytes.fromhex("ff156cc24e00")).ljust(17, b"\x90"))
+_EXIT = b"\x68" + EXIT_CODE.to_bytes(4, "little") + bytes.fromhex("ff156cc24e00")   # push EXIT_CODE; call [ExitProcess]
+SCORE_EXIT = (0x11EC0, bytes.fromhex("6a08b9e00c6e00e894220100e988000000"), _EXIT.ljust(17, b"\x90"))
+GAME_END = (0xD5813, bytes.fromhex("8b0d30ae060151b9e00c6e00e82ce0f4ff"), _EXIT.ljust(17, b"\x90"))    # v0.9100 시험판만
 
 # (파일 오프셋, 원래, 바꾼 것)
-SITES = ((SITE, ORIGINAL, PATCHED), TIMER_SHOW, TIMER_VALUE, GAME_END)
-LEGACY = ((0,),)                                   # 예전 판이 바꿔 둔 자리 묶음 (v0.9099: CD 키만)
+SITES = ((SITE, ORIGINAL, PATCHED), TIMER_SHOW, TIMER_VALUE, SCORE_EXIT)
+RETIRED = (GAME_END,)                              # 예전 판만 바꾸던 자리 — 늘 원래대로 돌린다
+LEGACY = ((0,), (0, 1, 2, 4))                      # 예전 판이 바꿔 둔 자리 묶음 (SITES + RETIRED 번호): v0.9099, v0.9100
 
 
 def _marks(data):
     marks = []
-    for site, original, patched in SITES:
+    for site, original, patched in SITES + RETIRED:
         value = bytes(data[site:site + len(original)])
         if value not in (original, patched):
             raise ValueError("싱글 모드 패치: 알 수 없는 변경이 있습니다.")
@@ -65,7 +69,7 @@ def _marks(data):
 def state(data) -> bool:
     """켜져 있으면 True (예전 판 상태도 True). 알 수 없는 상태면 ValueError."""
     marks = _marks(data)
-    if all(marks):
+    if all(marks[:len(SITES)]) and not any(marks[len(SITES):]):
         return True
     if not any(marks):
         return False
@@ -76,7 +80,8 @@ def state(data) -> bool:
 
 def current(data) -> bool:
     """지금 판 그대로 켜져 있으면 True."""
-    return all(_marks(data))
+    marks = _marks(data)
+    return all(marks[:len(SITES)]) and not any(marks[len(SITES):])
 
 
 def transform(data, enabled=True) -> bytes:
@@ -84,4 +89,6 @@ def transform(data, enabled=True) -> bytes:
     out = bytearray(data)
     for site, original, patched in SITES:
         out[site:site + len(original)] = patched if enabled else original
+    for site, original, patched in RETIRED:
+        out[site:site + len(original)] = original
     return bytes(out)

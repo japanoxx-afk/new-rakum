@@ -77,7 +77,7 @@ class FakeGame:
         self.ring[o + 8:o + 8 + len(batch)] = batch
         struct.pack_into("<II", self.ring, 0, total + need, pos + need)
 
-    def match_rules(self, rally_gold, select_24, rally_spawn=False, wide_checks=True):
+    def match_rules(self, rally_gold, select_24, rally_spawn=False, wide_checks=True, turn_frames=5, mode=3):
         """이 경기에 쓰인 진행 규칙 패치를 메모리에 흉내: 금광 인식 점프, .sel24 섹션, 생산 위치 호출."""
         self.rally[:] = rally_gold_patch.SITE_PATCHED if rally_gold else rally_gold_patch.SITE_ORIGINAL
         self.spawn[:] = rally_spawn_patch.PATCHED if rally_spawn else rally_spawn_patch.ORIGINAL
@@ -85,6 +85,7 @@ class FakeGame:
         h = 0x80 + 24 + 0xE0 + 40
         self.pe[h:h + 8] = selection_patch.SECTION_NAME if select_24 else bytes(8)
         self.code[rrp.FLAGS_OFF + rrp.F_HASH2] = 1 if wide_checks else 0
+        self.turn, self.mode = turn_frames, mode          # Game_Multi 의 턴 길이, 게임 방식 (0 커스텀 … 3 TNet)
 
     def kill(self, uid):
         struct.pack_into("<h", self.units, uid * rm.UNIT_SIZE + 8, 0)
@@ -97,7 +98,10 @@ class FakeGame:
                    (rm.SEED, struct.pack("<I", self.seed)), (rm.GAME_OPTIONS, bytes(range(8))),
                    (0x400000, self.pe), (self.sec_va, self.code), (self.sec_va + rrp.BUF, self.ring),
                    (0x400000 + rally_gold_patch.SITE, self.rally),
-                   (0x400000 + rally_spawn_patch.SITE, self.spawn))
+                   (0x400000 + rally_spawn_patch.SITE, self.spawn),
+                   (0x400000 + 0xD7B97, bytes([getattr(self, "turn", 5)])),
+                   (0x6E167E, bytes([getattr(self, "mode", 3)])),
+                   (0xB412CB, bytes([1 if getattr(self, "mode", 3) >= 2 else 0])))
         for base, data in regions:
             if base <= addr and addr + size <= base + len(data):
                 return bytes(data[addr - base:addr - base + size])
@@ -197,19 +201,21 @@ class RecordAndModelTests(unittest.TestCase):
     def test_header_keeps_match_rules(self):
         # 재생은 기록한 경기와 같은 규칙이어야 한다: NAS 서버 경기는 선택 한도 12기로 맞춰지는데
         # 재생은 이 PC 설정(24기)으로 띄우던 문제 -> 경기 때 게임 메모리의 패치 상태를 그대로 남긴다.
-        for rally, sel, spawn, wide in ((True, False, True, True), (False, True, False, False)):
-            with self.subTest(rally=rally, sel=sel, spawn=spawn, wide=wide):
+        # 턴 길이(turn_frames): 멀티는 Game_Multi 의 값, 싱글(커스텀) 경기는 매 프레임 턴이라 1.
+        for rally, sel, spawn, wide, turn, mode, want in ((True, False, True, True, 5, 3, 5), (False, True, False, False, 3, 3, 3),
+                                                        (True, True, True, True, 3, 0, 1), (True, True, True, True, 2, 2, 2)):
+            with self.subTest(rally=rally, sel=sel, spawn=spawn, wide=wide, turn=turn, mode=mode):
                 for f in (self.base / "replays").glob("*.rkr"):
                     f.unlink()
                 self.g = FakeGame()
-                self.g.match_rules(rally, sel, spawn, wide)
+                self.g.match_rules(rally, sel, spawn, wide, turn, mode)
                 self.rec = rr.Recorder(self.base, lambda: str(self.game_dir), open_memory=lambda pid: self.g,
                                        find_pid=lambda: 1234, clock=lambda: self.clock[0])
                 self.play_match()
                 self.rec._finish("끝")
                 h, _ = M.load_header(next((self.base / "replays").glob("*.rkr")))
                 self.assertEqual(h["rules"], {"rally_gold": rally, "select_24": sel, "rally_spawn": spawn,
-                                              "wide_checks": wide})
+                                              "wide_checks": wide, "turn_frames": want})
 
     def test_damaged_replay_is_still_listed_and_not_fatal(self):
         """압축 자료 중간이 깨진 파일(zlib.error)·끝이 잘린 파일도 목록용 머리는 읽힌다 — 예전에는 zlib.error 를
@@ -675,9 +681,9 @@ class InGameHookTests(unittest.TestCase):
         self.assertEqual(self.names_at_save, [b"big"])                 # 저장 경로 USERs\big\RKREPLAY.SAV
         self.assertEqual(bytes(mu.mem_read(0x6E61F4, 7)), b"RhakMu\0")   # 계정 이름 되돌림
 
-    def play_machine(self, records, start_frame=100, name=""):
+    def play_machine(self, records, start_frame=100, name="", turn=5):
         mu, rd = self.machine()
-        mu.mem_write(self.BASE, rrp.body(play=True))
+        mu.mem_write(self.BASE, rrp.body(play=True, turn=turn))
         start = {"frame": start_frame, "rand": 0x11111111, "rng": bytes(range(40, 60)).hex(), "seed": 0x2222}
         self.files[b"RKREPLAY.RKP"] = rrp.build_rkp(start, records, name)
         return mu
@@ -1246,6 +1252,34 @@ class InGameHookTests(unittest.TestCase):
         self.assertEqual(f["diverged"], 110)                              # 첫 어긋남
         self.assertEqual(f["actual"], (0x11111111, 0, 0))                   # 그때 실제 rand·해시·유닛 수
         self.assertEqual(struct.unpack("<I", mu.mem_read(0xB412B8, 4))[0], 16)   # 2 키 -> 2배속
+
+    def test_play_follows_the_recorded_turn_length(self):
+        """턴 길이(turn_length_patch)가 3·2 프레임인 경기, 매 프레임 턴인 싱글 경기(1)의 리플레이는 그 간격으로 rand·묶음을 넣는다."""
+        b1 = b"\x03\x40ABC"
+        for turn in (3, 2, 1):
+            with self.subTest(turn=turn):
+                frames = [f for f in range(100, 113) if f % turn == 0]
+                recs = [(f, 0, b1) for f in frames[1:4]]
+                mu = self.play_machine(recs, turn=turn)
+                self.run_entry(mu, "start", 0x4D7559)
+                for frame in range(100, 113):
+                    mu.mem_write(rrp.FRAME, struct.pack("<I", frame))
+                    self.calls.clear()
+                    self.run_entry(mu, "send", 0x4D79FB)
+                    if frame % turn:
+                        self.assertEqual(self.calls, [], frame)
+                    else:
+                        self.assertEqual(self.calls[0], ("winrandom", 0xB40FE8, 0, 0x7FFF), frame)
+                        got = [c[1:] for c in self.calls if c[0] == "dispatch"]
+                        self.assertEqual(got, [(0, b1)] if frame in frames[1:4] else [], frame)
+                self.assertEqual(self.flags(mu)["fed"], 3)
+
+    def test_turn_length_is_only_written_for_playback(self):
+        self.assertEqual(rrp.body(play=False, turn=3), rrp.body(play=False))          # 기록 설치는 늘 같은 내용
+        self.assertNotEqual(rrp.body(play=True, turn=3), rrp.body(play=True))
+        self.assertEqual(sum(a != b for a, b in zip(rrp.body(play=True, turn=3), rrp.body(play=True))), 1)
+        with self.assertRaises(ValueError):
+            rrp.body(play=True, turn=4)
 
     def test_play_after_divergence_selects_only_own_units(self):
         """어긋난 뒤: 선택 명령(0x4002)에서 그 플레이어 것이 아닌 유닛 번호는 0(빈 칸)으로 바꿔 남의 유닛을 움직이지 않는다."""

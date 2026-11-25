@@ -249,6 +249,7 @@ class RallySpawnServerRuleTests(unittest.TestCase):
         with mock.patch("urllib.request.urlopen", return_value=resp), \
                 mock.patch.object(launcher.game_address_patch, "_local_ipv4s", return_value=[]):
             launcher.App._sync_rules_from_server(app, "112.159.73.235")
+        self.app = app
         return app._rally_spawn_override
 
     def test_nas_without_rules_file_turns_it_on(self):
@@ -257,6 +258,23 @@ class RallySpawnServerRuleTests(unittest.TestCase):
     def test_server_pc_that_turned_it_off(self):
         self.assertFalse(self.sync({"turns": 4, "rally_spawn": False, "p2p": 1}))
         self.assertTrue(self.sync({"turns": 4, "rally_spawn": True, "p2p": 1}))
+
+    def test_turn_length_follows_the_server_pc(self):
+        """명령 전송 간격(턴 길이): 서버 PC 런처의 값, 그 규칙을 모르는 구버전 서버 PC 런처면 원래 5프레임,
+        규칙 파일이 없는 NAS 서버면 이 PC 설정(런처 기본값)."""
+        import launcher
+        self.sync({"turns": 4, "turn_frames": 2, "p2p": 1})
+        self.assertEqual(launcher.App._turn_frames_setting(self.app), 2)
+        self.sync({"turns": 4, "p2p": 1})
+        self.assertEqual(launcher.App._turn_frames_setting(self.app), 5)
+        self.sync({"turns": 4, "turn_frames": 9})
+        self.assertEqual(launcher.App._turn_frames_setting(self.app), 5)
+        self.sync({"server_version": "0.9019", "p2p": 1})
+        self.assertIsNone(self.app._turn_frames_override)
+        self.app._turn_frames_setting_own = lambda: launcher.App._turn_frames_setting_own(self.app)
+        self.assertEqual(launcher.App._turn_frames_setting(self.app), launcher.DEFAULT_TURN_FRAMES)
+        self.app.cfg["turn_frames"] = 5
+        self.assertEqual(launcher.App._turn_frames_setting(self.app), 5)
 
 
 if __name__ == '__main__':

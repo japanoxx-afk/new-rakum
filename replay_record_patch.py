@@ -3282,10 +3282,25 @@ def _branch(site_off, section_va, target, kind, length):
     return (op + struct.pack("<i", rel)).ljust(length, b"\x90")
 
 
-def body(save: bool = False, play: bool = False, hash2: bool = True) -> bytes:
+TURN_PATTERN = bytes.fromhex("a1b412b40031d2b905000000f7f1")   # 재생의 send: 프레임 % 5 == 0 일 때만 턴(rand 1회)
+TURN_CHOICES = (5, 3, 2, 1)                                      # 턴 길이(프레임) — turn_length_patch; 1 = 싱글(커스텀) 경기 (매 프레임)
+
+
+def _turn_imm() -> int:
+    at = CODE.index(TURN_PATTERN)
+    if CODE.find(TURN_PATTERN, at + 1) >= 0 or not OFF["send"] <= at < OFF["feed"]:
+        raise ValueError("리플레이 재생 코드에서 턴 길이 자리를 찾지 못했습니다.")
+    return at + 8
+
+
+def body(save: bool = False, play: bool = False, hash2: bool = True, turn: int = 5) -> bytes:
     """save=False: 시작 저장 끄기(FLAGS +0 = 1, 실험 기능이라 기본). play=True: 재생 모드.
-    hash2: 넓은 검사값(F_HASH2). 기록은 항상 켬, 재생은 그 리플레이가 넓은 검사값으로 기록됐을 때만."""
+    hash2: 넓은 검사값(F_HASH2). 기록은 항상 켬, 재생은 그 리플레이가 넓은 검사값으로 기록됐을 때만.
+    turn: 재생할 리플레이를 기록한 경기의 턴 길이(프레임). 재생 모드에서만 쓰인다 (기록은 Game_Multi 의 턴을 따라감)."""
+    if turn not in TURN_CHOICES:
+        raise ValueError("턴 길이는 5, 3, 2, 1 프레임 중 하나여야 합니다.")
     b = bytearray(CODE.ljust(CODE_SIZE, b"\0"))
+    b[_turn_imm()] = turn if play else 5
     b[NAME_OFF:NAME_OFF + len(SAVE_NAME) + 1] = SAVE_NAME + b"\0"
     b[PLAY_NAME_OFF:PLAY_NAME_OFF + len(PLAY_FILE) + 1] = PLAY_FILE + b"\0"
     struct.pack_into("<I", b, FLAGS_OFF + F_NOSAVE, 0 if save else 1)
@@ -3333,7 +3348,8 @@ def _kind(data):
     mode = MODE_PLAY if _u32(raw, FLAGS_OFF + F_PLAY) == 1 else 0
     res = bytes(data[RES_OFF:RES_OFF + len(RES_800)])
     res_ok = res == RES_800 or (mode == MODE_PLAY and res == RES_1280)
-    if raw in [body(s, p, h) for s in (False, True) for p in (False, True) for h in (False, True)] and data[MODE_OFF] == mode and res_ok and \
+    if raw in [body(s, p, h, t) for s in (False, True) for p in (False, True) for h in (False, True)
+               for t in (TURN_CHOICES if p else (5,))] and data[MODE_OFF] == mode and res_ok and \
             all(data[o:o + len(b)] == _branch(o, va, t, k, len(b)) for o, b, t, k in SITES):
         return "new", (va, h, nsec)
     for legacy, targets in _legacy_bodies():
@@ -3372,6 +3388,15 @@ def plays(data) -> bool:
     return kind == "new" and _flag(data, F_PLAY) == 1
 
 
+def play_turn(data) -> int:
+    """재생 모드로 설치된 턴 길이(프레임). 재생이 아니면 5."""
+    kind, _ = _kind(data)
+    if kind != "new":
+        return 5
+    nt, nsec, table, salign, falign, soi, secs = _layout(data)
+    return data[secs[-1][3] + _turn_imm()]
+
+
 def strip(data) -> bytes:
     kind, info = _kind(data)
     if not kind:
@@ -3407,7 +3432,7 @@ def _rdata_writable(out, on: bool):
         raise ValueError("리플레이 기록 패치: 플레이어 비트 표가 있는 .rdata 섹션을 찾지 못했습니다.")
 
 
-def apply(data, enabled: bool = True, save: bool = False, play: bool = False, hash2: bool = True) -> bytes:
+def apply(data, enabled: bool = True, save: bool = False, play: bool = False, hash2: bool = True, turn: int = 5) -> bytes:
     out = bytearray(strip(data))
     if not enabled:
         return bytes(out)
@@ -3432,7 +3457,7 @@ def apply(data, enabled: bool = True, save: bool = False, play: bool = False, ha
         if out[HIGHRES_MARK:HIGHRES_MARK + len(RES_1280)] == RES_1280:
             out[RES_OFF:RES_OFF + len(RES_1280)] = RES_1280
         _rdata_writable(out, True)
-    out += body(save, play, hash2)
+    out += body(save, play, hash2, turn)
     return bytes(out)
 
 

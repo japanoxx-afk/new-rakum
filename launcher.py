@@ -28,6 +28,7 @@ import race_name_patch
 import smart_cast_patch
 import scenario_mode
 import package_mode_patch
+import turn_length_patch
 import command_cadence_trial
 import command_cadence_installer
 from release_notes import NOTES
@@ -70,7 +71,9 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9100"
+APP_VERSION = "0.9101"
+TURN_FRAME_LABELS = {3: '99ms · 3프레임 (기본)', 5: '165ms · 5프레임 (원래 게임)', 2: '66ms · 2프레임 (실험)'}
+DEFAULT_TURN_FRAMES = 3      # 멀티 턴 길이 기본값 (프레임): 99ms. 원래 게임은 5 (165ms) — turn_length_patch
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1536,6 +1539,7 @@ class App(tk.Tk):
                 self._rally_override = None
                 self._select24_override = None
                 self._rally_spawn_override = None
+                self._turn_frames_override = None
             self._prepare_game_launch()
             if rules_note:
                 self.info_var.set(rules_note)
@@ -1615,7 +1619,7 @@ class App(tk.Tk):
     def _write_game_rules(self):
         rules = {'launcher_version': APP_VERSION, 'turns': self.latency.current(),
                  'rally_gold': bool(self._rally_setting()), 'select_24': bool(self._select24_setting()),
-                 'rally_spawn': bool(self._rally_spawn_setting())}
+                 'rally_spawn': bool(self._rally_spawn_setting()), 'turn_frames': self._turn_frames_setting()}
         try:
             with open(os.path.join(self.base_dir, 'game_rules.json'), 'w', encoding='utf-8') as f:
                 json.dump(rules, f, ensure_ascii=False)
@@ -1634,11 +1638,23 @@ class App(tk.Tk):
         override = getattr(self, '_rally_spawn_override', None)
         return self.cfg.get('rally_spawn', True) if override is None else override
 
+    def _turn_frames_setting(self):
+        """멀티 턴 길이(프레임): 5 = 원래(165ms), 3 = 99ms(기본), 2 = 66ms. 대전 규칙 — 모든 PC가 같아야 한다."""
+        override = getattr(self, '_turn_frames_override', None)
+        if override is not None:                # 서버 PC 규칙, 또는 재생할 리플레이의 값 (싱글 경기 리플레이는 1)
+            return override if override in replay_record_patch.TURN_CHOICES else turn_length_patch.ORIGINAL
+        return self._turn_frames_setting_own()
+
+    def _turn_frames_setting_own(self):
+        value = self.cfg.get('turn_frames', DEFAULT_TURN_FRAMES)
+        return value if value in turn_length_patch.CHOICES else turn_length_patch.ORIGINAL
+
     def _sync_rules_from_server(self, ip):
         """Client PC: take turns / rally setting from the server PC. Returns a status line."""
         self._rally_override = None
         self._select24_override = None
         self._rally_spawn_override = None
+        self._turn_frames_override = None
         self._p2p_server = False           # 서버가 홀펀칭 중개(server.py 0.9019+)를 하는지
         try:
             own = ipaddress.IPv4Address(ip).is_loopback or ip in game_address_patch._local_ipv4s()
@@ -1661,6 +1677,11 @@ class App(tk.Tk):
         if 'turns' not in rules:
             return '서버 PC 런처가 구버전입니다. 양쪽 모두 같은 런처 버전을 사용하세요.'
         notes = []
+        # 턴 길이: 서버 PC 런처의 값을 따른다. 그 규칙을 모르는 구버전 서버 PC 런처면 원래 값(5프레임).
+        frames = rules.get('turn_frames', turn_length_patch.ORIGINAL)
+        self._turn_frames_override = frames if frames in turn_length_patch.CHOICES else turn_length_patch.ORIGINAL
+        if self._turn_frames_override != self.cfg.get('turn_frames', DEFAULT_TURN_FRAMES):
+            notes.append(f'전송 간격 {self._turn_frames_override * 33}ms')
         turns = rules.get('turns')
         if isinstance(turns, int) and 1 <= turns <= 4 and self.latency.current() != turns:
             ok, msg = self.latency.apply(turns)
@@ -1712,8 +1733,9 @@ class App(tk.Tk):
         rally_spawn = bool(self._rally_spawn_setting())
         wide_checks = bool(getattr(self, "_replay_wide_checks", False)) if play else True   # 재생: 리플레이의 검사 방식
         package = bool(getattr(self, "_scenario_launch", False))   # 싱글플레이 실행: package_mode_patch (CD 키·시계·경기 끝)
+        turn_frames = self._turn_frames_setting()               # 멀티 턴 길이 (재생: 그 리플레이를 기록한 경기의 값)
         minimap_patch.prepare(exe, highres, self._rally_setting(), hotkeys, select24, record, start_save, play,
-                              rally_spawn, wide_checks, package)
+                              rally_spawn, wide_checks, package, turn_frames)
         self.cfg['command_cadence_99ms'] = False
         installed = exe.read_bytes()
         if not smart_cast_patch.current(installed):
@@ -1723,13 +1745,17 @@ class App(tk.Tk):
             raise RuntimeError('단축키 확장 패치 검증 실패. 게임을 실행하지 않았습니다.')
         if (replay_record_patch.state(hotkey_patch.strip(installed)) != (record or play)
                 or replay_record_patch.saves_at_start(hotkey_patch.strip(installed)) != start_save
-                or replay_record_patch.plays(hotkey_patch.strip(installed)) != play):
+                or replay_record_patch.plays(hotkey_patch.strip(installed)) != play
+                or (play and replay_record_patch.play_turn(hotkey_patch.strip(installed)) != turn_frames)):
             raise RuntimeError('리플레이 기록 패치 검증 실패. 게임을 실행하지 않았습니다.')
         if selection_patch.state(replay_record_patch.strip(hotkey_patch.strip(installed))) != select24:
             raise RuntimeError('선택 한도 24 패치 검증 실패. 게임을 실행하지 않았습니다.')
         verified = minimap_patch.underlying(installed)
         if (package_mode_patch.current(verified) if package else package_mode_patch.state(verified)) != package:
             raise RuntimeError('싱글 모드 패치 검증 실패. 게임을 실행하지 않았습니다.')
+        if not turn_length_patch.current(verified, turn_frames if turn_frames in turn_length_patch.CHOICES
+                                         else turn_length_patch.ORIGINAL):
+            raise RuntimeError('턴 길이 패치 검증 실패. 게임을 실행하지 않았습니다.')
         if rally_gold_patch.state(verified) != bool(self._rally_setting()):
             raise RuntimeError('집결지 금광 인식 패치 검증 실패. 게임을 실행하지 않았습니다.')
         if rally_spawn_patch.state(verified) != rally_spawn or not rally_construct_patch.state(verified):
@@ -1812,6 +1838,7 @@ class App(tk.Tk):
         self._rally_override = None
         self._select24_override = None
         self._rally_spawn_override = None
+        self._turn_frames_override = None
         self._scenario_launch = True
         try:
             self._prepare_game_launch()
@@ -2111,6 +2138,8 @@ class App(tk.Tk):
         self._select24_override = bool(rules.get("select_24", False))
         self._rally_spawn_override = bool(rules.get("rally_spawn", False))
         self._replay_wide_checks = bool(rules.get("wide_checks", False))   # 예전 리플레이는 좁은 검사값
+        frames = rules.get("turn_frames", turn_length_patch.ORIGINAL)       # 규칙이 없는 예전 리플레이는 5프레임
+        self._turn_frames_override = frames if frames in replay_record_patch.TURN_CHOICES else turn_length_patch.ORIGINAL
         self._replay_play = True
         try:
             self._prepare_game_launch()
@@ -2121,6 +2150,7 @@ class App(tk.Tk):
             self._replay_play = False
             self._replay_wide_checks = False
             self._rally_override = self._select24_override = self._rally_spawn_override = None
+            self._turn_frames_override = None
             self._write_game_rules()                # 서버 PC 규칙 파일은 이 PC 설정으로 되돌림
         game_dir = self.cfg.get("game_dir", DEFAULT_GAME_DIR)
         try:
@@ -2383,11 +2413,19 @@ class App(tk.Tk):
         except OSError:
             cadence_current = False
         self.cadence_var = tk.BooleanVar(value=False)
-        ttk.Label(lat_frame, text='99ms 옵션 중단: 멀티 속도 저하·동시 종료 보고',
-                        style='Muted.TLabel').pack(anchor='w', pady=(8, 0))
-        ttk.Button(lat_frame, text='기존 전송 간격으로 원복', command=self._on_cadence_apply).pack(anchor='w', pady=4)
-        ttk.Label(lat_frame, text='게임 실행 전 자동 원복합니다. 양쪽 모두 최신 런처를 사용하세요.',
-                  style='Muted.TLabel').pack(anchor='w')
+        turn_row = ttk.Frame(lat_frame)
+        turn_row.pack(fill='x', pady=(10, 0))
+        ttk.Label(turn_row, text='명령 전송 간격:').pack(side='left')
+        self.turn_frames_var = tk.StringVar(value=TURN_FRAME_LABELS[self._turn_frames_setting_own()])
+        box = ttk.Combobox(turn_row, textvariable=self.turn_frames_var, state='readonly', width=30,
+                           values=[TURN_FRAME_LABELS[k] for k in (3, 5, 2)])
+        box.pack(side='left', padx=6)
+        box.bind('<<ComboboxSelected>>', lambda _e: self._on_turn_frames())
+        ttk.Label(lat_frame, text='명령을 묶어 보내는 간격입니다. 짧을수록 클릭 후 실행이 빨라집니다 (4턴 기준: 165ms 약 0.58초, '
+                                  '99ms 약 0.35초, 66ms 약 0.23초). 대신 핑이 큰 상대와는 멈칫거림이 늘 수 있습니다.\n'
+                                  '게임 진행 규칙이므로 같이 하는 모든 PC가 같은 값이어야 합니다 (다르면 느려지다 무승부). '
+                                  '접속 PC는 서버 PC 런처의 값을 자동으로 따르고, NAS 서버에서는 모두 같은 런처 버전·같은 값을 쓰세요.',
+                  style='Muted.TLabel', wraplength=520, justify='left').pack(anchor='w', pady=(4, 0))
         radmin_ip = has_radmin_adapter()
         rad_frame = ttk.LabelFrame(frame, text="라드민 멀티 최적화 (동기화 실패 해결)", padding=12)
         rad_frame.pack(fill="x", pady=(0, 10))
@@ -2594,6 +2632,13 @@ class App(tk.Tk):
         save_config(self.base_dir, self.cfg)
         self._write_game_rules()
         messagebox.showinfo("집결지 쪽 생산", "다음 게임 실행 때 적용됩니다.\n멀티는 접속 PC가 서버 PC 설정을 따릅니다.")
+
+    def _on_turn_frames(self):
+        frames = next((k for k, label in TURN_FRAME_LABELS.items() if label == self.turn_frames_var.get()), DEFAULT_TURN_FRAMES)
+        self.cfg['turn_frames'] = frames
+        save_config(self.base_dir, self.cfg)
+        self._write_game_rules()
+        self.info_var.set(f'명령 전송 간격 {frames * 33}ms — 다음 게임 실행부터 적용 (모든 PC가 같은 값이어야 합니다)')
 
     def _on_latency(self, value):
         if value != 4 and self.cfg.get('command_cadence_99ms', self.cadence_var.get()):
