@@ -31,10 +31,11 @@ class Base(unittest.TestCase):
 class PatchTests(Base):
     def test_code_matches_source(self):
         try:
-            self.assertEqual(sc.assemble(), (sc.CODE, sc.CODE2, sc.CODE3))
+            self.assertEqual(sc.assemble(), (sc.CODE, sc.CODE2, sc.CODE3, sc.CODE4))
+            self.assertLessEqual(sc.CODE3_OFFSET + len(sc.CODE3), sc.CODE4_OFFSET)
             self.assertLessEqual(len(sc.CODE), sc.CODE2_OFFSET)
             self.assertLessEqual(sc.CODE2_OFFSET + len(sc.CODE2), sc.CODE3_OFFSET)
-            self.assertLessEqual(sc.CODE3_OFFSET + len(sc.CODE3), sc.SECTION_SIZE)
+            self.assertLessEqual(sc.CODE4_OFFSET + len(sc.CODE4), sc.SECTION_SIZE)
         except ImportError as e:
             self.skipTest(str(e))
 
@@ -56,11 +57,11 @@ class PatchTests(Base):
             self.assertEqual(minimap_patch.underlying(built), minimap_patch.underlying(under))
 
     def test_upgrades_from_older_builds(self):
-        """v0.9096 시험판(자리 하나, 예전 코드)·v0.9097~v0.9099(미니맵 시야 없음)가 설치해 둔 상태를 알아보고 지금 판으로 바꾼다."""
+        """v0.9096 시험판(자리 하나, 예전 코드)·v0.9097~v0.9099(미니맵 시야 없음)·v0.9100~v0.9103(A 키 처리 없음)이 설치해 둔 상태를 알아보고 지금 판으로 바꾼다."""
         import struct as st
         built = minimap_patch.build(self.original, False)
         under = sc.strip(built)
-        self.assertEqual(len(sc.LEGACY), 2)
+        self.assertEqual(len(sc.LEGACY), 3)
         for code, used in sc.LEGACY:
             old = bytearray(built)
             va = st.unpack_from('<I', built, sc._layout(built)[6][-1][5] + 12)[0]
@@ -333,6 +334,43 @@ class MinimapVisionTests(Base):
     def test_reveal_all_mode_is_left_alone(self):
         terrain, frame = self._run({(1, 1): 0x02}, all_view=True)
         self.assertEqual(set(frame), {0xAAAA})
+
+
+class AttackKeyTests(Base):
+    """공격이 없는 유닛의 A 키: A 칸(0)이 비어 있고 D 칸이 이동(3)이면 D 칸으로 처리 (0x45CF60 의 앞부분)."""
+    PANEL = SCRATCH + 0x20000
+
+    def _slot(self, image, pressed, commands, building=0, shown=7):
+        """0x45CF82 부터 '칸이 비었나' 검사(0x45CF91) 직전까지 실행해 (볼 칸, 인자에 남은 칸) 을 돌려준다."""
+        from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_EBP, UC_X86_REG_ECX, UC_X86_REG_EAX
+        mu = _emulator(image)
+        ebp = SCRATCH + 0x8000
+        mu.reg_write(UC_X86_REG_EBP, ebp)
+        mu.reg_write(UC_X86_REG_ESP, ebp - 0x100)
+        mu.mem_write(ebp + 8, struct.pack("<H", pressed))
+        mu.mem_write(ebp - 4, struct.pack("<I", self.PANEL))
+        mu.mem_write(self.PANEL + 0x1BA, struct.pack("<10H", *commands))
+        mu.mem_write(SHOWN, struct.pack("<h", shown))
+        if shown > 0:
+            mu.mem_write(UNITS + shown * UNIT_SIZE + 2, struct.pack("<H", building))
+        mu.emu_start(0x45CF82, 0x45CF91, count=200)
+        self.assertEqual(mu.reg_read(UC_X86_REG_ESP), ebp - 0x100)
+        slot = mu.reg_read(UC_X86_REG_ECX)
+        self.assertEqual(mu.reg_read(UC_X86_REG_EAX), commands[slot])            # 그 칸의 명령을 읽어 둠
+        return slot, struct.unpack("<H", mu.mem_read(ebp + 8, 2))[0]
+
+    def test_a_key_moves_units_that_cannot_attack(self):
+        built = minimap_patch.build(self.original, False)
+        fighter = [1, 2, 3, 4, 5, 0, 0, 0, 0, 0]                 # 공격 정지 이동 순찰 고정
+        gon = [0, 2, 3, 4, 5, 36, 37, 35, 6, 0]                  # 아스트리아 일꾼 곤: A 칸이 빔
+        self.assertEqual(self._slot(built, 0, gon), (2, 2))      # A -> 이동
+        self.assertEqual(self._slot(built, 0, fighter), (0, 0))  # 공격이 있으면 그대로
+        for k in range(1, 10):
+            self.assertEqual(self._slot(built, k, gon), (k, k))  # 다른 키는 그대로
+        self.assertEqual(self._slot(built, 0, [0, 0, 17, 0, 0, 0, 0, 0, 0, 0]), (0, 0))   # D 칸이 이동이 아니면 그대로
+        self.assertEqual(self._slot(built, 0, gon, building=1), (0, 0))                   # 건물은 그대로
+        self.assertEqual(self._slot(built, 0, gon, shown=0), (0, 0))                      # 고른 것이 없으면 그대로
+        self.assertEqual(self._slot(self.original, 0, gon), (0, 0))                       # 원래 게임: A 칸이 비어 아무 일도 없음
 
 
 if __name__ == '__main__':

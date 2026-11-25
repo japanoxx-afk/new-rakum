@@ -33,6 +33,13 @@
     유닛 점을 찍는 0x469030 직전에: 그림 = 지형 반 밝기, 내가(동맹 포함, 표 0x4F02A0[내 번호]) 지금 보는 칸만 원래 밝기.
     전체 보기([0xB412C8] & 1) 일 때는 그대로. 화면 전용 — 진행(시야 지도)은 읽기만 한다. 싱글·멀티 모두 같다.
 
+(4) 공격이 없는 유닛의 A 키 (v0.9104~, 0x45CF82 = 버튼 칸 누르기 0x45CF60 의 앞부분).
+    단축키 A,S,D,F,G,Z,X,C,V,B 는 아래 패널의 칸 번호 0..9 이다 (0x42F43B 가 표 0x4FCD28 에서 찾아 0x465890 -> 0x45CF60(칸)).
+    칸의 명령은 패널 +0x1BA + 칸*2 (R1_DATA_MENU.STB; 기본 유닛은 A 공격 1, S 정지 2, D 이동 3, F 순찰 4, G 고정 5).
+    공격이 없는 유닛(아스트리아 일꾼 곤, 라바, 마령가마, 나루, 디거웜, 네크로멘서 …)은 A 칸이 비어 A 키가 아무 일도 하지 않았다.
+    A 칸이 비어 있고 D 칸이 이동(3)이면 A 를 D(이동)로 처리한다 — 공격할 수 없는 유닛의 '공격 이동' 은 이동. 건물은 그대로.
+    보내는 명령은 원래의 이동 명령이라 대전 진행에는 영향이 없다.
+
 섹션은 맨 뒤(.hotkey 뒤)에 붙인다. 코드는 자기 위치와 무관하게 짰다 (게임 주소는 절대값, 안에서는 상대 점프).
 다른 패치의 검증 전에 strip() 으로 먼저 걷어낸다.
 """
@@ -371,7 +378,33 @@ dots:
     ret
 """
 
-# SOURCE·SOURCE2·SOURCE3 을 조립한 것 (test_smart_cast_patch 가 keystone 으로 다시 조립해 같은지 본다)
+SITE4 = 0x5CF82                                           # 버튼 칸 누르기 0x45CF60 의 '칸 읽기' (movsx ecx,[ebp+8]; mov edx,[ebp-4])
+SITE4_ORIGINAL = bytes.fromhex("0fbf4d088b55fc")
+
+SOURCE4 = f"""
+entry:                                       /* 0x45CF82 대신: 누른 칸(인자 [ebp+8]), 패널 [ebp-4] */
+    movsx ecx, word ptr [ebp+8]
+    mov edx, dword ptr [ebp-4]
+    test ecx, ecx
+    jne back                                 /* A 칸(0)만 */
+    cmp word ptr [edx+0x1ba], 0
+    jne back                                 /* 공격 버튼이 있으면 그대로 */
+    cmp word ptr [edx+0x1be], 3
+    jne back                                 /* D 칸이 '이동'(명령 3)일 때만 */
+    movsx eax, word ptr [0xb412d0]
+    test eax, eax
+    jle back
+    imul eax, eax, 0x138
+    cmp word ptr [eax+0x775a3a], 0
+    jne back                                 /* 건물은 그대로 */
+    mov ecx, 2
+    mov word ptr [ebp+8], cx
+back:
+    push 0x45cf89
+    ret
+"""
+
+# SOURCE·SOURCE2·SOURCE3·SOURCE4 를 조립한 것 (test_smart_cast_patch 가 keystone 으로 다시 조립해 같은지 본다)
 CODE = bytes.fromhex(
     "600fb74424248d90dfdfffff83fa3f0f87410100000fbf0d3c08800083f9020f8c310100002d202000006bc0"
     "148b982802500085db0f841b0100000fbf7b420fbf6b080fbf05d012b40085c00f8e0401000069c038010000"
@@ -403,33 +436,40 @@ CODE3 = bytes.fromhex(
 )
 CODE2_OFFSET = 0x200                                      # 섹션 안에서 CODE2 가 놓이는 자리
 CODE3_OFFSET = 0x400                                      # CODE3 (미니맵 시야)
+CODE4 = bytes.fromhex("0fbf4d088b55fc85c975386683baba01000000752e6683babe0100000375240fbf05d012b40085c07e1969c0380100006683b83a5a7700007509b90200000066894d086889cf4500c3")
+CODE4_OFFSET = 0x580                                      # CODE4 (공격 없는 유닛의 A 키)
 
 # 이전 판이 설치한 상태 — 걷어낼 때 인식: (섹션 내용, 그때 바꾼 자리 목록)
 LEGACY = (
     (bytes.fromhex("600fb74424248d90dfdfffff83fa3f0f87540100000fb6d06bd21483baccf84f00000f84410100000fbf0d3c08800083f9020f8c310100002d202000006bc0148b982802500085db0f841b0100000fbf7b420fbf6b080fbf05d012b40085c00f8e0401000069c0380100006683b83a5a7700000f85f0000000668b90465a77008b356e3643006a0068ffffff7f490f888a00000066ad0fb7c085c074f089c369c03801000005385a770066837808007edc6639500e75d6668378020075cf530fbf9cb8fe00000039eb5b7cc151520fbf4818c1e1050fbf54244029d10fafc90fbf501ac1e205510fbf4c244629ca590fafd201d10fb7500681ea2120000083fa50770681c1000000403b4c24087308894c2408895c240c5a59e96fffffff585b85db7445a1a411b4008b504466c702024066c742020700c642040166895a0589c1b8c0944400ffd0ff742430ff742430ff742430ff742430e80d00000083c410b8d07b4400ffd061c3615589e583ec4068667d4400c3"), (0,)),              # v0.9096 시험판: 0x447D60 만, 대상 고르기 함수가 있는 마법만
     ((CODE.ljust(CODE2_OFFSET, bytes(1)) + CODE2), (0, 1)),          # v0.9097~v0.9099: 미니맵 시야 없음
+    ((CODE.ljust(CODE2_OFFSET, bytes(1)) + CODE2).ljust(CODE3_OFFSET, bytes(1)) + CODE3, (0, 1, 2)),   # v0.9100~v0.9103
 )
 
 
-def assemble() -> tuple[bytes, bytes, bytes]:
+def assemble() -> tuple:
     import re
     from keystone import Ks, KS_ARCH_X86, KS_MODE_32
     ks = Ks(KS_ARCH_X86, KS_MODE_32)
-    return tuple(bytes(ks.asm(re.sub(r"/\*.*?\*/", "", text), addr=0x10000000)[0]) for text in (SOURCE, SOURCE2, SOURCE3))
+    return tuple(bytes(ks.asm(re.sub(r"/\*.*?\*/", "", text), addr=0x10000000)[0]) for text in (SOURCE, SOURCE2, SOURCE3, SOURCE4))
 
 
 def _body() -> bytes:
     body = CODE.ljust(CODE2_OFFSET, bytes(1)) + CODE2
-    return (body.ljust(CODE3_OFFSET, bytes(1)) + CODE3).ljust(SECTION_SIZE, bytes(1))
+    body = body.ljust(CODE3_OFFSET, bytes(1)) + CODE3
+    return (body.ljust(CODE4_OFFSET, bytes(1)) + CODE4).ljust(SECTION_SIZE, bytes(1))
 
 
 # (파일 오프셋, 원래 바이트, 섹션 안 들어갈 자리) — 원래가 call(5바이트)이면 call 로, 함수 머리(6바이트)면 jmp + nop 로 바꾼다
-SITES = ((SITE, SITE_ORIGINAL, 0), (SITE2, SITE_ORIGINAL, CODE2_OFFSET), (SITE3, SITE3_ORIGINAL, CODE3_OFFSET))
+SITES = ((SITE, SITE_ORIGINAL, 0), (SITE2, SITE_ORIGINAL, CODE2_OFFSET), (SITE3, SITE3_ORIGINAL, CODE3_OFFSET),
+         (SITE4, SITE4_ORIGINAL, CODE4_OFFSET))
 
 
 def _jump(site, section_va, offset):
     rel = struct.pack("<i", (0x400000 + section_va + offset) - (0x400000 + site + 5))
-    return b"\xe8" + rel if site == SITE3 else b"\xe9" + rel + b"\x90"
+    if site == SITE3:
+        return b"\xe8" + rel
+    return (b"\xe9" + rel).ljust(7 if site == SITE4 else 6, b"\x90")
 
 
 def _installed(data, va, body):

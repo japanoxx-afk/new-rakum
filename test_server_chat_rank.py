@@ -239,7 +239,7 @@ class ChannelAndLobbyTests(TmpMatches):
         self.join(a)
         msgs = self.lobby_msgs(a.writer.data)
         self.assertEqual([(k, n) for k, n, _ in msgs], [(4, 'nyai'), (4, 'seo')])
-        self.assertEqual(msgs[1][2], (1010, 1, 0, 0, 1))             # 내공, 승, 패, 무, 등급값
+        self.assertEqual(msgs[1][2], (1010, 1, 0, 0, 8201))          # 내공, 승, 패, 무, 등급값 (1010 = 하수 구간)
         self.assertEqual([(k, n) for k, n, _ in self.lobby_msgs(b.writer.data)], [(4, 'seo')])
         self.assertNotIn(b'26.0.0', a.writer.data + b.writer.data)  # no IPs
 
@@ -349,6 +349,9 @@ class TierTests(unittest.TestCase):
         self.assertEqual([self.NAMES[self.game_index(g)] for g in grades], ["중수", "초보"])
         info = server.build_account_info("aa", rows)
         self.assertEqual(struct.unpack_from('<iiiih', info, 1), (1100, 12, 2, 0, grades[0]))
+        enter = server.build_enter_payload("aa", rows)                              # 로비 목록(0x12FF type 4)에 보이는 계급
+        self.assertEqual(struct.unpack_from('<iiiih', enter, 3 + len("aa") + 1), (1100, 12, 2, 0, grades[0]))
+        self.assertEqual(struct.unpack_from('<h', server.build_enter_payload("bb", rows), 3 + 3 + 16)[0], grades[1])
         new = server.build_account_info("nobody", rows)                              # 전적 없는 계정: 내공 1000 -> 초보
         self.assertEqual(self.NAMES[self.game_index(struct.unpack_from('<h', new, 17)[0])], "초보")
 
