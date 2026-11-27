@@ -106,10 +106,7 @@ mil_ok:
     test eax, eax
     jz mo_ret
     movzx eax, word ptr [ebx+0xe]
-    cmp eax, {SKIP1}
-    jb mo_type
-    cmp eax, {SKIP2}
-    jbe mo_no
+{SKIPCHK}
 mo_type:
     imul eax, eax, 0x1c
     mov eax, dword ptr [eax+0x4fcd88]
@@ -401,11 +398,18 @@ at_ret:
 '''
 
 
-F2_SKIP = (114, 116)      # F2 (모든 군사 유닛)에서 빼는 종류 범위: 라바 114, 코벨 115, 가디언 116 (R1_DATA_CHAR 줄 번호 = 유닛 종류 번호)
+# F2 (모든 군사 유닛)에서 빼는 유닛 종류 (R1_DATA_CHAR 줄 번호 = 유닛 종류 번호)
+#   라바 114, 코벨 115, 가디언 116 (건물 노릇), 네일트랩 145, 패닉트랩 146 (트랩)
+F2_SKIP = (114, 115, 116, 145, 146)
+
+
+def _skipchk(types=F2_SKIP) -> str:
+    """종류 번호가 목록에 있으면 mo_no (선택 안 함)."""
+    return '\n'.join(f'    cmp eax, {t}\n    je mo_no' for t in types)
 
 # 12: original game lists.  24: lists moved by selection_patch (.sel24 section).
 LAYOUT = {
-    12: dict(N=12, BUF=24, LSEL='0x80083e', GROUPS='0x106a6c0', PSTRIDE='0xd0', GSTRIDE='0x1a', NGROUPS=8, SKIP1=F2_SKIP[0], SKIP2=F2_SKIP[1]),
+    12: dict(N=12, BUF=24, LSEL='0x80083e', GROUPS='0x106a6c0', PSTRIDE='0xd0', GSTRIDE='0x1a', NGROUPS=8, SKIPCHK=_skipchk()),
 }
 
 
@@ -413,7 +417,7 @@ def _layout24():
     import selection_patch as sp
     return dict(N=sp.N, BUF=2 * sp.N, LSEL=hex(sp.LSEL), GROUPS=hex(sp.GROUPS),
                 PSTRIDE=hex(sp.PLAYER_GROUPS), GSTRIDE=hex(sp.GROUP_STRIDE), NGROUPS=sp.GROUP_COUNT,
-                SKIP1=F2_SKIP[0], SKIP2=F2_SKIP[1])
+                SKIPCHK=_skipchk())
 
 
 def assemble(addr=0x10000000, n=12):

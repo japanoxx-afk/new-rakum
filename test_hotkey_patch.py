@@ -216,6 +216,16 @@ class HotkeyPatchTests(unittest.TestCase):
         self.assertEqual(press(0x71), [])                                      # 고를 것이 없으면 선택 그대로
         self.assertEqual(selection()[0], 1)
 
+    def test_f2_leaves_out_traps(self):
+        """F2: 네일트랩(145)·패닉트랩(146)은 고르지 않는다 (라바·코벨·가디언과 같이)."""
+        mu, env, unit, press, selection, set_selection, group = self._emu()
+        unit(10, 145)
+        unit(11, SOLDIER)
+        unit(12, 146)
+        unit(13, ARCHER)
+        press(0x71)
+        self.assertEqual(selection(), (2, [11, 13] + [0] * 10))
+
     def test_f2_again_selects_the_next_units(self):
         """한도(12기)를 꽉 채운 F2 선택에서 F2 를 다시 누르면 그 다음 유닛들, 끝까지 가면 처음부터."""
         mu, env, unit, press, selection, set_selection, group = self._emu()
@@ -272,7 +282,7 @@ class HotkeyPatchTests(unittest.TestCase):
             built = build(self.base, False, True, True, sel) if sel else self.patched
             code = h.CODE24 if sel else h.CODE
             self.assertTrue(h.current(built))
-            self.assertEqual(len(h.LEGACY[n]), 3)
+            self.assertEqual(len(h.LEGACY[n]), 4)
             for legacy in h.LEGACY[n]:
                 old = bytearray(built)
                 old[-h.SECTION_SIZE:] = legacy.ljust(h.SECTION_SIZE, bytes(1))
