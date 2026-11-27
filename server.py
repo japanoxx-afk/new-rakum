@@ -61,7 +61,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9022"
+SERVER_VERSION = "0.9023"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -1307,6 +1307,22 @@ class DP8RelayProtocol(asyncio.DatagramProtocol):
 # ── 전적/랭킹 HTTP 제공 (클라이언트 런처가 조회) ──────────────
 HTTP_PORT = 11225
 
+def _text(value: str) -> str:
+    """패킷 문자열(CP949 바이트를 latin-1 로 보관)을 보통 글자로."""
+    try:
+        return value.encode("latin-1").decode("cp949")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return value
+
+def rooms_snapshot(viewer_ip: str = "") -> list:
+    """열려 있는 방 목록 (HTTP /rooms). mine: 요청한 PC의 주소가 방장 주소와 같음."""
+    out = []
+    for r in list(STATE.rooms):
+        out.append({"id": r.id, "title": _text(r.title), "owner": _text(r.owner), "map": _text(r.map_name),
+                    "players": r.player_count, "max": r.max_players, "in_game": bool(r.in_game),
+                    "mine": bool(viewer_ip) and r.host_ip == viewer_ip})
+    return out
+
 class _HistoryHandler(BaseHTTPRequestHandler):
     def _json(self, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -1321,6 +1337,9 @@ class _HistoryHandler(BaseHTTPRequestHandler):
             self._json(compute_ranking())
         elif self.path.startswith("/version"):
             self._json({"server_version": SERVER_VERSION, "p2p": 1})
+        elif self.path.startswith("/rooms"):
+            # 방 생성 알림용 (런처 room_watch): 지금 열려 있는 방. 주소는 내보내지 않고, 요청한 PC가 방장인지만 알려 준다.
+            self._json({"server_version": SERVER_VERSION, "rooms": rooms_snapshot(self.client_address[0])})
         elif self.path.startswith("/rules"):
             try:
                 with open(RULES_FILE, "r", encoding="utf-8") as f:

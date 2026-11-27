@@ -112,7 +112,7 @@ class HotkeyPatchTests(unittest.TestCase):
         # 게임 상태
         mu.mem_write(LOCAL, b'\x01')
         info = 0x2100000
-        for t, cls_ in ((WORKER, 1), (SOLDIER, 0), (ARCHER, 0), (BUILDING_T, 0)):
+        for t, cls_ in ((WORKER, 1), (SOLDIER, 0), (ARCHER, 0), (BUILDING_T, 0), (114, 0), (115, 0)):
             mu.mem_write(info + t * 0x100 + 0x40, struct.pack('<h', cls_))
             mu.mem_write(TYPEPTR + t * 0x1C, struct.pack('<I', info + t * 0x100))
 
@@ -198,6 +198,66 @@ class HotkeyPatchTests(unittest.TestCase):
         calls = press(0x71, 0x11)                                              # Ctrl+F2
         self.assertEqual(selection()[0], 1)
         self.assertNotIn(0x447BD0, [c[0] for c in calls])
+
+    def test_f2_leaves_out_larva_and_kobel(self):
+        """F2: 라바(114)·코벨(115)은 일꾼이 아니지만 고르지 않는다."""
+        mu, env, unit, press, selection, set_selection, group = self._emu()
+        unit(10, 114)
+        unit(11, SOLDIER)
+        unit(12, 115)
+        unit(13, ARCHER)
+        press(0x71)
+        self.assertEqual(selection(), (2, [11, 13] + [0] * 10))
+        mu2, env, unit, press, selection, set_selection, group = self._emu()
+        unit(10, 114)
+        unit(12, 115)
+        set_selection([10])
+        self.assertEqual(press(0x71), [])                                      # 고를 것이 없으면 선택 그대로
+        self.assertEqual(selection()[0], 1)
+
+    def test_f2_again_selects_the_next_units(self):
+        """한도(12기)를 꽉 채운 F2 선택에서 F2 를 다시 누르면 그 다음 유닛들, 끝까지 가면 처음부터."""
+        mu, env, unit, press, selection, set_selection, group = self._emu()
+        ids = list(range(20, 90, 2))[:30]                                      # 군사 30기
+        for i in ids:
+            unit(i, SOLDIER)
+        unit(21, WORKER)
+        unit(23, 114)
+        press(0x71)
+        self.assertEqual(selection(), (12, ids[:12]))
+        press(0x71)
+        self.assertEqual(selection(), (12, ids[12:24]))
+        press(0x71)
+        self.assertEqual(selection(), (6, ids[24:] + [0] * 6))
+        press(0x71)                                                            # 꽉 차지 않은 선택 -> 처음부터
+        self.assertEqual(selection(), (12, ids[:12]))
+        set_selection(ids[18:30])                                              # 마지막 12기를 직접 고른 뒤 -> 다음이 없어 처음부터
+        press(0x71)
+        self.assertEqual(selection(), (12, ids[:12]))
+        set_selection([21] + ids[:11])                                         # 일꾼이 섞인 12기 -> 처음부터
+        press(0x71)
+        self.assertEqual(selection(), (12, ids[:12]))
+        mu, env, unit, press, selection, set_selection, group = self._emu()
+        for i in ids[:12]:                                                     # 군사가 딱 12기: 다시 눌러도 같은 선택
+            unit(i, SOLDIER)
+        press(0x71)
+        press(0x71)
+        self.assertEqual(selection(), (12, ids[:12]))
+
+    def test_upgrades_from_the_previous_code(self):
+        """v0.9104 까지의 단축키 코드가 설치돼 있으면 알아보고 지금 판으로 바꾼다."""
+        for n, sel in ((12, False), (24, True)):
+            built = build(self.base, False, True, True, sel) if sel else self.patched
+            code = h.CODE24 if sel else h.CODE
+            self.assertTrue(h.current(built))
+            self.assertEqual(len(h.LEGACY[n]), 1)
+            for legacy in h.LEGACY[n]:
+                old = bytearray(built)
+                old[-h.SECTION_SIZE:] = legacy.ljust(h.SECTION_SIZE, bytes(1))
+                self.assertTrue(h.state(bytes(old)))
+                self.assertFalse(h.current(bytes(old)))
+                self.assertEqual(h.apply(bytes(old), True), built)
+                self.assertEqual(h.strip(bytes(old)), h.strip(built))
 
     def test_shift_number_adds_to_group(self):
         mu, env, unit, press, selection, set_selection, group = self._emu()

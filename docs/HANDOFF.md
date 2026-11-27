@@ -97,6 +97,10 @@ git clone https://github.com/japanoxx-afk/rtsarena.git
   치트(`replay_record_patch` cheatx): 사람 수를 +6 & 0x20 (컴퓨터 0x10) 로 셈 — 싱글 커스텀의 컴퓨터는 이름이 있어 예전 기준(이름)으로는 늘 막혔다.
   시나리오 맵은 `DATA\Scenario\Scenario-단계-진영.rkm` (0x419B60) — 설치본에 없음 (대전 맵을 넣어 본 v0.9098 실험은 목표·유닛이 없어 진행 불가, 버튼 제거).
   게임 방식 [0x6E167E]: 0 커스텀, 1 시나리오, 2 랜, 3 TNet. 메뉴 객체 0x6E0CE0, 쪽 바꾸기 0x424160.
+- **v0.9105** (브랜치 launcher-v0.9105-f2-room-alert): `hotkey_patch` F2 가 라바(종류 114)·코벨(115)을 빼고, 한도를 꽉 채운 F2 선택에서 다시 누르면 다음 유닛들
+  (`build_hotkey_code.py` mil_ok / page_start; 이전 코드는 `hotkey_patch.LEGACY`). 유닛 종류 번호 = R1_DATA_CHAR 줄 번호 (리플레이 머리의 types 로 확인).
+  선택 한도를 24 넘게 올리는 것은 selection_patch 의 322곳·목록 4개를 다시 옮겨야 하고 대전 규칙이라 하지 않음.
+  방 생성 알림: server 0.9023 `GET :11225/rooms` (`rooms_snapshot`, 주소는 안 내보내고 요청자 == 방장이면 mine), 런처 `room_watch.py` 가 5초마다 보고 `FlashWindowEx`.
 - **v0.9104** (PR #24, 배포): `DEFAULT_TURN_FRAMES` 3 → 2 (사용자가 2프레임으로 대전해 보고 기본값으로 요청), `smart_cast_patch` CODE4
   (0x45CF82: A 칸이 비고 D 칸이 이동(3)인 유닛은 A 키를 D 로 — 공격 없는 유닛), server 0.9022 (로비 목록 0x12FF type 4 `build_enter_payload` 도 계급 등급값; 0.9021 은 빠뜨림).
 - **v0.9103 계급 점수제 (server.py 0.9021)**: 게임 0x42CA20 은 서버가 보낸 등급값(원래 래더 순위)의 구간으로 계급 15개(MENUMSG 121..135: 신·초인·패왕…하수·초보)를 고르고,
