@@ -29,6 +29,50 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(w.update([a, b]), [a])                                # 다시 만들면 또 알림
         self.assertEqual(room_watch.describe(a), "1:1 (방장 nyai 1/4)")
 
+    def test_my_room_is_told_by_account_not_address(self):
+        """같은 공유기를 쓰는 두 PC는 서버가 보는 주소가 같아 서로의 방에 mine 이 붙는다 (v0.9105 에서 알림이 안 온 경우).
+        이 PC의 게임 계정을 알면 방장 이름으로 내 방인지 본다."""
+        w = room_watch.RoomWatcher()
+        theirs, own = room(1, "1:1", "nyai", mine=True), room(2, "내 방", "Seo", mine=True)
+        self.assertEqual(w.update([theirs, own], "seo"), [theirs])
+        w = room_watch.RoomWatcher()
+        self.assertEqual(w.update([theirs, own], ""), [])                      # 계정을 모르면 서버의 mine 표시대로
+        w = room_watch.RoomWatcher()
+        self.assertEqual(w.update([room(3, "x", "seo", mine=False)], " SEO "), [])
+
+    def test_last_user_from_registry(self):
+        class Key:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        class Reg:
+            HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY = 1, 2, 0x200
+            value = ("seo ", 1)
+            def OpenKey(self, root, path, reserved, access):
+                assert (root, path, access) == (1, r"SOFTWARE\TriggerSoft\RhakMu", 0x202)
+                return Key()
+            def QueryValueEx(self, key, name):
+                assert name == "LastUser"
+                if self.value is None:
+                    raise FileNotFoundError(name)
+                return self.value
+        reg = Reg()
+        self.assertEqual(room_watch.last_user(reg), "seo")
+        reg.value = None
+        self.assertEqual(room_watch.last_user(reg), "")
+        reg.value = (7, 4)
+        self.assertEqual(room_watch.last_user(reg), "")
+
+    def test_status_tells_why_there_is_no_alert(self):
+        for body, want in (({"rooms": [room(1, "a", "b")]}, ("ok", [room(1, "a", "b")])), ([{"time": "x"}], ("old", None))):
+            resp = io.BytesIO(json.dumps(body).encode())
+            resp.__enter__ = lambda *a, r=resp: r
+            resp.__exit__ = lambda *a: False
+            with mock.patch("urllib.request.urlopen", return_value=resp):
+                self.assertEqual(room_watch.fetch_status("1.2.3.4"), want)
+        with mock.patch("urllib.request.urlopen", side_effect=OSError("down")):
+            self.assertEqual(room_watch.fetch_status("1.2.3.4"), ("down", None))
+
     def fetch(self, body):
         resp = io.BytesIO(json.dumps(body).encode())
         resp.__enter__ = lambda *a: resp

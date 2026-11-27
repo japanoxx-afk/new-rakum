@@ -72,7 +72,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9105"
+APP_VERSION = "0.9106"
 TURN_FRAME_LABELS = {2: '66ms · 2프레임 (기본)', 3: '99ms · 3프레임', 5: '165ms · 5프레임 (원래 게임)'}
 DEFAULT_TURN_FRAMES = 2      # 멀티 턴 길이 기본값 (프레임): 66ms (v0.9104~; v0.9101~v0.9103 은 3). 원래 게임은 5 (165ms) — turn_length_patch
 
@@ -1646,13 +1646,23 @@ class App(tk.Tk):
         self._room_events = queue.Queue()
         self._room_watcher = room_watch.RoomWatcher()
 
+        self._room_status = ""
+
         def loop():
             while True:
                 try:
                     if self.cfg.get("room_alert", True):
-                        fresh = self._room_watcher.update(room_watch.fetch_rooms(self._server_ip()))
+                        ip = self._server_ip()
+                        status, rooms = room_watch.fetch_status(ip)
+                        fresh = self._room_watcher.update(rooms, room_watch.last_user())
+                        self._room_status = {
+                            "ok": f"방 알림 동작 중 — 서버 {ip}, 열린 방 {len(rooms or [])}개",
+                            "old": f"서버({ip})가 방 목록을 알려 주지 않습니다 — 서버를 0.9023 이상으로 바꿔야 알림이 옵니다",
+                            "down": f"서버({ip})에 연결하지 못했습니다"}[status]
                         if fresh:
                             self._room_events.put(fresh)
+                    else:
+                        self._room_status = "방 알림 꺼짐"
                 except Exception:
                     pass                                    # 알림은 덤이다 — 어떤 오류도 런처를 멈추지 않게
                 time.sleep(room_watch.POLL_SECONDS)
@@ -1662,6 +1672,8 @@ class App(tk.Tk):
     def _poll_room_events(self):
         import queue
         try:
+            if hasattr(self, "room_status_var") and self.room_status_var.get() != self._room_status:
+                self.room_status_var.set(self._room_status)
             while True:
                 fresh = self._room_events.get_nowait()
                 names = ", ".join(room_watch.describe(room) for room in fresh[:3])
@@ -1672,6 +1684,11 @@ class App(tk.Tk):
         except Exception:
             pass
         self.after(1000, self._poll_room_events)
+
+    def _on_room_alert_test(self):
+        """알림 시험: 3초 뒤에 깜빡인다 (그 사이 다른 창을 눌러 런처를 뒤로 보내면 작업 표시줄에서 보인다)."""
+        self.info_var.set("3초 뒤에 깜빡입니다 — 다른 창을 눌러 런처를 뒤로 보내 보세요")
+        self.after(3000, lambda: (room_watch.flash_taskbar(self.winfo_id()), self.info_var.set("알림 시험: 작업 표시줄의 런처가 깜빡입니다")))
 
     def _on_room_alert_toggle(self):
         self.cfg["room_alert"] = bool(self.room_alert_var.get())
@@ -2423,8 +2440,14 @@ class App(tk.Tk):
         ttk.Checkbutton(play_frame, text="다른 사람이 방을 만들면 작업 표시줄에서 런처 깜빡이기",
                         variable=self.room_alert_var, command=self._on_room_alert_toggle).pack(anchor="w", pady=(10, 0))
         ttk.Label(play_frame, text="런처가 켜져 있는 동안 멀티 서버의 방 목록을 5초마다 확인합니다. 내가 만든 방은 알리지 않습니다. "
-                                   "서버가 0.9023 이상이어야 합니다 (NAS 서버는 server.py 교체 필요).",
+                                   "런처 창이 맨 앞에 있을 때는 깜빡이지 않고 아래 줄에 글자로만 나옵니다.",
                   style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(4, 0))
+        alert_row = ttk.Frame(play_frame)
+        alert_row.pack(fill="x", pady=(4, 0))
+        ttk.Button(alert_row, text="알림 시험", command=self._on_room_alert_test, width=10).pack(side="left")
+        self.room_status_var = tk.StringVar(value=getattr(self, "_room_status", ""))
+        ttk.Label(alert_row, textvariable=self.room_status_var, style="Muted.TLabel", wraplength=420,
+                  justify="left").pack(side="left", padx=8)
         self.rally_spawn_var = tk.BooleanVar(value=self.cfg.get("rally_spawn", True))
         ttk.Checkbutton(play_frame, text="생산 유닛이 집결지 쪽 건물 가장자리에서 나오기",
                         variable=self.rally_spawn_var, command=self._on_rally_spawn_toggle).pack(anchor="w", pady=(10, 0))
