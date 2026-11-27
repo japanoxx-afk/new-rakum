@@ -72,7 +72,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9110"
+APP_VERSION = "0.9111"
 TURN_FRAME_LABELS = {2: '66ms · 2프레임 (기본)', 3: '99ms · 3프레임', 5: '165ms · 5프레임 (원래 게임)'}
 DEFAULT_TURN_FRAMES = 2      # 멀티 턴 길이 기본값 (프레임): 66ms (v0.9104~; v0.9101~v0.9103 은 3). 원래 게임은 5 (165ms) — turn_length_patch
 
@@ -1766,6 +1766,8 @@ class App(tk.Tk):
         # 서버 PC 런처가 명시적으로 끈 경우(rally_spawn: false)만 끈다. 모든 PC가 v0.9074 이상이어야 한다.
         self._rally_spawn_override = bool(rules.get('rally_spawn', True))
         if 'turns' not in rules:
+            if 'select_24' in rules:                # 규칙 파일이 없는 서버(NAS, 0.9024~): 선택 한도만 알려 줌
+                return '서버 규칙에 맞춤: 선택 한도 ' + ('24기' if self._select24_override else '12기')
             return '서버 PC 런처가 구버전입니다. 양쪽 모두 같은 런처 버전을 사용하세요.'
         notes = []
         # 턴 길이: 서버 PC 런처의 값을 따른다. 그 규칙을 모르는 구버전 서버 PC 런처면 원래 값(5프레임).

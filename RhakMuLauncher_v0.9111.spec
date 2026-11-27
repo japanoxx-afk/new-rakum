@@ -9,6 +9,6 @@ a = Analysis(['launcher.py'], pathex=[], binaries=[],
              hiddenimports=collect_submodules('asyncio') + ['sv_ttk'], hookspath=[], hooksconfig={},
              runtime_hooks=[], excludes=[], noarchive=False, optimize=0)
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='RhakMuLauncher_v0.9110',
+exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='RhakMuLauncher_v0.9111',
           debug=False, bootloader_ignore_signals=False, strip=False, upx=True,
           console=False, disable_windowed_traceback=False)
