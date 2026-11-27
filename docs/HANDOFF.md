@@ -97,6 +97,8 @@ git clone https://github.com/japanoxx-afk/rtsarena.git
   치트(`replay_record_patch` cheatx): 사람 수를 +6 & 0x20 (컴퓨터 0x10) 로 셈 — 싱글 커스텀의 컴퓨터는 이름이 있어 예전 기준(이름)으로는 늘 막혔다.
   시나리오 맵은 `DATA\Scenario\Scenario-단계-진영.rkm` (0x419B60) — 설치본에 없음 (대전 맵을 넣어 본 v0.9098 실험은 목표·유닛이 없어 진행 불가, 버튼 제거).
   게임 방식 [0x6E167E]: 0 커스텀, 1 시나리오, 2 랜, 3 TNet. 메뉴 객체 0x6E0CE0, 쪽 바꾸기 0x424160.
+- **v0.9109** (브랜치 launcher-v0.9109-f2-groups-toast, v0.9108 포함): F2 에서 가디언(종류 116) 제외(범위 114..116), 부대에 든 유닛 제외 (`build_hotkey_code.py` mil_ok 의 mg_* — 내 부대
+  8개(원래)/10개(.sel24)의 개수 바이트만큼 비교; 이전 코드는 `hotkey_patch.LEGACY` 에 두 개씩). 방 알림 창: `launcher._show_room_toast` (오른쪽 아래, `room_watch.toast_position`/`keep_inactive`).
 - **v0.9108** (브랜치 launcher-v0.9108-p2p-rejoin): "런처 알림을 보고 게임을 켜서 바로 들어가면 튕김, 방을 다시 만들면 됨". 사용자 PC rkp2p.log: 실패한 두 번 모두 `query -> punch` 뒤 2.5초에 `punch -> relay`,
   그리고 그 직전 세션과 서버가 본 내 포트가 달랐다 (11223 ↔ 46520/46780 — 공유기가 포트를 늘 보존하지는 않음). 방장 쪽 로그는 없어 추정:
   방장이 나를 S_DIRECT(옛 endpoint)로 기억 → PUNCH_REQ 를 무시 → 답을 옛 포트로 보냄. `rkp2p.c` 수정: PUNCH_REQ 의 endpoint 가 다르면 DIRECT 여도 다시 펀치,

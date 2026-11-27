@@ -98,3 +98,37 @@ def flash_taskbar(window_id, count=8):
     info = FLASHWINFO(ctypes.sizeof(FLASHWINFO), hwnd, FLASHW_ALL | FLASHW_TIMERNOFG, count, 0)
     user32.FlashWindowEx(ctypes.byref(info))
     return True
+
+
+def work_area():
+    """작업 표시줄을 뺀 화면 영역 (left, top, right, bottom). 알 수 없으면 None."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        rect = wintypes.RECT()
+        if not ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):    # SPI_GETWORKAREA
+            return None
+        return rect.left, rect.top, rect.right, rect.bottom
+    except (ImportError, AttributeError, OSError):
+        return None
+
+
+def toast_position(width, height, area, screen, margin=16):
+    """알림 창을 화면 오른쪽 아래(작업 표시줄 위)에 둘 왼쪽 위 좌표. area: work_area() 결과 또는 None, screen: (너비, 높이)."""
+    left, top, right, bottom = area if area else (0, 0, screen[0], screen[1] - 48)
+    return max(left, right - width - margin), max(top, bottom - height - margin)
+
+
+def keep_inactive(window_id):
+    """알림 창이 뜰 때 입력 초점을 가져가지 않게 한다 (게임·다른 창에서 하던 일이 끊기지 않게). Windows 가 아니면 False."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+    except (ImportError, AttributeError):
+        return False
+    GWL_EXSTYLE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW = -20, 0x08000000, 0x00000080
+    for hwnd in (window_id, user32.GetParent(window_id)):
+        if hwnd:
+            style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
+    return True

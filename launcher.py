@@ -72,7 +72,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9108"
+APP_VERSION = "0.9109"
 TURN_FRAME_LABELS = {2: '66ms · 2프레임 (기본)', 3: '99ms · 3프레임', 5: '165ms · 5프레임 (원래 게임)'}
 DEFAULT_TURN_FRAMES = 2      # 멀티 턴 길이 기본값 (프레임): 66ms (v0.9104~; v0.9101~v0.9103 은 3). 원래 게임은 5 (165ms) — turn_length_patch
 
@@ -1679,16 +1679,51 @@ class App(tk.Tk):
                 names = ", ".join(room_watch.describe(room) for room in fresh[:3])
                 self.info_var.set(f"새 방이 열렸습니다: {names}")
                 room_watch.flash_taskbar(self.winfo_id())
+                self._show_room_toast("\n".join(room_watch.describe(room) for room in fresh[:3]))
         except queue.Empty:
             pass
         except Exception:
             pass
         self.after(1000, self._poll_room_events)
 
+    def _show_room_toast(self, text, seconds=8):
+        """화면 오른쪽 아래에 잠깐 뜨는 알림 창 (클릭하면 닫힘, 초점은 가져가지 않음)."""
+        try:
+            old = getattr(self, "_room_toast", None)
+            if old is not None and old.winfo_exists():
+                old.destroy()
+            win = tk.Toplevel(self)
+            win.withdraw()
+            win.overrideredirect(True)
+            win.attributes("-topmost", True)
+            box = tk.Frame(win, bg="#1f2430", highlightthickness=2, highlightbackground="#f5a623")
+            box.pack(fill="both", expand=True)
+            tk.Label(box, text="라크무 — 새 방이 열렸습니다", bg="#1f2430", fg="#f5a623",
+                     font=("맑은 고딕", 11, "bold"), anchor="w").pack(fill="x", padx=14, pady=(10, 2))
+            tk.Label(box, text=text, bg="#1f2430", fg="#ffffff", font=("맑은 고딕", 10), justify="left",
+                     anchor="w", wraplength=320).pack(fill="x", padx=14, pady=(0, 10))
+            win.update_idletasks()
+            width, height = max(win.winfo_reqwidth(), 260), win.winfo_reqheight()
+            x, y = room_watch.toast_position(width, height, room_watch.work_area(),
+                                             (self.winfo_screenwidth(), self.winfo_screenheight()))
+            win.geometry(f"{width}x{height}+{x}+{y}")
+            room_watch.keep_inactive(win.winfo_id())
+            win.deiconify()
+            win.lift()
+            close = lambda *_: win.winfo_exists() and win.destroy()
+            for widget in (win, box, *box.winfo_children()):
+                widget.bind("<Button-1>", close)
+            win.after(int(seconds * 1000), close)
+            self._room_toast = win
+        except Exception:
+            pass                                            # 알림 창이 안 떠도 깜빡임·글자 알림은 그대로
+
     def _on_room_alert_test(self):
         """알림 시험: 3초 뒤에 깜빡인다 (그 사이 다른 창을 눌러 런처를 뒤로 보내면 작업 표시줄에서 보인다)."""
         self.info_var.set("3초 뒤에 깜빡입니다 — 다른 창을 눌러 런처를 뒤로 보내 보세요")
-        self.after(3000, lambda: (room_watch.flash_taskbar(self.winfo_id()), self.info_var.set("알림 시험: 작업 표시줄의 런처가 깜빡입니다")))
+        self.after(3000, lambda: (room_watch.flash_taskbar(self.winfo_id()),
+                                  self._show_room_toast("시험 방 (방장 seo 1/4)"),
+                                  self.info_var.set("알림 시험: 작업 표시줄이 깜빡이고 화면 오른쪽 아래에 알림 창이 뜹니다")))
 
     def _on_room_alert_toggle(self):
         self.cfg["room_alert"] = bool(self.room_alert_var.get())
@@ -2437,7 +2472,7 @@ class App(tk.Tk):
                                    "게임 진행 규칙이 바뀌므로 멀티는 모든 PC가 같은 런처 버전이어야 하며, 접속 PC는 서버 PC 설정을 따릅니다.",
                   style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(4, 0))
         self.room_alert_var = tk.BooleanVar(value=self.cfg.get("room_alert", True))
-        ttk.Checkbutton(play_frame, text="다른 사람이 방을 만들면 작업 표시줄에서 런처 깜빡이기",
+        ttk.Checkbutton(play_frame, text="다른 사람이 방을 만들면 알리기 (작업 표시줄 깜빡임 + 화면 오른쪽 아래 알림 창)",
                         variable=self.room_alert_var, command=self._on_room_alert_toggle).pack(anchor="w", pady=(10, 0))
         ttk.Label(play_frame, text="런처가 켜져 있는 동안 멀티 서버의 방 목록을 5초마다 확인합니다. 내가 만든 방은 알리지 않습니다. "
                                    "런처 창이 맨 앞에 있을 때는 깜빡이지 않고 아래 줄에 글자로만 나옵니다.",

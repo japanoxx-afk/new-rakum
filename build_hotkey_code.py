@@ -100,22 +100,53 @@ uo_ret:
     ret
 
 mil_ok:
+    push edx
     call unit_ok
+    pop edx
     test eax, eax
     jz mo_ret
     movzx eax, word ptr [ebx+0xe]
     cmp eax, {SKIP1}
-    je mo_no
+    jb mo_type
     cmp eax, {SKIP2}
-    je mo_no
+    jbe mo_no
+mo_type:
     imul eax, eax, 0x1c
     mov eax, dword ptr [eax+0x4fcd88]
     test eax, eax
     jz mo_ret
     cmp word ptr [eax+0x40], 1
     je mo_no
+    push esi
+    push edi
+    movsx eax, byte ptr [0xb412cc]
+    imul eax, eax, {PSTRIDE}
+    lea esi, [eax+{GROUPS}]
+    mov edi, {NGROUPS}
+mg_group:
+    movzx ecx, byte ptr [esi]
+    cmp ecx, {N}
+    jbe mg_count
+    mov ecx, {N}
+mg_count:
+    test ecx, ecx
+    jz mg_next
+mg_unit:
+    cmp dx, word ptr [esi+ecx*2]
+    je mg_found
+    dec ecx
+    jnz mg_unit
+mg_next:
+    add esi, {GSTRIDE}
+    dec edi
+    jnz mg_group
+    pop edi
+    pop esi
     mov eax, 1
     ret
+mg_found:
+    pop edi
+    pop esi
 mo_no:
     xor eax, eax
 mo_ret:
@@ -140,6 +171,7 @@ ps_loop:
     push eax
     push ecx
     push edx
+    mov edx, eax
     call mil_ok
     pop edx
     pop ecx
@@ -188,6 +220,7 @@ su_loop:
     jne su_next
     jmp su_add
 su_mil:
+    mov edx, esi
     call mil_ok
     test eax, eax
     jz su_next
@@ -375,18 +408,19 @@ at_ret:
 '''
 
 
-F2_SKIP = (114, 115)      # F2 (모든 군사 유닛)에서 빼는 종류: 라바, 코벨 (R1_DATA_CHAR 줄 번호 = 유닛 종류 번호)
+F2_SKIP = (114, 116)      # F2 (모든 군사 유닛)에서 빼는 종류 범위: 라바 114, 코벨 115, 가디언 116 (R1_DATA_CHAR 줄 번호 = 유닛 종류 번호)
 
 # 12: original game lists.  24: lists moved by selection_patch (.sel24 section).
 LAYOUT = {
-    12: dict(N=12, BUF=24, LSEL='0x80083e', GROUPS='0x106a6c0', PSTRIDE='0xd0', GSTRIDE='0x1a', SKIP1=F2_SKIP[0], SKIP2=F2_SKIP[1]),
+    12: dict(N=12, BUF=24, LSEL='0x80083e', GROUPS='0x106a6c0', PSTRIDE='0xd0', GSTRIDE='0x1a', NGROUPS=8, SKIP1=F2_SKIP[0], SKIP2=F2_SKIP[1]),
 }
 
 
 def _layout24():
     import selection_patch as sp
     return dict(N=sp.N, BUF=2 * sp.N, LSEL=hex(sp.LSEL), GROUPS=hex(sp.GROUPS),
-                PSTRIDE=hex(sp.PLAYER_GROUPS), GSTRIDE=hex(sp.GROUP_STRIDE), SKIP1=F2_SKIP[0], SKIP2=F2_SKIP[1])
+                PSTRIDE=hex(sp.PLAYER_GROUPS), GSTRIDE=hex(sp.GROUP_STRIDE), NGROUPS=sp.GROUP_COUNT,
+                SKIP1=F2_SKIP[0], SKIP2=F2_SKIP[1])
 
 
 def assemble(addr=0x10000000, n=12):

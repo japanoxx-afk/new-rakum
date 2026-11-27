@@ -112,7 +112,7 @@ class HotkeyPatchTests(unittest.TestCase):
         # 게임 상태
         mu.mem_write(LOCAL, b'\x01')
         info = 0x2100000
-        for t, cls_ in ((WORKER, 1), (SOLDIER, 0), (ARCHER, 0), (BUILDING_T, 0), (114, 0), (115, 0)):
+        for t, cls_ in ((WORKER, 1), (SOLDIER, 0), (ARCHER, 0), (BUILDING_T, 0), (114, 0), (115, 0), (116, 0)):
             mu.mem_write(info + t * 0x100 + 0x40, struct.pack('<h', cls_))
             mu.mem_write(TYPEPTR + t * 0x1C, struct.pack('<I', info + t * 0x100))
 
@@ -200,12 +200,13 @@ class HotkeyPatchTests(unittest.TestCase):
         self.assertNotIn(0x447BD0, [c[0] for c in calls])
 
     def test_f2_leaves_out_larva_and_kobel(self):
-        """F2: 라바(114)·코벨(115)은 일꾼이 아니지만 고르지 않는다."""
+        """F2: 라바(114)·코벨(115)·가디언(116, 건물 노릇을 하는 유닛)은 일꾼이 아니지만 고르지 않는다."""
         mu, env, unit, press, selection, set_selection, group = self._emu()
         unit(10, 114)
         unit(11, SOLDIER)
         unit(12, 115)
         unit(13, ARCHER)
+        unit(14, 116)
         press(0x71)
         self.assertEqual(selection(), (2, [11, 13] + [0] * 10))
         mu2, env, unit, press, selection, set_selection, group = self._emu()
@@ -244,13 +245,32 @@ class HotkeyPatchTests(unittest.TestCase):
         press(0x71)
         self.assertEqual(selection(), (12, ids[:12]))
 
+    def test_f2_leaves_out_units_in_control_groups(self):
+        """F2: 부대(Ctrl+숫자)에 지정된 유닛은 고르지 않는다 — 남은 유닛만."""
+        mu, env, unit, press, selection, set_selection, group = self._emu()
+        for i in range(30, 40):
+            unit(i, SOLDIER)
+        g = lambda n: GROUPS + 1 * 0xD0 + n * 0x1A
+        mu.mem_write(g(1), bytes([3, 0]) + struct.pack('<12H', 31, 33, 35, *[0] * 9))
+        mu.mem_write(g(7), bytes([2, 0]) + struct.pack('<12H', 38, 30, 99, *[0] * 9))      # 99 는 개수 밖(쓰레기) — 무시
+        mu.mem_write(GROUPS + 2 * 0xD0 + 1 * 0x1A, bytes([1, 0]) + struct.pack('<12H', 32, *[0] * 11))   # 다른 플레이어의 부대
+        press(0x71)
+        self.assertEqual(selection(), (5, [32, 34, 36, 37, 39] + [0] * 7))
+        mu.mem_write(g(2), bytes([5, 0]) + struct.pack('<12H', 32, 34, 36, 37, 39, *[0] * 7))
+        set_selection([31])
+        self.assertEqual(press(0x71), [])                                      # 모두 부대에 있으면 선택 그대로
+        self.assertEqual(selection()[0], 1)
+        mu.mem_write(g(1), bytes(2 + 24))                                      # 1번 부대를 풀면 그 유닛들이 다시 대상
+        press(0x71)
+        self.assertEqual(selection(), (3, [31, 33, 35] + [0] * 9))
+
     def test_upgrades_from_the_previous_code(self):
         """v0.9104 까지의 단축키 코드가 설치돼 있으면 알아보고 지금 판으로 바꾼다."""
         for n, sel in ((12, False), (24, True)):
             built = build(self.base, False, True, True, sel) if sel else self.patched
             code = h.CODE24 if sel else h.CODE
             self.assertTrue(h.current(built))
-            self.assertEqual(len(h.LEGACY[n]), 1)
+            self.assertEqual(len(h.LEGACY[n]), 2)
             for legacy in h.LEGACY[n]:
                 old = bytearray(built)
                 old[-h.SECTION_SIZE:] = legacy.ljust(h.SECTION_SIZE, bytes(1))

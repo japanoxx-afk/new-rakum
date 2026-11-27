@@ -89,6 +89,16 @@ class WatcherTests(unittest.TestCase):
         with mock.patch("urllib.request.urlopen", side_effect=OSError("down")):
             self.assertIsNone(room_watch.fetch_rooms("1.2.3.4"))
 
+    def test_toast_sits_above_the_taskbar_at_the_bottom_right(self):
+        self.assertEqual(room_watch.toast_position(300, 80, (0, 0, 1920, 1040), (1920, 1080)), (1604, 944))
+        self.assertEqual(room_watch.toast_position(300, 80, None, (1920, 1080)), (1604, 936))     # 영역을 모르면 아래 48 을 비움
+        self.assertEqual(room_watch.toast_position(300, 80, (1920, 0, 3840, 1040), (3840, 1080)), (3524, 944))
+        self.assertEqual(room_watch.toast_position(900, 700, (0, 0, 800, 600), (800, 600)), (0, 0))  # 화면보다 커도 밖으로 안 나감
+        import sys
+        if sys.platform != "win32":
+            self.assertIsNone(room_watch.work_area())
+            self.assertFalse(room_watch.keep_inactive(1234))
+
     def test_flash_is_harmless_off_windows(self):
         import sys
         if sys.platform != "win32":
