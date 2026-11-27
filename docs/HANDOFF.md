@@ -97,6 +97,10 @@ git clone https://github.com/japanoxx-afk/rtsarena.git
   치트(`replay_record_patch` cheatx): 사람 수를 +6 & 0x20 (컴퓨터 0x10) 로 셈 — 싱글 커스텀의 컴퓨터는 이름이 있어 예전 기준(이름)으로는 늘 막혔다.
   시나리오 맵은 `DATA\Scenario\Scenario-단계-진영.rkm` (0x419B60) — 설치본에 없음 (대전 맵을 넣어 본 v0.9098 실험은 목표·유닛이 없어 진행 불가, 버튼 제거).
   게임 방식 [0x6E167E]: 0 커스텀, 1 시나리오, 2 랜, 3 TNet. 메뉴 객체 0x6E0CE0, 쪽 바꾸기 0x424160.
+- **v0.9110** (브랜치 launcher-v0.9110-f2-group-scan): F2 부대 제외가 목록 앞 `개수` 칸만 봐서 틀렸음 — 게임의 부대 저장 0x4DC7F0 은 선택 칸 자리 그대로(빈 칸 0) 쓰고,
+  죽을 때 0x4DC6A0 이 그 칸만 0 으로 하고 개수를 줄인다. 모든 칸(N)을 보도록 수정. NAS 대전은 규칙 파일이 없어 선택 한도 12기(리플레이 rules select_24: False)로 돈다는 점 참고.
+  미해결 보고: "상대가 나가 승리 창이 뜬 직후 가끔 게임이 멈춤, 오늘(11-28) 업데이트부터". 원인 미확인 — 턴 처리 0x44A410 은 상대 턴이 안 오면 최대 40초 기다림(원래 동작).
+  오늘 들어간 것: 턴 길이 2프레임, rkp2p 재펀치/중계 전환, 음악 머리 훅(CODE5), A 키 훅(CODE4). 멈춘 화면 모양·지속 시간·rkp2p.log 를 받아 좁힐 것.
 - **v0.9109** (PR #29, 배포; v0.9108 포함): F2 에서 가디언(종류 116) 제외(범위 114..116), 부대에 든 유닛 제외 (`build_hotkey_code.py` mil_ok 의 mg_* — 내 부대
   8개(원래)/10개(.sel24)의 개수 바이트만큼 비교; 이전 코드는 `hotkey_patch.LEGACY` 에 두 개씩). 방 알림 창: `launcher._show_room_toast` (오른쪽 아래, `room_watch.toast_position`/`keep_inactive`).
 - **v0.9108** (브랜치 launcher-v0.9108-p2p-rejoin): "런처 알림을 보고 게임을 켜서 바로 들어가면 튕김, 방을 다시 만들면 됨". 사용자 PC rkp2p.log: 실패한 두 번 모두 `query -> punch` 뒤 2.5초에 `punch -> relay`,

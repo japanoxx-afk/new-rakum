@@ -124,19 +124,12 @@ mo_type:
     lea esi, [eax+{GROUPS}]
     mov edi, {NGROUPS}
 mg_group:
-    movzx ecx, byte ptr [esi]
-    cmp ecx, {N}
-    jbe mg_count
     mov ecx, {N}
-mg_count:
-    test ecx, ecx
-    jz mg_next
 mg_unit:
     cmp dx, word ptr [esi+ecx*2]
     je mg_found
     dec ecx
     jnz mg_unit
-mg_next:
     add esi, {GSTRIDE}
     dec edi
     jnz mg_group
