@@ -40,6 +40,12 @@
     A 칸이 비어 있고 D 칸이 이동(3)이면 A 를 D(이동)로 처리한다 — 공격할 수 없는 유닛의 '공격 이동' 은 이동. 건물은 그대로.
     보내는 명령은 원래의 이동 명령이라 대전 진행에는 영향이 없다.
 
+(5) 로비 BGM 끄기를 기억 (v0.9107~). 로비의 BGM 버튼(0x4214AF)은 지금 나오는 음악을 끄거나 다시 틀 뿐 기억하지 않아,
+    다른 화면에 갔다 오거나 게임을 다시 켜면 메뉴 음악이 다시 나왔다 (메뉴 폼들이 열릴 때마다 0x49D150 으로 튼다).
+    버튼을 누를 때 게임의 설정 저장 함수(0x425B70, 레지스트리 HKLM SOFTWARE\\TriggerSoft\\RhakMu — KeyScroll·BGM 등을 두는 곳)로
+    'MenuBGMOff' = 1(끔)/0(켬) 을 적고, 음악 틀기 0x49D150 의 머리에서, 부른 곳이 메뉴 쪽(복귀 주소 < 0x4D7400 — 시작할 때 트는 0x4D71D3 포함; 경기 음악은 0x4D74E0..)이고 그 값이 1 이면 틀지 않는다.
+    경기 중 음악(게임 안 옵션의 BGM 음량)은 건드리지 않는다.
+
 섹션은 맨 뒤(.hotkey 뒤)에 붙인다. 코드는 자기 위치와 무관하게 짰다 (게임 주소는 절대값, 안에서는 상대 점프).
 다른 패치의 검증 전에 strip() 으로 먼저 걷어낸다.
 """
@@ -404,7 +410,80 @@ back:
     ret
 """
 
-# SOURCE·SOURCE2·SOURCE3·SOURCE4 를 조립한 것 (test_smart_cast_patch 가 keystone 으로 다시 조립해 같은지 본다)
+SITE5 = 0x9D150                                           # 음악 틀기 0x49D150 의 머리 (push ebp; mov ebp,esp; sub esp,0x48)
+SITE5_ORIGINAL = bytes.fromhex("558bec83ec48")
+SITE6 = 0x214AF                                           # 로비 BGM 버튼 처리 (0x4214AF..0x4214F0)
+SITE6_ORIGINAL = bytes.fromhex("833d285cae00007438a1285cae0033c98a889801000085c9740d8b0d285cae00e8ecbc0700eb1a"
+                               "6a018b0d285cae00e86dbc07006a078b0d285cae00e810bd0700")
+TOGGLE_OFFSET = 0x80                                      # CODE5 안에서 toggle 이 놓이는 자리
+
+SOURCE5 = f"""
+start_music:                                 /* 0x49D150 (음악 틀기, 인자 = 곡 번호) 의 머리 */
+    cmp dword ptr [esp], 0x4d7400
+    jae go                                   /* 경기 음악(부른 곳이 게임 루프 0x4D74E0·0x4D74EF·0x4D74FE)은 그대로 */
+    pushal
+    call here1
+here1:
+    pop eax
+    add eax, name - here1
+    push eax
+    mov ecx, 0x6e0ce0
+    mov eax, 0x425ad0                        /* 레지스트리 정수 읽기 (없으면 0) */
+    call eax
+    test eax, eax
+    popal
+    jne muted
+go:
+    push ebp
+    mov ebp, esp
+    sub esp, 0x48
+    push 0x49d156
+    ret
+muted:
+    ret 4
+
+    .balign 0x80, 0x90
+toggle:                                      /* 0x4214AF (로비 BGM 버튼: 나오는 중이면 끄고, 아니면 튼다) 대신 */
+    cmp dword ptr [0xae5c28], 0
+    je out
+    call here2
+here2:
+    pop ebx
+    add ebx, name - here2
+    mov eax, dword ptr [0xae5c28]
+    cmp byte ptr [eax+0x198], 0
+    je play
+    mov ecx, eax
+    mov eax, 0x49d1c0                        /* 끄기 */
+    call eax
+    push 1
+    push ebx
+    mov ecx, 0x6e0ce0
+    mov eax, 0x425b70                        /* 레지스트리 정수 쓰기: 꺼 둠 */
+    call eax
+    jmp out
+play:
+    push 0
+    push ebx
+    mov ecx, 0x6e0ce0
+    mov eax, 0x425b70                        /* 켜 둠 (먼저 적어야 아래 0x49D150 이 튼다) */
+    call eax
+    push 1
+    mov ecx, dword ptr [0xae5c28]
+    mov eax, 0x49d150
+    call eax
+    push 7
+    mov ecx, dword ptr [0xae5c28]
+    mov eax, 0x49d200
+    call eax
+out:
+    push 0x4214f0
+    ret
+name:
+    .asciz "MenuBGMOff"
+"""
+
+# SOURCE·SOURCE2·SOURCE3·SOURCE4·SOURCE5 를 조립한 것 (test_smart_cast_patch 가 keystone 으로 다시 조립해 같은지 본다)
 CODE = bytes.fromhex(
     "600fb74424248d90dfdfffff83fa3f0f87410100000fbf0d3c08800083f9020f8c310100002d202000006bc0"
     "148b982802500085db0f841b0100000fbf7b420fbf6b080fbf05d012b40085c00f8e0401000069c038010000"
@@ -438,12 +517,23 @@ CODE2_OFFSET = 0x200                                      # 섹션 안에서 COD
 CODE3_OFFSET = 0x400                                      # CODE3 (미니맵 시야)
 CODE4 = bytes.fromhex("0fbf4d088b55fc85c975386683baba01000000752e6683babe0100000375240fbf05d012b40085c07e1969c0380100006683b83a5a7700007509b90200000066894d086889cf4500c3")
 CODE4_OFFSET = 0x580                                      # CODE4 (공격 없는 유닛의 A 키)
+CODE5 = bytes.fromhex(
+    "813c2400744d00731f60e8000000005881c0de00000050b9e00c6e00b8d05a4200ffd085c061750c5589e583"
+    "ec486856d14900c3c204006666666666662e0f1f8400000000006666666666662e0f1f840000000000666666"
+    "6666662e0f1f8400000000006666666666662e0f1f840000000000666666662e0f1f840000000000833d285c"
+    "ae0000745ee8000000005b83c35fa1285cae0080b89801000000741a89c1b8c0d14900ffd06a0153b9e00c6e"
+    "00b8705b4200ffd0eb2d6a0053b9e00c6e00b8705b4200ffd06a018b0d285cae00b850d14900ffd06a078b0d"
+    "285cae00b800d24900ffd068f0144200c34d656e7542474d4f666600"
+)
+CODE5_OFFSET = 0x600                                      # CODE5 (메뉴 음악 끄기 기억): 머리 +0, 버튼 +TOGGLE_OFFSET
 
 # 이전 판이 설치한 상태 — 걷어낼 때 인식: (섹션 내용, 그때 바꾼 자리 목록)
 LEGACY = (
     (bytes.fromhex("600fb74424248d90dfdfffff83fa3f0f87540100000fb6d06bd21483baccf84f00000f84410100000fbf0d3c08800083f9020f8c310100002d202000006bc0148b982802500085db0f841b0100000fbf7b420fbf6b080fbf05d012b40085c00f8e0401000069c0380100006683b83a5a7700000f85f0000000668b90465a77008b356e3643006a0068ffffff7f490f888a00000066ad0fb7c085c074f089c369c03801000005385a770066837808007edc6639500e75d6668378020075cf530fbf9cb8fe00000039eb5b7cc151520fbf4818c1e1050fbf54244029d10fafc90fbf501ac1e205510fbf4c244629ca590fafd201d10fb7500681ea2120000083fa50770681c1000000403b4c24087308894c2408895c240c5a59e96fffffff585b85db7445a1a411b4008b504466c702024066c742020700c642040166895a0589c1b8c0944400ffd0ff742430ff742430ff742430ff742430e80d00000083c410b8d07b4400ffd061c3615589e583ec4068667d4400c3"), (0,)),              # v0.9096 시험판: 0x447D60 만, 대상 고르기 함수가 있는 마법만
     ((CODE.ljust(CODE2_OFFSET, bytes(1)) + CODE2), (0, 1)),          # v0.9097~v0.9099: 미니맵 시야 없음
     ((CODE.ljust(CODE2_OFFSET, bytes(1)) + CODE2).ljust(CODE3_OFFSET, bytes(1)) + CODE3, (0, 1, 2)),   # v0.9100~v0.9103
+    (((CODE.ljust(CODE2_OFFSET, bytes(1)) + CODE2).ljust(CODE3_OFFSET, bytes(1)) + CODE3).ljust(CODE4_OFFSET, bytes(1)) + CODE4,
+     (0, 1, 2, 3)),                                                                                      # v0.9104~v0.9106
 )
 
 
@@ -451,25 +541,27 @@ def assemble() -> tuple:
     import re
     from keystone import Ks, KS_ARCH_X86, KS_MODE_32
     ks = Ks(KS_ARCH_X86, KS_MODE_32)
-    return tuple(bytes(ks.asm(re.sub(r"/\*.*?\*/", "", text), addr=0x10000000)[0]) for text in (SOURCE, SOURCE2, SOURCE3, SOURCE4))
+    return tuple(bytes(ks.asm(re.sub(r"/\*.*?\*/", "", text), addr=0x10000000)[0]) for text in (SOURCE, SOURCE2, SOURCE3, SOURCE4, SOURCE5))
 
 
 def _body() -> bytes:
     body = CODE.ljust(CODE2_OFFSET, bytes(1)) + CODE2
     body = body.ljust(CODE3_OFFSET, bytes(1)) + CODE3
-    return (body.ljust(CODE4_OFFSET, bytes(1)) + CODE4).ljust(SECTION_SIZE, bytes(1))
+    body = body.ljust(CODE4_OFFSET, bytes(1)) + CODE4
+    return (body.ljust(CODE5_OFFSET, bytes(1)) + CODE5).ljust(SECTION_SIZE, bytes(1))
 
 
 # (파일 오프셋, 원래 바이트, 섹션 안 들어갈 자리) — 원래가 call(5바이트)이면 call 로, 함수 머리(6바이트)면 jmp + nop 로 바꾼다
 SITES = ((SITE, SITE_ORIGINAL, 0), (SITE2, SITE_ORIGINAL, CODE2_OFFSET), (SITE3, SITE3_ORIGINAL, CODE3_OFFSET),
-         (SITE4, SITE4_ORIGINAL, CODE4_OFFSET))
+         (SITE4, SITE4_ORIGINAL, CODE4_OFFSET), (SITE5, SITE5_ORIGINAL, CODE5_OFFSET),
+         (SITE6, SITE6_ORIGINAL, CODE5_OFFSET + TOGGLE_OFFSET))
 
 
 def _jump(site, section_va, offset):
     rel = struct.pack("<i", (0x400000 + section_va + offset) - (0x400000 + site + 5))
     if site == SITE3:
         return b"\xe8" + rel
-    return (b"\xe9" + rel).ljust(7 if site == SITE4 else 6, b"\x90")
+    return (b"\xe9" + rel).ljust(next(len(original) for at, original, _ in SITES if at == site), b"\x90")
 
 
 def _installed(data, va, body):
