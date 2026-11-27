@@ -61,7 +61,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9023"
+SERVER_VERSION = "0.9024"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -1307,6 +1307,21 @@ class DP8RelayProtocol(asyncio.DatagramProtocol):
 # ── 전적/랭킹 HTTP 제공 (클라이언트 런처가 조회) ──────────────
 HTTP_PORT = 11225
 
+# 규칙 파일(game_rules.json — 서버 PC 런처가 적음)이 없는 서버(NAS 등)가 접속 PC에 알려 주는 대전 규칙.
+# 런처는 /rules 에 select_24 가 없으면 12기로 맞춘다 (선택 한도 24 를 모르는 예전 서버 PC 런처와 섞이지 않게).
+# NAS 서버는 규칙 파일이 없어 늘 12기였다 -> 여기서 24기로 알려 준다. 규칙 파일이 있으면 그 값이 우선.
+DEFAULT_RULES = {"select_24": True}
+
+def rules_response() -> dict:
+    try:
+        with open(RULES_FILE, "r", encoding="utf-8") as f:
+            rules = json.load(f)
+        if not isinstance(rules, dict):
+            rules = {}
+    except (OSError, ValueError):
+        rules = {}
+    return {"server_version": SERVER_VERSION, **DEFAULT_RULES, **rules, "p2p": 1}
+
 def _text(value: str) -> str:
     """패킷 문자열(CP949 바이트를 latin-1 로 보관)을 보통 글자로."""
     try:
@@ -1341,12 +1356,7 @@ class _HistoryHandler(BaseHTTPRequestHandler):
             # 방 생성 알림용 (런처 room_watch): 지금 열려 있는 방. 주소는 내보내지 않고, 요청한 PC가 방장인지만 알려 준다.
             self._json({"server_version": SERVER_VERSION, "rooms": rooms_snapshot(self.client_address[0])})
         elif self.path.startswith("/rules"):
-            try:
-                with open(RULES_FILE, "r", encoding="utf-8") as f:
-                    rules = json.load(f)
-            except (OSError, ValueError):
-                rules = {}
-            self._json({"server_version": SERVER_VERSION, **rules, "p2p": 1})
+            self._json(rules_response())
         else:  # /matches.json, /matches, /   (승/패는 결과코드로 다시 판정해 보여 줌)
             matches = _load_matches()
             for rec in matches:

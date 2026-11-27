@@ -259,6 +259,33 @@ class RallySpawnServerRuleTests(unittest.TestCase):
         self.assertFalse(self.sync({"turns": 4, "rally_spawn": False, "p2p": 1}))
         self.assertTrue(self.sync({"turns": 4, "rally_spawn": True, "p2p": 1}))
 
+    def test_nas_server_turns_on_24_unit_selection(self):
+        """규칙 파일이 없는 서버(NAS, server 0.9024~)는 select_24: true 를 알려 준다 -> 접속 PC는 24기.
+        예전 서버(키 없음)는 12기, 서버 PC 런처가 적은 규칙 파일이 있으면 그 값."""
+        import json, os, tempfile
+        import server
+        self.sync({"server_version": "0.9023", "p2p": 1})
+        self.assertFalse(self.app._select24_override)
+        with tempfile.TemporaryDirectory() as d:
+            saved, server.RULES_FILE = server.RULES_FILE, os.path.join(d, "game_rules.json")
+            try:
+                body = server.rules_response()                         # 규칙 파일 없음 (NAS)
+                self.assertEqual(body, {"server_version": server.SERVER_VERSION, "select_24": True, "p2p": 1})
+                self.sync(body)
+                self.assertTrue(self.app._select24_override)
+                self.assertIsNone(self.app._turn_frames_override)      # 전송 간격은 이 PC(런처 기본값) 그대로
+                with open(server.RULES_FILE, "w", encoding="utf-8") as f:
+                    json.dump({"turns": 4, "select_24": False, "rally_gold": True}, f)
+                body = server.rules_response()                         # 서버 PC 런처가 12기로 적어 둠
+                self.assertFalse(body["select_24"])
+                self.sync(body)
+                self.assertFalse(self.app._select24_override)
+                with open(server.RULES_FILE, "w", encoding="utf-8") as f:
+                    f.write("[1, 2")                                   # 깨진 파일 -> 기본 규칙
+                self.assertTrue(server.rules_response()["select_24"])
+            finally:
+                server.RULES_FILE = saved
+
     def test_turn_length_follows_the_server_pc(self):
         """명령 전송 간격(턴 길이): 서버 PC 런처의 값, 그 규칙을 모르는 구버전 서버 PC 런처면 원래 5프레임,
         규칙 파일이 없는 NAS 서버면 이 PC 설정(런처 기본값)."""

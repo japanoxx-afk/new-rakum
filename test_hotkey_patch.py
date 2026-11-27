@@ -251,8 +251,10 @@ class HotkeyPatchTests(unittest.TestCase):
         for i in range(30, 40):
             unit(i, SOLDIER)
         g = lambda n: GROUPS + 1 * 0xD0 + n * 0x1A
-        mu.mem_write(g(1), bytes([3, 0]) + struct.pack('<12H', 31, 33, 35, *[0] * 9))
-        mu.mem_write(g(7), bytes([2, 0]) + struct.pack('<12H', 38, 30, 99, *[0] * 9))      # 99 는 개수 밖(쓰레기) — 무시
+        # 게임(0x4DC7F0)은 고른 칸 그대로 저장하고 죽은 유닛 칸은 0 으로 비운다 (0x4DC6A0) — 개수는 산 유닛 수일 뿐
+        # 앞에서부터 채워져 있지 않다. 그래서 개수와 상관없이 모든 칸을 본다.
+        mu.mem_write(g(1), bytes([3, 0]) + struct.pack('<12H', 0, 31, 0, 0, 33, 0, 0, 0, 0, 0, 0, 35))
+        mu.mem_write(g(7), bytes([2, 0]) + struct.pack('<12H', 38, 0, 0, 30, *[0] * 8))
         mu.mem_write(GROUPS + 2 * 0xD0 + 1 * 0x1A, bytes([1, 0]) + struct.pack('<12H', 32, *[0] * 11))   # 다른 플레이어의 부대
         press(0x71)
         self.assertEqual(selection(), (5, [32, 34, 36, 37, 39] + [0] * 7))
@@ -270,7 +272,7 @@ class HotkeyPatchTests(unittest.TestCase):
             built = build(self.base, False, True, True, sel) if sel else self.patched
             code = h.CODE24 if sel else h.CODE
             self.assertTrue(h.current(built))
-            self.assertEqual(len(h.LEGACY[n]), 2)
+            self.assertEqual(len(h.LEGACY[n]), 3)
             for legacy in h.LEGACY[n]:
                 old = bytearray(built)
                 old[-h.SECTION_SIZE:] = legacy.ljust(h.SECTION_SIZE, bytes(1))
