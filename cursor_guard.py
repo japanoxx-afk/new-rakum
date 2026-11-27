@@ -7,6 +7,7 @@ cnc-ddraw 의 마우스 가두기는 창모드에서는 잘 되지만 전체화�
 """
 import os
 import threading
+import time
 
 GAME_EXE = "rhakmu.exe"
 
@@ -146,16 +147,39 @@ def lock_game_cursor(win=None, timeout=90.0, settle=2.0, interval=0.25, clock=No
 class CursorGuard:
     """0.25초마다 확인. enabled 는 '마우스 가두기' 설정."""
 
-    def __init__(self, enabled=True, win=None, interval=0.25):
+    def __init__(self, enabled=True, win=None, interval=0.25, clock=None):
         self.enabled = enabled
         self.interval = interval
         self.win = win
         self.clipped = None
         self._stop = threading.Event()
         self.thread = None
+        self._clock = clock or time.monotonic
+        self._was_game = False
+        self._nudge_at = None
+
+    def _nudge_cursor(self, hwnd):
+        """게임 창이 다시 앞에 오면 '첫 클릭'(버튼 떼기)을 한 번 보낸다.
+
+        cnc-ddraw 창모드는 창 안에서 처음 클릭할 때 윈도우 커서를 숨긴다. Alt+Tab 으로 나갔다 돌아오면
+        그 상태가 풀려 흰 화살표가 게임 커서 위에 다시 보이므로, 돌아올 때마다 같은 클릭을 흉내 낸다
+        (cnc-ddraw 가 이 클릭은 게임에 넘기지 않는다).
+        """
+        w, h = self.win.client_size(hwnd)
+        if w > 0 and h > 0:
+            self.win.post_button_up(hwnd, w // 2, h // 2)
 
     def step(self):
-        _, is_game, wrect, mrect = self.win.foreground()
+        hwnd, is_game, wrect, mrect = self.win.foreground()
+        now = self._clock()
+        if is_game and not self._was_game:
+            self._nudge_at = now + 0.3          # 창이 완전히 앞에 온 뒤 보냄
+        self._was_game = bool(is_game)
+        if self._nudge_at is not None and is_game and now >= self._nudge_at:
+            self._nudge_at = None
+            self._nudge_cursor(hwnd)
+        if not is_game:
+            self._nudge_at = None
         want = decide(self.enabled, is_game, wrect, mrect)
         if want is not None:
             # 다른 프로그램(또는 Windows 가 창 전환 때) 풀었으면 다시 건다
