@@ -45,6 +45,7 @@ static const char *SNAME[] = { "none", "query", "punch", "direct", "relay", "pas
 #define KEEPALIVE_MS 5000
 #define STALE_MS 8000
 #define FORGET_MS 60000
+#define DIRECT_SILENT_MS 1500   /* direct link: relayed packets arrive but nothing direct for this long */
 
 typedef int (WINAPI *sendto_t)(SOCKET, const char *, int, int, const struct sockaddr *, int);
 typedef int (WINAPI *recvfrom_t)(SOCKET, char *, int, int, struct sockaddr *, int *);
@@ -61,6 +62,7 @@ typedef struct {
     int state;
     struct sockaddr_in ep;     /* real endpoint (hole punched) */
     DWORD t_state, t_ctl, t_rx, t_tx;
+    DWORD t_drx;               /* last packet heard straight from the peer (not through the server) */
     int nq;
     pkt_t q[MAXQ];
 } peer_t;
@@ -246,7 +248,7 @@ static peer_t *find_or_add(u_long ip)
     p->used = 1;
     p->ip = ip;
     p->state = S_NONE;
-    p->t_rx = p->t_tx = p->t_state = GetTickCount();
+    p->t_rx = p->t_tx = p->t_state = p->t_drx = GetTickCount();
     return p;
 }
 
@@ -347,10 +349,15 @@ static int handle_ctl(const char *b, int n, struct sockaddr_in *src, char *out, 
         }
         p = find_src(src);
         if (p) {
-            p->t_rx = GetTickCount();
+            p->t_rx = p->t_drx = GetTickCount();
             if (p->state == S_PUNCH || p->state == S_RELAY) {
                 p->ep = *src;
                 set_state(p, S_DIRECT);
+            } else if (p->state == S_DIRECT && p->ep.sin_port != src->sin_port) {
+                /* the peer came back from another port (new socket / new NAT mapping): follow it */
+                logf_("peer %s: direct endpoint port %u -> %u", ipstr(p->ip, a), ntohs(p->ep.sin_port),
+                      ntohs(src->sin_port));
+                p->ep = *src;
             }
         }
         return -1;
@@ -383,7 +390,11 @@ static int handle_ctl(const char *b, int n, struct sockaddr_in *src, char *out, 
         if (dl >= 10) {
             memcpy(&ip, d, 4);
             p = find_or_add(ip);
-            if (p->state != S_DIRECT) {
+            /* The peer asked the server for us, so it starts from nothing (it restarted the game,
+             * or its NAT gave it another port). A direct link we still remember points at its old
+             * endpoint: unless it is exactly the same one, punch again towards the new endpoint. */
+            if (p->state != S_DIRECT || memcmp(&p->ep.sin_addr.s_addr, d + 4, 4) != 0
+                || memcmp(&p->ep.sin_port, d + 8, 2) != 0) {
                 got_endpoint(p, d + 4);
                 set_state(p, S_PUNCH);
                 send_punch(p, T_PUNCH);
@@ -409,9 +420,14 @@ static int handle_ctl(const char *b, int n, struct sockaddr_in *src, char *out, 
             src->sin_family = AF_INET;
             src->sin_addr.s_addr = ip;
             src->sin_port = htons(GAME_PORT);
-            p = find_ip(ip);
-            if (p)
-                p->t_rx = GetTickCount();
+            /* A relayed packet means the peer cannot reach us directly. Answer the same way when we
+             * have no working direct link of our own: unknown peer, plain sending, or a "direct"
+             * link on which nothing has arrived for a while (stale endpoint). */
+            p = find_or_add(ip);
+            p->t_rx = GetTickCount();
+            if (p->state == S_NONE || p->state == S_PASS
+                || (p->state == S_DIRECT && p->t_rx - p->t_drx > DIRECT_SILENT_MS))
+                set_state(p, S_RELAY);
             return len;
         }
         break;
@@ -448,7 +464,7 @@ static int WINAPI h_recvfrom(SOCKET s, char *buf, int len, int flags, struct soc
         } else {
             peer_t *p = find_src(&src);
             if (p) {
-                p->t_rx = GetTickCount();
+                p->t_rx = p->t_drx = GetTickCount();
                 if (p->state == S_PUNCH)
                     set_state(p, S_DIRECT);
                 src.sin_addr.s_addr = p->ip;

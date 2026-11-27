@@ -118,6 +118,18 @@ class Rkp2pLiveTests(unittest.TestCase):
         self.assertIn("punch -> relay", log_a)
         self.assertIn("punch -> relay", log_b)
 
+    def test_one_side_deaf_falls_back_to_relay_both_ways(self):
+        """한쪽(a)만 상대 패킷을 직접 못 받는 경우 (상대가 기억하는 내 주소가 옛것이거나 공유기가 막음):
+        a 는 중계로 넘어가고, 직접 연결됐다고 여기던 b 도 중계로 온 패킷을 보고 중계로 답해야 한다.
+        (예전에는 b 가 계속 직접 보내 a 가 아무것도 못 받았다 — 게임을 다시 켠 사람이 방에 들어가다 튕김.)"""
+        server.STATE.clients[:] = [Stub("127.0.0.2", "aa", "r"), Stub("127.0.0.3", "bb", "r")]
+        out_a, out_b, log_a, log_b = self.play({"test_block_peers": 1}, None, count=40, ms=12000)
+        self.assertIn("punch -> relay", log_a)
+        self.assertIn("direct -> relay", log_b)
+        self.assertEqual(sorted(set(self.got(out_b, "127.0.0.2:11223"))), list(range(40)), out_b + log_b)
+        got = self.got(out_a, "127.0.0.3:11223")                     # b 가 직접 보내던 앞쪽은 잃는다 (a 가 못 들음)
+        self.assertTrue(got and got[-1] == 39 and len(got) >= 8, out_a + log_a)
+
     def test_not_in_same_room_sends_as_before(self):
         server.STATE.clients[:] = [Stub("127.0.0.2", "aa", "r1"), Stub("127.0.0.3", "bb", "r2")]
         out_a, out_b, log_a, log_b = self.play()
