@@ -97,6 +97,8 @@ git clone https://github.com/japanoxx-afk/rtsarena.git
   치트(`replay_record_patch` cheatx): 사람 수를 +6 & 0x20 (컴퓨터 0x10) 로 셈 — 싱글 커스텀의 컴퓨터는 이름이 있어 예전 기준(이름)으로는 늘 막혔다.
   시나리오 맵은 `DATA\Scenario\Scenario-단계-진영.rkm` (0x419B60) — 설치본에 없음 (대전 맵을 넣어 본 v0.9098 실험은 목표·유닛이 없어 진행 불가, 버튼 제거).
   게임 방식 [0x6E167E]: 0 커스텀, 1 시나리오, 2 랜, 3 TNet. 메뉴 객체 0x6E0CE0, 쪽 바꾸기 0x424160.
+- **v0.9107** (브랜치 launcher-v0.9107-menu-bgm, v0.9106 포함): `smart_cast_patch` CODE5 — 로비 BGM 버튼(0x4214AF)이 레지스트리 `MenuBGMOff`(게임 설정 키, 0x425B70/0x425AD0)를 적고,
+  음악 틀기 0x49D150 머리에서 메뉴 쪽 호출(복귀 주소 < 0x4D7400)이면 그 값을 봐서 틀지 않음. 음악 객체 [0xAE5C28] +0x198 = 나오는 중. 경기 음악 호출은 0x4D74E0/EF/FE.
 - **v0.9106** (브랜치 launcher-v0.9106-room-alert-fix): 방 알림이 안 온다는 보고. 내 방 판단을 서버의 mine(주소) 대신 레지스트리 LastUser(게임 계정) == 방장 으로
   (같은 공유기의 두 PC는 주소가 같아 서로의 방이 mine), 설정 탭에 상태 줄(ok/old/down)·[알림 시험] 버튼. 실제 원인은 미확인 — 상태 줄 글자를 물어볼 것.
 - **v0.9105** (PR #25, 배포): `hotkey_patch` F2 가 라바(종류 114)·코벨(115)을 빼고, 한도를 꽉 채운 F2 선택에서 다시 누르면 다음 유닛들

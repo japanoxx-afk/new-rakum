@@ -31,11 +31,13 @@ class Base(unittest.TestCase):
 class PatchTests(Base):
     def test_code_matches_source(self):
         try:
-            self.assertEqual(sc.assemble(), (sc.CODE, sc.CODE2, sc.CODE3, sc.CODE4))
+            self.assertEqual(sc.assemble(), (sc.CODE, sc.CODE2, sc.CODE3, sc.CODE4, sc.CODE5))
+            self.assertLessEqual(sc.CODE4_OFFSET + len(sc.CODE4), sc.CODE5_OFFSET)
+            self.assertEqual(sc.CODE5.find(sc.SITE6_ORIGINAL[:7]), sc.TOGGLE_OFFSET)
             self.assertLessEqual(sc.CODE3_OFFSET + len(sc.CODE3), sc.CODE4_OFFSET)
             self.assertLessEqual(len(sc.CODE), sc.CODE2_OFFSET)
             self.assertLessEqual(sc.CODE2_OFFSET + len(sc.CODE2), sc.CODE3_OFFSET)
-            self.assertLessEqual(sc.CODE4_OFFSET + len(sc.CODE4), sc.SECTION_SIZE)
+            self.assertLessEqual(sc.CODE5_OFFSET + len(sc.CODE5), sc.SECTION_SIZE)
         except ImportError as e:
             self.skipTest(str(e))
 
@@ -61,7 +63,7 @@ class PatchTests(Base):
         import struct as st
         built = minimap_patch.build(self.original, False)
         under = sc.strip(built)
-        self.assertEqual(len(sc.LEGACY), 3)
+        self.assertEqual(len(sc.LEGACY), 4)
         for code, used in sc.LEGACY:
             old = bytearray(built)
             va = st.unpack_from('<I', built, sc._layout(built)[6][-1][5] + 12)[0]
@@ -371,6 +373,81 @@ class AttackKeyTests(Base):
         self.assertEqual(self._slot(built, 0, gon, building=1), (0, 0))                   # 건물은 그대로
         self.assertEqual(self._slot(built, 0, gon, shown=0), (0, 0))                      # 고른 것이 없으면 그대로
         self.assertEqual(self._slot(self.original, 0, gon), (0, 0))                       # 원래 게임: A 칸이 비어 아무 일도 없음
+
+
+class MenuMusicTests(Base):
+    """로비 BGM 끄기를 기억: 버튼이 레지스트리 'MenuBGMOff' 를 적고, 메뉴 음악 틀기(0x49D150)가 그 값을 본다."""
+    MUSIC = SCRATCH + 0x30000
+
+    def _machine(self, stubs):
+        from unicorn import UC_HOOK_CODE
+        from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_EAX
+        mu = _emulator(minimap_patch.build(self.original, False))
+        calls = []
+        mu.mem_write(0xAE5C28, struct.pack("<I", self.MUSIC))
+
+        def hook(uc, address, size, user):
+            name, result = stubs[address][0], stubs[address][2]
+            esp = uc.reg_read(UC_X86_REG_ESP)
+            args = struct.unpack("<II", uc.mem_read(esp + 4, 8))
+            if name in ("read", "write"):
+                text = bytes(uc.mem_read(args[0], 16)).split(b"\0")[0].decode()
+                calls.append((name, text) if name == "read" else (name, text, args[1]))
+            else:
+                calls.append((name, args[0]) if stubs[address][1] else (name,))
+            if name == "stop":
+                uc.mem_write(self.MUSIC + 0x198, b"\0")
+            if result is not None:
+                uc.reg_write(UC_X86_REG_EAX, result() if callable(result) else result)
+        for address, (name, nargs, result) in stubs.items():
+            mu.mem_write(address, b"\xc3" if not nargs else b"\xc2" + struct.pack("<H", 4 * nargs))
+            mu.hook_add(UC_HOOK_CODE, hook, begin=address, end=address)
+        return mu, calls
+
+    def _start(self, caller, muted):
+        """0x49D150(곡) 을 caller 에서 부른 것처럼 실행: (원래 함수로 들어갔나, 부른 함수들)."""
+        from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_ECX
+        mu, calls = self._machine({0x425AD0: ("read", 1, 1 if muted else 0)})
+        esp = SCRATCH + 0x8000
+        mu.mem_write(esp, struct.pack("<II", caller, 12))
+        mu.mem_write(caller, b"\xf4")
+        mu.reg_write(UC_X86_REG_ESP, esp)
+        mu.reg_write(UC_X86_REG_ECX, self.MUSIC)
+        entered = []
+        from unicorn import UC_HOOK_CODE
+        mu.hook_add(UC_HOOK_CODE, lambda uc, a, sz, u: (entered.append(uc.reg_read(UC_X86_REG_ESP)), uc.emu_stop()),
+                    begin=0x49D156, end=0x49D156)
+        mu.emu_start(0x49D150, caller, count=500)
+        if entered:
+            self.assertEqual(entered, [esp - 4 - 0x48])                  # push ebp; sub esp,0x48 까지 한 상태
+            self.assertEqual(mu.reg_read(UC_X86_REG_ECX), self.MUSIC)
+        else:
+            self.assertEqual(mu.reg_read(UC_X86_REG_ESP), esp + 8)       # ret 4 로 그냥 돌아감
+        return bool(entered), calls
+
+    def test_menu_music_respects_the_saved_choice(self):
+        for caller in (0x41398B, 0x4214E3, 0x4D71D8, 0x44BF3C):          # 메인 메뉴, 로비 버튼, 시작할 때, 로비 재접속
+            self.assertEqual(self._start(caller, False), (True, [("read", "MenuBGMOff")]), hex(caller))
+            self.assertEqual(self._start(caller, True), (False, [("read", "MenuBGMOff")]), hex(caller))
+        for caller in (0x4D74E5, 0x4D74F4, 0x4D7503):                    # 경기 음악: 설정을 보지 않고 늘 튼다
+            self.assertEqual(self._start(caller, True), (True, []), hex(caller))
+
+    def _toggle(self, playing):
+        from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_EBP
+        mu, calls = self._machine({0x49D1C0: ("stop", 0, None), 0x425B70: ("write", 2, None),
+                                   0x49D150: ("play", 1, None), 0x49D200: ("volume", 1, None)})
+        mu.mem_write(self.MUSIC + 0x198, bytes([playing]))
+        mu.reg_write(UC_X86_REG_ESP, SCRATCH + 0x8000)
+        mu.reg_write(UC_X86_REG_EBP, SCRATCH + 0x9000)
+        mu.emu_start(0x4214AF, 0x4214F0, count=500)
+        self.assertEqual(mu.reg_read(UC_X86_REG_ESP), SCRATCH + 0x8000)
+        return calls
+
+    def test_lobby_button_saves_the_choice(self):
+        self.assertEqual(self._toggle(1), [("stop",), ("write", "MenuBGMOff", 1)])                         # 나오는 중 -> 끄고 '꺼 둠'
+        self.assertEqual(self._toggle(0), [("write", "MenuBGMOff", 0), ("play", 1), ("volume", 7)])        # 꺼져 있음 -> '켜 둠' 적고 틀기
+        self.assertEqual(self.original[sc.SITE6 - 10:sc.SITE6], bytes.fromhex("6a7de864d1070083c404"))    # 버튼 소리 뒤의 자리
+        self.assertEqual(0x400000 + sc.SITE6 + len(sc.SITE6_ORIGINAL), 0x4214F0)
 
 
 if __name__ == '__main__':
