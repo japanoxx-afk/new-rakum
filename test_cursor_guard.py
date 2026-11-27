@@ -10,9 +10,17 @@ class FakeWin:
         self.fg = (1, True, MON, MON)
         self.clip_rect = None
         self.calls = []
+        self.clicks = []
 
     def foreground(self):
         return self.fg
+
+    def client_size(self, hwnd):
+        return 1280, 720
+
+    def post_button_up(self, hwnd, x, y):
+        self.clicks.append((hwnd, x, y))
+        return True
 
     def clip(self, rect):
         self.calls.append(rect)
@@ -55,6 +63,41 @@ class CursorGuardTests(unittest.TestCase):
         g.step()
         g.stop()
         self.assertEqual(w.calls, [MON, None])
+
+
+class ReactivateCursorTests(unittest.TestCase):
+    def test_click_nudge_once_each_time_game_comes_back(self):
+        """Alt+Tab 으로 돌아오면 게임 창에 '첫 클릭'을 한 번 보낸다 (숨긴 윈도우 커서가 다시 보이지 않게)."""
+        w = FakeWin()
+        now = [100.0]
+        g = cg.CursorGuard(win=w, clock=lambda: now[0])
+        g.step()
+        self.assertEqual(w.clicks, [])                       # 시작할 때는 아무것도 안 보냄 (이미 앞에 있던 게임은 첫 전환 전)
+        w.fg = (2, False, None, None)                        # Alt+Tab 으로 나감
+        g.step()
+        w.fg = (1, True, MON, MON)                           # 돌아옴
+        g.step()
+        self.assertEqual(w.clicks, [])                       # 0.3초 기다린 뒤
+        now[0] += 0.3
+        g.step()
+        self.assertEqual(w.clicks, [(1, 640, 360)])
+        now[0] += 5
+        g.step()
+        self.assertEqual(len(w.clicks), 1)                   # 계속 앞에 있으면 또 보내지 않음
+
+    def test_no_nudge_when_game_leaves_before_delay(self):
+        w = FakeWin()
+        now = [0.0]
+        g = cg.CursorGuard(win=w, clock=lambda: now[0])
+        w.fg = (2, False, None, None)
+        g.step()
+        w.fg = (1, True, MON, MON)
+        g.step()
+        w.fg = (2, False, None, None)                        # 0.3초 전에 다시 나감
+        g.step()
+        now[0] += 1
+        g.step()
+        self.assertEqual(w.clicks, [])
 
 
 class LockGameCursorTests(unittest.TestCase):
