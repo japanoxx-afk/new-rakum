@@ -29,6 +29,7 @@ import smart_cast_patch
 import scenario_mode
 import package_mode_patch
 import turn_length_patch
+import room_watch
 import command_cadence_trial
 import command_cadence_installer
 from release_notes import NOTES
@@ -71,7 +72,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9104"
+APP_VERSION = "0.9105"
 TURN_FRAME_LABELS = {2: '66ms · 2프레임 (기본)', 3: '99ms · 3프레임', 5: '165ms · 5프레임 (원래 게임)'}
 DEFAULT_TURN_FRAMES = 2      # 멀티 턴 길이 기본값 (프레임): 66ms (v0.9104~; v0.9101~v0.9103 은 3). 원래 게임은 5 (165ms) — turn_length_patch
 
@@ -749,6 +750,7 @@ class App(tk.Tk):
         self._two_columns(self.connection_parent)
         self._two_columns(self._settings_frame)
         self.protocol("WM_DELETE_WINDOW", self._close_launcher)
+        self._start_room_watch()
         self.recorder = replay_recorder.Recorder(self.base_dir, lambda: self.cfg.get("game_dir", DEFAULT_GAME_DIR))
         if self.cfg.get("replay_record", True):
             self.recorder.start()
@@ -1638,6 +1640,43 @@ class App(tk.Tk):
         override = getattr(self, '_rally_spawn_override', None)
         return self.cfg.get('rally_spawn', True) if override is None else override
 
+    # ── 방 생성 알림: 다른 사람이 방을 만들면 작업 표시줄에서 런처가 깜빡인다 (room_watch, 서버 0.9023~) ──
+    def _start_room_watch(self):
+        import queue
+        self._room_events = queue.Queue()
+        self._room_watcher = room_watch.RoomWatcher()
+
+        def loop():
+            while True:
+                try:
+                    if self.cfg.get("room_alert", True):
+                        fresh = self._room_watcher.update(room_watch.fetch_rooms(self._server_ip()))
+                        if fresh:
+                            self._room_events.put(fresh)
+                except Exception:
+                    pass                                    # 알림은 덤이다 — 어떤 오류도 런처를 멈추지 않게
+                time.sleep(room_watch.POLL_SECONDS)
+        threading.Thread(target=loop, daemon=True).start()
+        self.after(1000, self._poll_room_events)
+
+    def _poll_room_events(self):
+        import queue
+        try:
+            while True:
+                fresh = self._room_events.get_nowait()
+                names = ", ".join(room_watch.describe(room) for room in fresh[:3])
+                self.info_var.set(f"새 방이 열렸습니다: {names}")
+                room_watch.flash_taskbar(self.winfo_id())
+        except queue.Empty:
+            pass
+        except Exception:
+            pass
+        self.after(1000, self._poll_room_events)
+
+    def _on_room_alert_toggle(self):
+        self.cfg["room_alert"] = bool(self.room_alert_var.get())
+        save_config(self.base_dir, self.cfg)
+
     def _turn_frames_setting(self):
         """멀티 턴 길이(프레임): 5 = 원래(165ms), 3 = 99ms, 2 = 66ms(기본). 대전 규칙 — 모든 PC가 같아야 한다."""
         override = getattr(self, '_turn_frames_override', None)
@@ -1741,7 +1780,7 @@ class App(tk.Tk):
         if not smart_cast_patch.current(installed):
             raise RuntimeError('마법 순차 시전 패치 검증 실패. 게임을 실행하지 않았습니다.')
         installed = smart_cast_patch.strip(installed)           # 맨 뒤 섹션(.scast) 아래를 차례로 확인
-        if hotkey_patch.state(installed) != hotkeys:
+        if (hotkey_patch.current(installed) if hotkeys else hotkey_patch.state(installed)) != hotkeys:
             raise RuntimeError('단축키 확장 패치 검증 실패. 게임을 실행하지 않았습니다.')
         if (replay_record_patch.state(hotkey_patch.strip(installed)) != (record or play)
                 or replay_record_patch.saves_at_start(hotkey_patch.strip(installed)) != start_save
@@ -2379,6 +2418,12 @@ class App(tk.Tk):
                         variable=self.select24_var, command=self._on_select24_toggle).pack(anchor="w", pady=(10, 0))
         ttk.Label(play_frame, text="아래 정보 창 초상화는 12칸까지만 보이고 나머지도 함께 선택됩니다. 다음 게임 실행 시 적용.\n"
                                    "게임 진행 규칙이 바뀌므로 멀티는 모든 PC가 같은 런처 버전이어야 하며, 접속 PC는 서버 PC 설정을 따릅니다.",
+                  style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(4, 0))
+        self.room_alert_var = tk.BooleanVar(value=self.cfg.get("room_alert", True))
+        ttk.Checkbutton(play_frame, text="다른 사람이 방을 만들면 작업 표시줄에서 런처 깜빡이기",
+                        variable=self.room_alert_var, command=self._on_room_alert_toggle).pack(anchor="w", pady=(10, 0))
+        ttk.Label(play_frame, text="런처가 켜져 있는 동안 멀티 서버의 방 목록을 5초마다 확인합니다. 내가 만든 방은 알리지 않습니다. "
+                                   "서버가 0.9023 이상이어야 합니다 (NAS 서버는 server.py 교체 필요).",
                   style="Muted.TLabel", wraplength=520, justify="left").pack(anchor="w", pady=(4, 0))
         self.rally_spawn_var = tk.BooleanVar(value=self.cfg.get("rally_spawn", True))
         ttk.Checkbutton(play_frame, text="생산 유닛이 집결지 쪽 건물 가장자리에서 나오기",

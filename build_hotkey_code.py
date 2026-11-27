@@ -99,6 +99,64 @@ unit_ok:
 uo_ret:
     ret
 
+mil_ok:
+    call unit_ok
+    test eax, eax
+    jz mo_ret
+    movzx eax, word ptr [ebx+0xe]
+    cmp eax, {SKIP1}
+    je mo_no
+    cmp eax, {SKIP2}
+    je mo_no
+    imul eax, eax, 0x1c
+    mov eax, dword ptr [eax+0x4fcd88]
+    test eax, eax
+    jz mo_ret
+    cmp word ptr [eax+0x40], 1
+    je mo_no
+    mov eax, 1
+    ret
+mo_no:
+    xor eax, eax
+mo_ret:
+    ret
+
+page_start:
+    mov esi, 1
+    cmp dword ptr [ebp+8], 0
+    je ps_ret
+    cmp word ptr [0x80083c], {N}
+    jne ps_ret
+    xor ecx, ecx
+    xor edx, edx
+ps_loop:
+    movzx eax, word ptr [ecx*2+{LSEL}]
+    test eax, eax
+    jz ps_ret
+    cmp eax, 0x6a6
+    jae ps_ret
+    imul ebx, eax, 0x138
+    add ebx, 0x775a38
+    push eax
+    push ecx
+    push edx
+    call mil_ok
+    pop edx
+    pop ecx
+    test eax, eax
+    pop eax
+    jz ps_ret
+    cmp eax, edx
+    jbe ps_keep
+    mov edx, eax
+ps_keep:
+    inc ecx
+    cmp ecx, {N}
+    jb ps_loop
+    lea esi, [edx+1]
+ps_ret:
+    ret
+
 select_units:
     push ebp
     mov ebp, esp
@@ -106,11 +164,16 @@ select_units:
     push ebx
     push esi
     push edi
+    call page_start
+su_again:
     xor edi, edi
-    mov esi, 1
+    push esi
+    jmp su_check
 su_loop:
     imul ebx, esi, 0x138
     add ebx, 0x775a38
+    cmp dword ptr [ebp+8], 0
+    jne su_mil
     call unit_ok
     test eax, eax
     jz su_next
@@ -119,19 +182,15 @@ su_loop:
     mov eax, dword ptr [eax+0x4fcd88]
     test eax, eax
     jz su_next
-    xor ecx, ecx
     cmp word ptr [eax+0x40], 1
-    sete cl
-    cmp dword ptr [ebp+8], 0
-    jne su_mil
-    test ecx, ecx
-    jz su_next
+    jne su_next
     cmp word ptr [ebx+6], 2
     jne su_next
     jmp su_add
 su_mil:
-    test ecx, ecx
-    jnz su_next
+    call mil_ok
+    test eax, eax
+    jz su_next
 su_add:
     mov word ptr [ebp+edi*2-{BUF}], si
     inc edi
@@ -139,11 +198,18 @@ su_add:
     jae su_done
 su_next:
     inc esi
+su_check:
     cmp esi, 0x6a6
     jb su_loop
 su_done:
+    pop esi
     test edi, edi
-    jz su_out
+    jnz su_commit
+    cmp esi, 1
+    je su_out
+    mov esi, 1
+    jmp su_again
+su_commit:
     lea eax, [ebp-{BUF}]
     push edi
     push eax
@@ -309,16 +375,18 @@ at_ret:
 '''
 
 
+F2_SKIP = (114, 115)      # F2 (모든 군사 유닛)에서 빼는 종류: 라바, 코벨 (R1_DATA_CHAR 줄 번호 = 유닛 종류 번호)
+
 # 12: original game lists.  24: lists moved by selection_patch (.sel24 section).
 LAYOUT = {
-    12: dict(N=12, BUF=24, LSEL='0x80083e', GROUPS='0x106a6c0', PSTRIDE='0xd0', GSTRIDE='0x1a'),
+    12: dict(N=12, BUF=24, LSEL='0x80083e', GROUPS='0x106a6c0', PSTRIDE='0xd0', GSTRIDE='0x1a', SKIP1=F2_SKIP[0], SKIP2=F2_SKIP[1]),
 }
 
 
 def _layout24():
     import selection_patch as sp
     return dict(N=sp.N, BUF=2 * sp.N, LSEL=hex(sp.LSEL), GROUPS=hex(sp.GROUPS),
-                PSTRIDE=hex(sp.PLAYER_GROUPS), GSTRIDE=hex(sp.GROUP_STRIDE))
+                PSTRIDE=hex(sp.PLAYER_GROUPS), GSTRIDE=hex(sp.GROUP_STRIDE), SKIP1=F2_SKIP[0], SKIP2=F2_SKIP[1])
 
 
 def assemble(addr=0x10000000, n=12):
