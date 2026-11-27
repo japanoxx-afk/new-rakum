@@ -61,7 +61,7 @@ try:
 except OSError:
     pass
 
-SERVER_VERSION = "0.9021"
+SERVER_VERSION = "0.9022"
 HOST = "0.0.0.0"
 PORT = 11223
 UDP_RELAY_PORT = 47584  # WG_IPX.dll EnumHosts broadcast port
@@ -355,7 +355,7 @@ def _stats(name: str, rows: Optional[list] = None) -> dict:
 def build_enter_payload(name: str, rows: Optional[list] = None) -> bytes:
     r = _stats(name, rows)
     info = struct.pack("<iiiih", _i32(r["points"]), _i32(r["win"]), _i32(r["lose"]), _i32(r["draw"]),
-                       max(0, min(32767, r["win"])))
+                       grade_value(r))          # 계급: 내공 기준 (TIERS) — 로비 목록에 보이는 계급이 이 값
     return bytes([MSG_ENTER, 0, 0]) + nul(name) + info + nul("")
 
 

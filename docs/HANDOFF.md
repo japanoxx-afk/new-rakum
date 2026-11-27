@@ -97,6 +97,8 @@ git clone https://github.com/japanoxx-afk/rtsarena.git
   치트(`replay_record_patch` cheatx): 사람 수를 +6 & 0x20 (컴퓨터 0x10) 로 셈 — 싱글 커스텀의 컴퓨터는 이름이 있어 예전 기준(이름)으로는 늘 막혔다.
   시나리오 맵은 `DATA\Scenario\Scenario-단계-진영.rkm` (0x419B60) — 설치본에 없음 (대전 맵을 넣어 본 v0.9098 실험은 목표·유닛이 없어 진행 불가, 버튼 제거).
   게임 방식 [0x6E167E]: 0 커스텀, 1 시나리오, 2 랜, 3 TNet. 메뉴 객체 0x6E0CE0, 쪽 바꾸기 0x424160.
+- **v0.9104** (브랜치 launcher-v0.9104-turn2-akey): `DEFAULT_TURN_FRAMES` 3 → 2 (사용자가 2프레임으로 대전해 보고 기본값으로 요청), `smart_cast_patch` CODE4
+  (0x45CF82: A 칸이 비고 D 칸이 이동(3)인 유닛은 A 키를 D 로 — 공격 없는 유닛), server 0.9022 (로비 목록 0x12FF type 4 `build_enter_payload` 도 계급 등급값; 0.9021 은 빠뜨림).
 - **v0.9103 계급 점수제 (server.py 0.9021)**: 게임 0x42CA20 은 서버가 보낸 등급값(원래 래더 순위)의 구간으로 계급 15개(MENUMSG 121..135: 신·초인·패왕…하수·초보)를 고르고,
   내공 < 1000(사용자 정보 0x4226E1)·< 1010(목록 0x42CCC0)이면 무조건 초보. 서버가 승수를 보내던 것을 `TIERS` (내공 구간 → 그 계급 구간의 등급값)로 바꿈.
   NAS 서버는 server.py 교체 + 컨테이너 재시작 필요 (사용자 작업).

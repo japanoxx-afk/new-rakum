@@ -71,9 +71,9 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9103"
-TURN_FRAME_LABELS = {3: '99ms · 3프레임 (기본)', 5: '165ms · 5프레임 (원래 게임)', 2: '66ms · 2프레임 (실험)'}
-DEFAULT_TURN_FRAMES = 3      # 멀티 턴 길이 기본값 (프레임): 99ms. 원래 게임은 5 (165ms) — turn_length_patch
+APP_VERSION = "0.9104"
+TURN_FRAME_LABELS = {2: '66ms · 2프레임 (기본)', 3: '99ms · 3프레임', 5: '165ms · 5프레임 (원래 게임)'}
+DEFAULT_TURN_FRAMES = 2      # 멀티 턴 길이 기본값 (프레임): 66ms (v0.9104~; v0.9101~v0.9103 은 3). 원래 게임은 5 (165ms) — turn_length_patch
 
 # 라크무는 한게임 호스트로 접속한다 (hosts 파일로 우리 서버로 우회)
 GAME_HOST = "rhakmugame.hangame.naver.com"
@@ -1639,7 +1639,7 @@ class App(tk.Tk):
         return self.cfg.get('rally_spawn', True) if override is None else override
 
     def _turn_frames_setting(self):
-        """멀티 턴 길이(프레임): 5 = 원래(165ms), 3 = 99ms(기본), 2 = 66ms. 대전 규칙 — 모든 PC가 같아야 한다."""
+        """멀티 턴 길이(프레임): 5 = 원래(165ms), 3 = 99ms, 2 = 66ms(기본). 대전 규칙 — 모든 PC가 같아야 한다."""
         override = getattr(self, '_turn_frames_override', None)
         if override is not None:                # 서버 PC 규칙, 또는 재생할 리플레이의 값 (싱글 경기 리플레이는 1)
             return override if override in replay_record_patch.TURN_CHOICES else turn_length_patch.ORIGINAL
@@ -2413,7 +2413,7 @@ class App(tk.Tk):
         ttk.Label(turn_row, text='명령 전송 간격:').pack(side='left')
         self.turn_frames_var = tk.StringVar(value=TURN_FRAME_LABELS[self._turn_frames_setting_own()])
         box = ttk.Combobox(turn_row, textvariable=self.turn_frames_var, state='readonly', width=30,
-                           values=[TURN_FRAME_LABELS[k] for k in (3, 5, 2)])
+                           values=[TURN_FRAME_LABELS[k] for k in (2, 3, 5)])
         box.pack(side='left', padx=6)
         box.bind('<<ComboboxSelected>>', lambda _e: self._on_turn_frames())
         ttk.Label(lat_frame, text='명령을 묶어 보내는 간격입니다. 짧을수록 클릭 후 실행이 빨라집니다 (4턴 기준: 165ms 약 0.58초, '
