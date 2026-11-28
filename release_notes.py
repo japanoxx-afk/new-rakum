@@ -1,4 +1,8 @@
-NOTES = '''라크무 런처 — v0.9114
+NOTES = '''라크무 런처 — v0.9115
+
+• 진단 리포트 보강: ddraw.ini 앞부분(화면 설정), RhakMU.ERR·Launcher.LOG·rkp2p.log 끝부분, 이 게임 exe 의 GPU 기본 설정, Windows 게임 모드 값을 담습니다.
+
+라크무 런처 — v0.9114
 
 • 멀티 시작 때 'WinError 5 (액세스 거부)' 로 멈추던 문제 대응
   - 원인: 로딩에서 멈춘 이전 게임 창이 Rhakmu.exe 를 붙잡고 있으면 런처가 파일을 바꾸지 못했습니다.

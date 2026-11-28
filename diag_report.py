@@ -30,12 +30,27 @@ def log_error(base_dir, where: str, exc: BaseException | None = None) -> None:
         pass
 
 
-def _read_text(path, limit=MAX_ERROR_TAIL) -> str:
+def _read_text(path, limit=MAX_ERROR_TAIL, head=False) -> str:
+    """파일의 끝(기본) 또는 앞부분 limit 바이트를 읽는다. 없으면 '(없음)'."""
     try:
         data = Path(path).read_bytes()
     except OSError:
         return "(없음)"
-    return data[-limit:].decode("utf-8", errors="replace")
+    part = data[:limit] if head else data[-limit:]
+    return part.decode("utf-8", errors="replace")
+
+
+def _user_registry_value(subkey: str, name: str) -> str:
+    """HKCU 값 한 개 (없으면 '(없음)'). 게임 실행 설정처럼 사용자별 값을 본다."""
+    if os.name != "nt":
+        return "?"
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey, 0, winreg.KEY_READ) as key:
+            value, _ = winreg.QueryValueEx(key, name)
+            return str(value)
+    except OSError:
+        return "(없음)"
 
 
 def _memory_mb() -> str:
@@ -121,9 +136,17 @@ def _game_section(game_dir) -> list[str]:
             lines.append(f"  {p.name}  {size}")
     except OSError as e:
         lines.append(f"설치 폴더 파일 목록 실패: {e}")
+    ddraw_dll = g / "ddraw.dll"
+    if ddraw_dll.is_file():
+        digest = hashlib.sha256(ddraw_dll.read_bytes()).hexdigest()
+        lines.append(f"ddraw.dll (cnc-ddraw): {ddraw_dll.stat().st_size} bytes, sha256 {digest[:16]}")
+    # 앞부분 = 화면 설정 (renderer, windowed, vsync, maxfps, shader ...)
     ddraw_ini = g / "ddraw.ini"
-    lines.append("ddraw.ini:")
-    lines.append(_read_text(ddraw_ini, 4000) if ddraw_ini.is_file() else "  (없음)")
+    lines.append("ddraw.ini (앞 6000바이트):")
+    lines.append(_read_text(ddraw_ini, 6000, head=True) if ddraw_ini.is_file() else "  (없음)")
+    for name in ("RhakMU.ERR", "Launcher.LOG", "rkp2p.log"):
+        lines.append(f"{name} (끝 3000바이트):")
+        lines.append(_read_text(g / name, 3000))
     return lines
 
 
@@ -136,6 +159,9 @@ def build_report(base_dir, game_dir, version: str, cfg: dict | None = None, now=
     out.append(f"메모리: {_memory_mb()}")
     out.append(f"그래픽: {_gpu()}")
     out.append(f"전원 설정: {_run(['powercfg', '/getactivescheme'])}" if os.name == "nt" else "전원 설정: ?")
+    out.append("GPU 기본 설정 (이 게임 exe 별 지정): " + _user_registry_value(
+        r"Software\Microsoft\DirectX\UserGpuPreferences", str(Path(game_dir) / "Rhakmu.exe")))
+    out.append("Windows 게임 모드: " + _user_registry_value(r"Software\Microsoft\GameBar", "AutoGameModeEnabled"))
     out.append("")
     out.append("[게임]")
     try:
