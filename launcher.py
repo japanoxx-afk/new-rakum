@@ -50,6 +50,7 @@ import replay_assoc
 import replay_recorder
 import replay_model
 import replay_memory
+import diag_report
 import game_address_patch
 import holepunch
 import arena_upload
@@ -72,7 +73,7 @@ import typing         # noqa: F401
 import uuid           # noqa: F401  (server.py 0.9017+ 경기 id — 빠지면 게임 시작 순간 방장 로비 접속이 끊겼다)
 import http.server    # noqa: F401
 
-APP_VERSION = "0.9113"
+APP_VERSION = "0.9114"
 TURN_FRAME_LABELS = {2: '66ms · 2프레임 (기본)', 3: '99ms · 3프레임', 5: '165ms · 5프레임 (원래 게임)'}
 DEFAULT_TURN_FRAMES = 2      # 멀티 턴 길이 기본값 (프레임): 66ms (v0.9104~; v0.9101~v0.9103 은 3). 원래 게임은 5 (165ms) — turn_length_patch
 
@@ -1546,7 +1547,8 @@ class App(tk.Tk):
             if rules_note:
                 self.info_var.set(rules_note)
         except Exception as e:
-            messagebox.showerror('게임 실행 중단', str(e))
+            diag_report.log_error(self.base_dir, "게임 실행 중단", e)
+            messagebox.showerror("게임 실행 중단", str(e))
             return
         if getattr(self, '_launch_pending', False):
             return
@@ -1805,6 +1807,9 @@ class App(tk.Tk):
         if not (path / GAME_EXE).is_file() or not (path / PATCH_EXE).is_file():
             raise ValueError('해당 경로에 Launcher.exe와 Rhakmu.exe가 있어야 합니다.')
         exe = path / PATCH_EXE
+        if replay_memory.find_game_pid():
+            raise ValueError("라크무 게임(Rhakmu.exe)이 아직 실행 중입니다.\n"
+                             "로딩에서 멈춘 게임 창이 있으면 닫은 뒤 다시 눌러 주세요.")
         minimap_patch.ensure_closed(exe)
         self._sync_package_mode(bool(getattr(self, "_scenario_launch", False)))
         # 모든 PC가 같은 게임판(1.000d)이어야 방 입장이 된다: 아니면 런처에 든 1.000d 로 교체
@@ -1941,6 +1946,7 @@ class App(tk.Tk):
             except OSError:
                 pass
         except Exception as e:
+            diag_report.log_error(self.base_dir, "게임 실행 중단", e)
             messagebox.showerror("게임 실행 중단", str(e))
             return
         finally:
@@ -2232,6 +2238,7 @@ class App(tk.Tk):
         try:
             self._prepare_game_launch()
         except Exception as e:
+            diag_report.log_error(self.base_dir, "게임 실행 중단", e)
             messagebox.showerror("게임 실행 중단", str(e))
             return
         finally:
@@ -2595,6 +2602,8 @@ class App(tk.Tk):
                      state="readonly").pack(anchor="w", pady=(0, 6))
 
         ttk.Button(frame, text="디스플레이 설정 적용", command=self._on_apply_winmode, width=20).pack(anchor="w", pady=(4, 0))
+        ttk.Button(frame, text="진단 리포트 만들기", command=self._on_make_report, width=20).pack(anchor="w", pady=(8, 0))
+        ttk.Label(frame, text="문제가 생기면 누르세요. 바탕화면에 rhakmu-report-….txt 가 만들어집니다 (PC·게임 파일·설정·최근 오류).").pack(anchor="w")
         ttk.Button(frame, text="표시 지연 완화 (3·4턴)", command=self._on_response_profile).pack(anchor="w", pady=(8, 0))
         ttk.Label(frame, text="수직동기화 끄기 + 모니터 주사율 + Bilinear 필터. 화질/화면 찢어짐 차이가 있을 수 있습니다.\n"
                   "명령 턴·게임 속도·네트워크 프로토콜은 변경하지 않습니다. 효과는 PC에 따라 다릅니다.",
@@ -2656,6 +2665,15 @@ class App(tk.Tk):
             self._refresh_patch_status()
             if not quiet:
                 messagebox.showinfo('게임 버전 맞춤', note)
+
+    def _on_make_report(self):
+        try:
+            path = diag_report.write_report(self.base_dir, self.cfg.get("game_dir", DEFAULT_GAME_DIR),
+                                            APP_VERSION, self.cfg)
+        except OSError as e:
+            messagebox.showerror("진단 리포트", f"리포트를 저장하지 못했습니다.\n{e}")
+            return
+        messagebox.showinfo("진단 리포트", f"저장했습니다:\n{path}\n\n이 파일을 전달해 주세요.")
 
     def _on_browse_game(self):
         from tkinter import filedialog

@@ -82,7 +82,7 @@ def ensure(path) -> str:
             f.write(original)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(temp, path)
+        _replace_exe(temp, path)
     finally:
         if os.path.exists(temp):
             os.unlink(temp)
@@ -91,6 +91,29 @@ def ensure(path) -> str:
     return ("Rhakmu.exe 가 1.000d 가 아니어서 런처에 포함된 1.000d 로 바꿨습니다.\n"
             "(공식 패치 Patch1003.exe 와 같은 파일입니다. 패치를 따로 설치하지 않아도 됩니다.)\n"
             "기존 파일 백업: %s" % backup.name)
+
+
+def _replace_exe(temp, path) -> None:
+    """임시 파일을 Rhakmu.exe 위로 옮긴다. 쓰기 금지 속성이면 풀고 한 번 더 한다.
+
+    실패하면 원인 후보를 알려 준다 (WinError 5 = 게임이 같은 파일을 쓰는 중, 쓰기 금지, 또는 폴더 권한 없음).
+    """
+    try:
+        os.replace(temp, path)
+        return
+    except PermissionError:
+        pass
+    try:
+        if os.name == "nt" and os.path.exists(path):
+            os.chmod(path, 0o666)           # 읽기 전용 속성 해제
+        os.replace(temp, path)
+    except PermissionError as e:
+        raise ValueError(
+            "Rhakmu.exe 를 바꾸지 못했습니다 (WinError 5: 액세스 거부).\n"
+            "- 라크무 게임 창이 아직 떠 있으면 모두 닫고 다시 누르세요.\n"
+            "- 게임 폴더가 Program Files 라서 권한이 없으면 런처를 '관리자 권한으로 실행' 하세요.\n"
+            "- 그래도 안 되면 진단 리포트를 만들어 주세요.\n"
+            "(%s)" % e) from e
 
 
 def ensure_registry(winreg=None) -> bool:
