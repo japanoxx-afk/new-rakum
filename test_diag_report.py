@@ -29,6 +29,12 @@ class DiagReportTests(unittest.TestCase):
         self.assertIn("width=1280", text)                  # ddraw.ini 내용
         self.assertIn("Rhakmu.exe: 7 bytes", text)          # 게임 파일 크기
 
+    def test_ddraw_ini_head_is_read_not_tail(self):
+        (self.game / "ddraw.ini").write_text("HEADLINE\n" + "x" * 9000 + "\nTAILLINE", encoding="utf-8")
+        text = d.build_report(self.base, self.game, "0.9115", {})
+        self.assertIn("HEADLINE", text)
+        self.assertNotIn("TAILLINE", text)
+
     def test_secret_settings_are_left_out(self):
         text = d.build_report(self.base, self.game, "0.9114",
                               {"nick": "aa", "arena_token": "SECRET-1", "lobby_password": "pw"})
